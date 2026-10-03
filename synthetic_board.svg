@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100.0" height="700.0" style="background-color: #121212;">
+  <defs>
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1a1a1a" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1100.0" height="700.0" fill="url(#grid)" />
+  <polygon points="450.0,450.0 650.0,450.0 650.0,250.0 450.0,250.0" fill="#331111" stroke="#ff3333" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.8"/>
+  <line x1="1050.0" y1="650.0" x2="950.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="50.0" x2="950.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="950.0" y1="350.0" x2="650.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="950.0" y1="350.0" x2="650.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="50.0" x2="950.0" y2="150.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="50.0" x2="650.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="950.0" y1="150.0" x2="650.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="950.0" y1="150.0" x2="950.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="650.0" x2="950.0" y2="550.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="950.0" y1="550.0" x2="950.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="650.0" x2="650.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="950.0" y1="550.0" x2="650.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="50.0" y1="650.0" x2="150.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="50.0" y1="50.0" x2="150.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="50.0" y1="50.0" x2="150.0" y2="150.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="150.0" y1="150.0" x2="150.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="150.0" y1="350.0" x2="450.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="150.0" y1="150.0" x2="450.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="50.0" y1="50.0" x2="450.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="150.0" y1="350.0" x2="450.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="450.0" y1="450.0" x2="450.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="50.0" y1="650.0" x2="150.0" y2="550.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="50.0" y1="650.0" x2="450.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="150.0" y1="550.0" x2="450.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="150.0" y1="550.0" x2="150.0" y2="350.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="50.0" x2="450.0" y2="250.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="1050.0" y1="650.0" x2="450.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="450.0" y1="450.0" x2="650.0" y2="450.0" stroke="#333333" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="150.0" cy="150.0" r="9.0" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="150.0" cy="150.0" r="5.0" fill="#ffcc00" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="150.0" cy="150.0" r="2.0" fill="#121212"/>
+  <text x="150.0" y="137.0" fill="#ffffff" font-size="10" font-family="sans-serif" text-anchor="middle">Pad 101</text>
+  <circle cx="950.0" cy="550.0" r="9.0" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="950.0" cy="550.0" r="5.0" fill="#ffcc00" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="950.0" cy="550.0" r="2.0" fill="#121212"/>
+  <text x="950.0" y="537.0" fill="#ffffff" font-size="10" font-family="sans-serif" text-anchor="middle">Pad 102</text>
+  <circle cx="150.0" cy="550.0" r="9.0" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="150.0" cy="550.0" r="5.0" fill="#ffcc00" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="150.0" cy="550.0" r="2.0" fill="#121212"/>
+  <text x="150.0" y="537.0" fill="#ffffff" font-size="10" font-family="sans-serif" text-anchor="middle">Pad 201</text>
+  <circle cx="950.0" cy="150.0" r="9.0" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="950.0" cy="150.0" r="5.0" fill="#ffcc00" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="950.0" cy="150.0" r="2.0" fill="#121212"/>
+  <text x="950.0" y="137.0" fill="#ffffff" font-size="10" font-family="sans-serif" text-anchor="middle">Pad 202</text>
+  <circle cx="150.0" cy="350.0" r="9.0" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="150.0" cy="350.0" r="5.0" fill="#ffcc00" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="150.0" cy="350.0" r="2.0" fill="#121212"/>
+  <text x="150.0" y="337.0" fill="#ffffff" font-size="10" font-family="sans-serif" text-anchor="middle">Pad 301</text>
+  <circle cx="950.0" cy="350.0" r="9.0" fill="none" stroke="#555555" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="950.0" cy="350.0" r="5.0" fill="#ffcc00" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="950.0" cy="350.0" r="2.0" fill="#121212"/>
+  <text x="950.0" y="337.0" fill="#ffffff" font-size="10" font-family="sans-serif" text-anchor="middle">Pad 302</text>
+</svg>

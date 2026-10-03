@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900.0" height="820.0" viewBox="0 0 900.0 820.0">
+  <rect width="100%" height="100%" fill="#1e1e2e"/>
+  <line x1="850.0" y1="110.0" x2="450.0" y2="50.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="50.0" x2="650.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="850.0" y1="110.0" x2="650.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="50.0" x2="450.0" y2="410.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="650.0" y1="310.0" x2="450.0" y2="410.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="50.0" y1="710.0" x2="250.0" y2="510.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="50.0" y1="710.0" x2="450.0" y2="770.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="770.0" x2="250.0" y2="510.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="50.0" x2="250.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="250.0" y1="310.0" x2="450.0" y2="410.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="50.0" y1="110.0" x2="450.0" y2="50.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="50.0" y1="110.0" x2="250.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="250.0" y1="510.0" x2="450.0" y2="410.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="250.0" y1="510.0" x2="250.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="850.0" y1="710.0" x2="450.0" y2="770.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="850.0" y1="710.0" x2="650.0" y2="510.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="770.0" x2="650.0" y2="510.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="650.0" y1="510.0" x2="450.0" y2="410.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="650.0" y1="510.0" x2="650.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="410.0" x2="450.0" y2="610.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="650.0" y1="510.0" x2="450.0" y2="610.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="450.0" y1="770.0" x2="450.0" y2="610.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="250.0" y1="510.0" x2="450.0" y2="610.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="50.0" y1="710.0" x2="250.0" y2="310.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="50.0" y1="710.0" x2="50.0" y2="110.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="850.0" y1="110.0" x2="650.0" y2="510.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <line x1="850.0" y1="710.0" x2="850.0" y2="110.0" stroke="#45475a" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <circle cx="650.0" cy="80.0" r="3" fill="#f38ba8"/>
+  <circle cx="550.0" cy="180.0" r="3" fill="#f9e2af"/>
+  <circle cx="750.0" cy="210.0" r="3" fill="#f9e2af"/>
+  <circle cx="450.0" cy="230.0" r="3" fill="#f9e2af"/>
+  <circle cx="550.0" cy="360.0" r="3" fill="#a6e3a1"/>
+  <circle cx="150.0" cy="610.0" r="3" fill="#f9e2af"/>
+  <circle cx="250.0" cy="740.0" r="3" fill="#f38ba8"/>
+  <circle cx="350.0" cy="640.0" r="3" fill="#f9e2af"/>
+  <circle cx="350.0" cy="180.0" r="3" fill="#f9e2af"/>
+  <circle cx="350.0" cy="360.0" r="3" fill="#a6e3a1"/>
+  <circle cx="250.0" cy="80.0" r="3" fill="#f38ba8"/>
+  <circle cx="150.0" cy="210.0" r="3" fill="#f9e2af"/>
+  <circle cx="350.0" cy="460.0" r="3" fill="#a6e3a1"/>
+  <circle cx="250.0" cy="410.0" r="3" fill="#a6e3a1"/>
+  <circle cx="650.0" cy="740.0" r="3" fill="#f38ba8"/>
+  <circle cx="750.0" cy="610.0" r="3" fill="#f9e2af"/>
+  <circle cx="550.0" cy="640.0" r="3" fill="#f9e2af"/>
+  <circle cx="550.0" cy="460.0" r="3" fill="#a6e3a1"/>
+  <circle cx="650.0" cy="410.0" r="3" fill="#a6e3a1"/>
+  <circle cx="450.0" cy="510.0" r="3" fill="#a6e3a1"/>
+  <circle cx="550.0" cy="560.0" r="3" fill="#a6e3a1"/>
+  <circle cx="450.0" cy="690.0" r="3" fill="#f9e2af"/>
+  <circle cx="350.0" cy="560.0" r="3" fill="#a6e3a1"/>
+  <circle cx="150.0" cy="510.0" r="3" fill="#f9e2af"/>
+  <circle cx="50.0" cy="410.0" r="3" fill="#f38ba8"/>
+  <circle cx="750.0" cy="310.0" r="3" fill="#f9e2af"/>
+  <circle cx="850.0" cy="410.0" r="3" fill="#f38ba8"/>
+  <circle cx="50.0" cy="710.0" r="6" fill="#89b4fa"/>
+  <text x="58.0" y="714.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v0</text>
+  <circle cx="850.0" cy="710.0" r="6" fill="#89b4fa"/>
+  <text x="858.0" y="714.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v1</text>
+  <circle cx="50.0" cy="110.0" r="6" fill="#89b4fa"/>
+  <text x="58.0" y="114.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v2</text>
+  <circle cx="850.0" cy="110.0" r="6" fill="#89b4fa"/>
+  <text x="858.0" y="114.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v3</text>
+  <circle cx="450.0" cy="770.0" r="6" fill="#89b4fa"/>
+  <text x="458.0" y="774.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v4</text>
+  <circle cx="450.0" cy="50.0" r="6" fill="#89b4fa"/>
+  <text x="458.0" y="54.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v5</text>
+  <circle cx="250.0" cy="510.0" r="6" fill="#89b4fa"/>
+  <text x="258.0" y="514.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v6</text>
+  <circle cx="650.0" cy="510.0" r="6" fill="#89b4fa"/>
+  <text x="658.0" y="514.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v7</text>
+  <circle cx="250.0" cy="310.0" r="6" fill="#89b4fa"/>
+  <text x="258.0" y="314.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v8</text>
+  <circle cx="650.0" cy="310.0" r="6" fill="#89b4fa"/>
+  <text x="658.0" y="314.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v9</text>
+  <circle cx="450.0" cy="410.0" r="6" fill="#89b4fa"/>
+  <text x="458.0" y="414.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v10</text>
+  <circle cx="450.0" cy="610.0" r="6" fill="#89b4fa"/>
+  <text x="458.0" y="614.0" fill="#cdd6f4" font-size="12" font-family="sans-serif">v11</text>
+  <polyline points="50.0,710.0 150.0,610.0 250.0,510.0 450.0,770.0 650.0,510.0 850.0,710.0" fill="none" stroke="#f38ba8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="50.0,710.0 150.0,210.0 250.0,310.0 250.0,510.0 450.0,770.0 450.0,610.0 650.0,510.0 850.0,710.0" fill="none" stroke="#a6e3a1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="50.0,710.0 450.0,690.0 450.0,610.0 650.0,510.0 450.0,410.0 650.0,310.0 850.0,710.0" fill="none" stroke="#f9e2af" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
