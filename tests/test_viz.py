@@ -1,24 +1,17 @@
-from toporouter.topo.state import TopoState
-from toporouter.topo.router import TopoRouter, Net
-from toporouter.viz.svg import export_svg
-from tests.test_router import create_two_triangle_map
+from tests.conftest import demo_board
+from weaveengine.router import route_board
+from weaveengine.viz.svg import export_result, export_svg
+
 
 def test_svg_export(tmp_path):
-    pmap = create_two_triangle_map()
-    state = TopoState(pmap)
-    router = TopoRouter(pmap, state)
-
-    nets = [
-        Net(net_id=1, start_pad_id=10, target_pad_id=20, target_pos=(2.0, 0.5)),
-        Net(net_id=2, start_pad_id=10, target_pad_id=20, target_pos=(2.0, 0.5)),
-    ]
-    assert router.route_all(nets) is True
-
-    output_file = tmp_path / "test_output.svg"
-    export_svg(pmap, state, str(output_file))
-
-    assert output_file.exists()
-    svg_content = output_file.read_text()
-    assert "<svg" in svg_content
-    assert "</svg>" in svg_content
-    assert "polyline" in svg_content
+    board = demo_board()
+    result = route_board(board)
+    out = tmp_path / "board.svg"
+    export_svg(board, str(out), result.polylines, result.wire_net, pmap=result.pmap)
+    text = out.read_text()
+    assert text.startswith("<svg") and text.rstrip().endswith("</svg>")
+    assert text.count("<title>wire") == 3
+    assert text.count("<title>pad") == 6
+    export_result(result, str(out))
+    text = out.read_text()
+    assert text.count("<title>wire") == 3 and text.count("<polygon") >= 1 + 1 + 6 + 6  # outline, keepout, pads, teardrops

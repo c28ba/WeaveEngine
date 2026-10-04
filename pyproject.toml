@@ -1,0 +1,22 @@
+[project]
+name = "weaveengine"
+version = "0.1.0"
+description = "WeaveEngine: a topological PCB autorouter"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "shapely>=2", "triangle"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+weaveengine = "weaveengine.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["weaveengine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

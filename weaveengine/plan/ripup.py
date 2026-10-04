@@ -1,0 +1,119 @@
+"""Phase 3: negotiated rip-up and reroute, and Phase 4 refinement (section 10)."""
+from weaveengine.plan.candidates import best_route, plain_route
+from weaveengine.plan.context import Context
+from weaveengine.topo.search import Route
+
+STALL_LIMIT = 8
+
+
+def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
+    """Loop until zero overflow and zero unrouted, or the iteration limit.
+    The best solution seen (fewest violations, then shortest) is kept."""
+    params = ctx.params
+    max_rounds = params.max_rounds if max_rounds is None else max_rounds
+    best_key, best_snap, stall = None, None, 0
+
+    for _ in range(max_rounds + 1):
+        key = (ctx.violations(), ctx.estimated_length())
+        if best_key is None or key < best_key:
+            best_key, best_snap, stall = key, ctx.snapshot(), 0
+        else:
+            stall += 1
+        over = [(layer, e) for layer in ctx.layers for e in layer.state.overflowed_gates()]
+        open_conns = [w for w in ctx.unrouted if not ctx.conns[w].dead]
+        if (not over and not open_conns) or stall >= STALL_LIMIT or ctx.rounds >= max_rounds:
+            break
+        ctx.rounds += 1
+
+        # 1. Raise prices. Capped: beyond a few crossing penalties it only blunts the A* heuristic.
+        params.pres_fac = min(10.0 * params.cross_penalty, params.pres_fac * params.pres_growth)
+        for layer, e in over:
+            layer.state.hist[e] += params.hist_inc * layer.state.overflow(e)
+
+        # 2. Rip-up set: wires on over-capacity gates, plus the blocking set
+        #    of the cheapest relaxed path of each unrouted connection (8.5).
+        rip: set[int] = set()
+        for layer, e in over:
+            rip.update(layer.state.gate_order[e])
+        for w in open_conns:
+            conn = ctx.conns[w]
+            r = plain_route(ctx, conn, mode="relaxed")
+            if r is None:
+                conn.dead = True
+            else:
+                rip |= r.blocking
+        for w in rip:
+            ctx.rip(w)
+
+        # 3. Barrier is append-only: rebuild from what is left.
+        ctx.rebuild_barrier()
+
+        # 4. Reroute: connections that were stuck go first, then the ripped ones.
+        todo = sorted((w for w in ctx.unrouted if not ctx.conns[w].dead),
+                      key=lambda w: (w in rip, -ctx.conns[w].fails, ctx.conns[w].air_len))
+        for w in todo:
+            conn = ctx.conns[w]
+            r = best_route(ctx, conn)
+            if r is None:
+                conn.fails += 1
+            else:
+                ctx.commit(conn, r)
+
+    if best_snap is not None and (ctx.violations(), ctx.estimated_length()) > best_key:
+        ctx.restore(best_snap)
+
+
+def legalise(ctx: Context) -> None:
+    """Final guarantee: no gate over capacity. Rips the worst offenders, then
+    tries once more to place whatever is unrouted without creating overflow."""
+    while True:
+        count: dict[int, int] = {}
+        for layer in ctx.layers:
+            for e in layer.state.overflowed_gates():
+                for w in layer.state.gate_order[e]:
+                    count[w] = count.get(w, 0) + 1
+        if not count:
+            break
+        ctx.rip(max(count, key=lambda w: (count[w], w)))
+    ctx.rebuild_barrier()
+    for w in sorted(ctx.unrouted, key=lambda w: ctx.conns[w].air_len):
+        conn = ctx.conns[w]
+        r = plain_route(ctx, conn, hard_cap=True)
+        if r is not None:
+            ctx.commit(conn, r)
+
+
+def refine(ctx: Context, passes: int = 2) -> int:
+    """Phase 4 (topology refinement): take each wire out and put it back by the
+    cheapest legal route, longest detours first. A wire only moves when that
+    shortens it, so the total never grows. Returns the number of wires moved."""
+    moved = 0
+    for _ in range(passes):
+        changed = 0
+        lengths = {}
+        for layer in ctx.layers:
+            mids = layer.pmap.edge_mid_list
+            for w, path in layer.paths.items():
+                g = path.gates
+                lengths[w] = sum(((mids[a][0] - mids[b][0]) ** 2 + (mids[a][1] - mids[b][1]) ** 2) ** 0.5 for a, b in zip(g, g[1:]))
+        for w in sorted(lengths, key=lambda w: ctx.conns[w].air_len - lengths[w]):
+            conn = ctx.conns[w]
+            layer = ctx.layers[conn.layer]
+            # Stored slots are those at insertion time; other wires have come
+            # and gone since, so read the wire's present position on each gate.
+            order = layer.state.gate_order
+            old_layer = conn.layer
+            old_steps = [(e, t, k, order[e].index(w)) for e, t, k, _ in layer.state.wire_path[w]]
+            ctx.rip(w)
+            r = plain_route(ctx, conn, hard_cap=True, congestion=False)
+            if r is not None and r.length < lengths[w] - 1e-6:
+                ctx.commit(conn, r)
+                changed += 1
+            else:
+                # Put it back exactly where it was.
+                ctx.commit(conn, Route(old_steps, 0.0, 0.0, layer=old_layer))
+        moved += changed
+        if not changed:
+            break
+    ctx.rebuild_barrier()
+    return moved
