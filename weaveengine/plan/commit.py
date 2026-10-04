@@ -1,7 +1,8 @@
 """Phase 2: commit in regret order (section 10)."""
 import math
 
-from weaveengine.plan.candidates import Candidate, best_route
+from weaveengine import parallel
+from weaveengine.plan.candidates import Candidate, best_route, replay
 from weaveengine.plan.context import Context
 from weaveengine.topo.search import Route, route
 
@@ -33,22 +34,34 @@ def commit_all(ctx: Context, cands: dict[int, list[Candidate]], selection: dict[
 
     regrets = {w: regret(w) for w in pending}
     failed: list[int] = []
+    total = len(pending)
+    size = max(1, params.batch)
     while pending:
-        w = max(pending, key=lambda x: (regrets[x], -x))
-        pending.discard(w)
-        conn = ctx.conns[w]
-        chosen = cands[w][selection[w]] if w in selection and cands.get(w) else None
-        r = _place(ctx, conn, chosen)
-        if r is None:
-            failed.append(w)
-            continue
-        ctx.commit(conn, r)
+        # The next batch in regret order, placed against one snapshot in parallel.
+        chunk = sorted(pending, key=lambda x: (-regrets[x], x))[:size]
+        pending.difference_update(chunk)
+        routes = parallel.run(_place_task, (ctx, cands, selection), chunk, ctx.workers)
         dirty: set[int] = set()
-        for g in r.gates:
-            dirty |= users.get((r.layer, g), set())
-        for d in dirty & pending:  # only regrets touched by this commit
+        for i, (w, r) in enumerate(zip(chunk, routes)):
+            conn = ctx.conns[w]
+            if r is not None and i > 0:
+                r = replay(ctx, conn, r) or _place_task((ctx, cands, selection), w)
+            if r is None:
+                failed.append(w)
+                continue
+            ctx.commit(conn, r)
+            for g in r.gates:
+                dirty |= users.get((r.layer, g), set())
+        for d in dirty & pending:  # only regrets touched by these commits
             regrets[d] = regret(d)
+        ctx.report("commit", total - len(pending), total)
     return failed
+
+
+def _place_task(shared, w: int) -> Route | None:
+    ctx, cands, selection = shared
+    chosen = cands[w][selection[w]] if w in selection and cands.get(w) else None
+    return _place(ctx, ctx.conns[w], chosen)
 
 
 def _place(ctx: Context, conn, chosen: Candidate | None) -> Route | None:

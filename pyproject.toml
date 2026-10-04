@@ -6,7 +6,9 @@ requires-python = ">=3.10"
 dependencies = ["numpy", "scipy", "shapely>=2", "triangle"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+fast = ["numba"]
+app = ["PySide6", "numba"]
+dev = ["pytest", "numba", "PySide6", "pyinstaller"]
 
 [project.scripts]
 weaveengine = "weaveengine.cli:main"

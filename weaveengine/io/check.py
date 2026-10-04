@@ -23,7 +23,7 @@ class Measured:
     widths: dict[str, set] = field(default_factory=dict)  # net name -> widths used
     wrong_width: list[str] = field(default_factory=list)
     crossings: int = 0
-    traces: int = 0
+    traces: int = 0       # includes the short wide traces that make up teardrops
     vias: int = 0
 
     @property
@@ -70,7 +70,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     for net, layer, width, pts in wires:
         out.widths.setdefault(net, set()).add(round(width, 6))
         want = rules.width(design.net_ids.get(net, -1))
-        if abs(width - want) > 1e-6:
+        if width < want - 1e-6:  # wider is fine: teardrops are written as short, wide traces
             out.wrong_width.append(net)
         line = LineString(pts)
         by_layer.setdefault(layer, []).append((net, width, line))

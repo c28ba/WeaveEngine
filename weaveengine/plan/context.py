@@ -1,10 +1,12 @@
 """Shared routing context: layers, connections, demand map, airwire index, barrier (Phase 0)."""
 import math
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.sparse.csgraph import minimum_spanning_tree
 
+from weaveengine import parallel
 from weaveengine.board import Board
 from weaveengine.topo.barrier import Barrier
 from weaveengine.topo.costs import CostParams
@@ -78,12 +80,25 @@ class Options:
     ripup: bool = True              # Phase 3 (E5)
     refine: bool = True             # Phase 4: reroute each wire once, keep it if shorter
     vias: bool = True               # insert via sites for connections that cannot be completed
-    teardrops: bool = True          # teardrops on circular pads and vias
+    smooth: bool = True             # round sharp corners where the design rules leave room
+    teardrops: bool = True          # teardrops where traces meet pads and vias
+    teardrop_max_length: float = 1.0   # mm beyond the pad
+    teardrop_max_width: float = 2.0    # mm across
+    teardrop_breathing: float = 1.5    # clearances a teardrop keeps from foreign copper, else it is left out
+    portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
 
 
 class Context:
     def __init__(self, board: Board, layers: list[Layer], pairs: list[tuple[int, int, int]],
-                 params: CostParams | None = None, options: Options | None = None, seed: int = 0):
+                 params: CostParams | None = None, options: Options | None = None, seed: int = 0,
+                 workers: int | None = None, progress=None, events=None):
+        self.workers = workers      # None = all cores; 1 = this process only
+        self.progress = progress    # callable(phase: str, done: float, total: float) or None
+        self.events = events        # callable(dict) or None: live events for a front end (see weaveengine.session)
+        self.variant = 0            # which raced variant this context is (0 = the plain one)
+        self.stop = None            # event set when this variant's result is no longer wanted
+        self.pass_index = 1
+        self._last_snapshot = 0.0
         self.board = board
         self.layers = layers
         self.params = params or CostParams.for_map(layers[0].pmap)
@@ -184,6 +199,49 @@ class Context:
                 for g in air.gates:
                     self.layers[li].air_index[g].add(w)
         self.rebuild_barrier()
+
+    def report(self, phase: str, done: float = 0.0, total: float = 1.0) -> None:
+        if self.stop is not None and self.stop.is_set():
+            raise parallel.Stopped()
+        if self.progress is not None:
+            self.progress(phase, done, total)
+        if self.events is not None:
+            self.events({"type": "progress", "pass": self.pass_index, "variant": self.variant,
+                         "phase": phase, "done": done, "total": total})
+            self.emit_snapshot()
+
+    def emit_snapshot(self, force: bool = False, lines: dict | None = None) -> None:
+        """Sends the front end a picture of the routing as it stands: every
+        wire as a rough polyline through the middles of the gates it crosses
+        (or, once geometry exists, the real ``lines``), with a few numbers.
+        At most a couple a second unless forced."""
+        if self.events is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_snapshot < 0.4:
+            return
+        self._last_snapshot = now
+        wires = []
+        for layer in self.layers:
+            mids, centre = layer.pmap.edge_mid_list, layer.pmap.pad_centre
+            for w, path in layer.paths.items():
+                conn = self.conns[w]
+                if lines is not None and w in lines:
+                    pts = lines[w]
+                else:
+                    pts = [centre[conn.src]] + [mids[g] for g in path.gates] + [centre[conn.dst]]
+                wires.append((layer.index, conn.net_id, [(round(x, 3), round(y, 3)) for x, y in pts]))
+        centre = {p.pad_id: p.centre for p in self.board.pads}
+        self.events({
+            "type": "snapshot", "pass": self.pass_index, "variant": self.variant, "final": lines is not None,
+            "wires": wires,
+            "open": [(centre[self.conns[w].src], centre[self.conns[w].dst]) for w in self.unrouted],
+            "vias": [p.centre for p in self.board.pads if p.is_via],
+            "routed": len(self.conns) - len(self.unrouted), "total": len(self.conns),
+            "overflow": sum(len(l.state.overflowed_gates()) for l in self.layers),
+            "rounds": self.rounds, "length": self.estimated_length(),
+            "per_layer": {l.name: len(l.paths) for l in self.layers},
+        })
 
     # -- metrics ------------------------------------------------------------
     def violations(self) -> int:

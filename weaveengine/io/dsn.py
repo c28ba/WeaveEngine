@@ -4,6 +4,7 @@ Reads the sections the router needs: boundary, rules, keepouts, placement,
 library (images and padstacks), network and fixed wiring. v1 routes a single
 layer, so pads are taken from one signal layer.
 """
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -11,7 +12,7 @@ from shapely import affinity
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 
-from weaveengine.board import Board, Obstacle, Pad, Rules, circle_polygon
+from weaveengine.board import Board, Component, Obstacle, Pad, Rules, circle_polygon
 
 UNIT_MM = {"mm": 1.0, "um": 1e-3, "mil": 0.0254, "inch": 25.4, "cm": 10.0}
 
@@ -83,8 +84,38 @@ def _shape(desc: list, scale: float):
     return None
 
 
+def _outline(desc: list, scale: float) -> list[tuple[float, float]] | None:
+    """A footprint outline element as a polyline in mm (footprint coordinates)."""
+    kind = desc[0]
+    nums = [float(x) * scale for x in desc[2:] if not isinstance(x, list)]
+    if kind in ("path", "polygon"):
+        pts = list(zip(nums[1::2], nums[2::2]))
+        if kind == "polygon" and pts and pts[0] != pts[-1]:
+            pts.append(pts[0])
+        return pts if len(pts) >= 2 else None
+    if kind == "rect":
+        x0, y0, x1, y1 = nums[:4]
+        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+    if kind == "circle":
+        r = nums[0] / 2.0
+        cx, cy = (nums[1], nums[2]) if len(nums) >= 3 else (0.0, 0.0)
+        return [(cx + r * math.cos(2 * math.pi * i / 32), cy + r * math.sin(2 * math.pi * i / 32)) for i in range(33)]
+    return None
+
+
 def read_dsn(path: str, layers: list[str] | None = None) -> Design:
-    """Reads a DSN. ``layers`` restricts routing to the named signal layers (default: all)."""
+    """Reads a DSN. ``layers`` restricts routing to the named signal layers (default: all).
+    Raises ValueError, with a readable message, for anything that is not a usable DSN."""
+    try:
+        return _read_dsn(path, layers)
+    except ValueError:
+        raise
+    except (IndexError, KeyError, TypeError, AttributeError) as error:
+        raise ValueError(f"not a readable Specctra DSN file: a required section is missing or malformed "
+                         f"({type(error).__name__}: {error})") from error
+
+
+def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     with open(path) as f:
         root = parse_sexpr(f.read())
     if root[0].lower() != "pcb":
@@ -197,6 +228,12 @@ def read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 if isinstance(name, str) and name in design.net_ids:
                     board.rules.net_width[design.net_ids[name]] = w
 
+    # Nets with a copper plane (a zone in the CAD tool) are connected by that
+    # plane, not by traces. Pours are not modelled, so those nets are left alone.
+    for plane in _children(structure, "plane"):
+        if plane[1] in design.net_ids:
+            board.plane_nets.add(design.net_ids[plane[1]])
+
     # Pads from placed components.
     placement = _child(root, "placement") or []
     for comp in _children(placement, "component"):
@@ -207,6 +244,22 @@ def read_dsn(path: str, layers: list[str] | None = None) -> Design:
             if image is None:
                 continue
             back = side == "back"
+            part_number = _child(place, "PN")
+            component = Component(ref, part_number[1] if part_number and len(part_number) > 1 else "", comp[1], side,
+                                  px * scale, py * scale, rot)
+            board.components.append(component)
+            for outline in _children(image, "outline"):
+                for desc in outline[1:]:
+                    line = _outline(desc, scale) if isinstance(desc, list) else None
+                    if line:
+                        placed = []
+                        for x, y in line:
+                            if back:
+                                x = -x
+                            a = math.radians(rot)
+                            placed.append((px * scale + x * math.cos(a) - y * math.sin(a),
+                                           py * scale + x * math.sin(a) + y * math.cos(a)))
+                        component.outlines.append(placed)
             for pin in _children(image, "pin"):
                 fields = [x for x in pin[1:] if not isinstance(x, list)]
                 stack, pin_id, x, y = fields[0], fields[1], float(fields[2]) * scale, float(fields[3]) * scale
@@ -226,6 +279,7 @@ def read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 if shape.geom_type != "Polygon":
                     shape = shape.convex_hull
                 name = f"{ref}-{pin_id}"
+                component.pads.append(len(board.pads))
                 board.pads.append(Pad(len(board.pads), pin_net.get(name, -1), shape, name, on, radius))
 
     # Pre-existing copper is a fixed obstacle in v1.

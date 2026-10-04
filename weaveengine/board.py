@@ -97,6 +97,27 @@ class Obstacle:
 
 
 @dataclass
+class Component:
+    """A placed part, for display and selection (the router itself only needs its pads)."""
+    reference: str
+    value: str = ""
+    footprint: str = ""
+    side: str = "front"
+    x: float = 0.0
+    y: float = 0.0
+    rotation: float = 0.0
+    outlines: list[list[tuple[float, float]]] = field(default_factory=list)  # polylines, board coordinates
+    pads: list[int] = field(default_factory=list)                              # pad ids
+
+    def bounds(self) -> tuple[float, float, float, float] | None:
+        pts = [p for line in self.outlines for p in line]
+        if not pts:
+            return None
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+
+@dataclass
 class Board:
     outline: Polygon
     rules: Rules = field(default_factory=Rules)
@@ -104,6 +125,8 @@ class Board:
     obstacles: list[Obstacle] = field(default_factory=list)
     net_names: dict[int, str] = field(default_factory=dict)
     layers: list[str] = field(default_factory=lambda: ["F.Cu"])
+    plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
+    components: list[Component] = field(default_factory=list)
 
     @classmethod
     def rectangle(cls, width: float, height: float, rules: Rules | None = None, layers: list[str] | None = None) -> "Board":
@@ -127,4 +150,4 @@ class Board:
         for p in self.pads:
             if p.net_id >= 0:
                 nets.setdefault(p.net_id, []).append(p.pad_id)
-        return {n: pads for n, pads in nets.items() if len(pads) >= 2}
+        return {n: pads for n, pads in nets.items() if len(pads) >= 2 and n not in self.plane_nets}

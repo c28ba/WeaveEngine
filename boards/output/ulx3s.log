@@ -1,0 +1,100 @@
+rules: trace 0.2 mm, clearance 0.2 mm, via 0.6/0.3 mm; 4 layers, 1171 pads
+edge clearance 0.2 mm (the DSN does not carry one; set it with --edge-clearance or --kicad-pro)
+5 nets have a copper plane and are not routed as traces: +1V1, +2V5, +3V3, 2V5_3V3, GND
+pass 1 [............................]   0%  racing variants 1-4 of 8 elapsed 0:00  left in pass ?
+pass 1 [............................]   0%  candidates          elapsed 0:00  left in pass ?
+pass 1: rough estimate for this pass 0:12
+pass 1 [#...........................]   4%  global selection    elapsed 0:01  left in pass ~0:12
+pass 1 [###.........................]  10%  commit              elapsed 0:01  left in pass ~0:12
+pass 1 [######......................]  22%  rip-up              elapsed 0:01  left in pass ~0:02
+pass 1 [#################...........]  62%  refinement          elapsed 0:02  left in pass ~0:01
+pass 1 [##################..........]  66%  geometry            elapsed 0:02  left in pass ~0:01
+pass 1 [######################......]  80%  design-rule repair  elapsed 0:04  left in pass ~0:01
+pass 1 [######################......]  80%  rip-up              elapsed 0:04  left in pass ~0:01
+pass 1 [########################....]  84%  design-rule repair  elapsed 0:07  left in pass ~0:01
+pass 1 [########################....]  84%  rip-up              elapsed 0:07  left in pass ~0:01
+pass 1 [#########################...]  89%  design-rule repair  elapsed 0:11  left in pass ~0:01
+pass 1 [#########################...]  89%  rip-up              elapsed 0:11  left in pass ~0:01
+pass 1 [............................]   0%  racing variants 5-8 of 8 elapsed 0:26  left in pass ?
+pass 1 [############################] 100%  variant 6 of 8 kept elapsed 0:46  left in pass ~0:00
+pass 1 [############################] 100%  placing vias        elapsed 0:46  left in pass ~0:00
+pass 2 [............................]   0%  racing variants 1-4 of 8 elapsed 0:55  left in pass ?
+pass 2 [............................]   0%  candidates          elapsed 0:55  left in pass ?
+pass 2: rough estimate for this pass 0:20
+pass 2 [#...........................]   4%  global selection    elapsed 0:56  left in pass ~0:19
+pass 2 [###.........................]  10%  commit              elapsed 0:56  left in pass ~0:19
+pass 2 [######......................]  22%  rip-up              elapsed 0:58  left in pass ~0:07
+pass 2 [#################...........]  62%  refinement          elapsed 1:00  left in pass ~0:02
+pass 2 [##################..........]  66%  geometry            elapsed 1:00  left in pass ~0:02
+pass 2 [######################......]  80%  design-rule repair  elapsed 1:03  left in pass ~0:02
+pass 2 [######################......]  80%  rip-up              elapsed 1:03  left in pass ~0:02
+pass 2 [########################....]  84%  design-rule repair  elapsed 1:09  left in pass ~0:03
+pass 2 [########################....]  84%  rip-up              elapsed 1:09  left in pass ~0:03
+pass 2 [#########################...]  89%  design-rule repair  elapsed 1:15  left in pass ~0:02
+pass 2 [#########################...]  89%  rip-up              elapsed 1:15  left in pass ~0:02
+pass 2 [............................]   0%  racing variants 5-8 of 8 elapsed 1:31  left in pass ?
+pass 2 [############################] 100%  variant 7 of 8 kept elapsed 2:10  left in pass ~0:00
+pass 2 [############################] 100%  placing vias        elapsed 2:10  left in pass ~0:00
+pass 3 [............................]   0%  racing variants 1-4 of 8 elapsed 2:16  left in pass ?
+pass 3 [............................]   0%  candidates          elapsed 2:16  left in pass ?
+pass 3: rough estimate for this pass 0:33
+pass 3 [#...........................]   4%  global selection    elapsed 2:16  left in pass ~0:32
+pass 3 [###.........................]  10%  commit              elapsed 2:17  left in pass ~0:32
+pass 3 [######......................]  22%  rip-up              elapsed 2:18  left in pass ~0:08
+pass 3 [#################...........]  62%  refinement          elapsed 2:21  left in pass ~0:03
+pass 3 [##################..........]  66%  geometry            elapsed 2:21  left in pass ~0:03
+pass 3 [######################......]  80%  design-rule repair  elapsed 2:24  left in pass ~0:02
+pass 3 [######################......]  80%  rip-up              elapsed 2:24  left in pass ~0:02
+pass 3 [########################....]  84%  design-rule repair  elapsed 2:31  left in pass ~0:03
+pass 3 [########################....]  84%  rip-up              elapsed 2:31  left in pass ~0:03
+pass 3 [#########################...]  89%  design-rule repair  elapsed 2:37  left in pass ~0:03
+pass 3 [#########################...]  89%  rip-up              elapsed 2:37  left in pass ~0:03
+pass 3 [............................]   0%  racing variants 5-8 of 8 elapsed 2:44  left in pass ?
+pass 3 [############################] 100%  variant 1 of 8 kept elapsed 3:13  left in pass ~0:00
+pass 3 [############################] 100%  placing vias        elapsed 3:13  left in pass ~0:00
+pass 4 [............................]   0%  racing variants 1-4 of 8 elapsed 3:20  left in pass ?
+pass 4 [............................]   0%  candidates          elapsed 3:20  left in pass ?
+pass 4: rough estimate for this pass 0:37
+pass 4 [#...........................]   4%  global selection    elapsed 3:21  left in pass ~0:37
+pass 4 [###.........................]  10%  commit              elapsed 3:21  left in pass ~0:36
+pass 4 [######......................]  22%  rip-up              elapsed 3:24  left in pass ~0:15
+pass 4 [#################...........]  62%  refinement          elapsed 3:26  left in pass ~0:03
+pass 4 [##################..........]  66%  geometry            elapsed 3:26  left in pass ~0:03
+pass 4 [######################......]  80%  design-rule repair  elapsed 3:30  left in pass ~0:02
+pass 4 [######################......]  80%  rip-up              elapsed 3:30  left in pass ~0:02
+pass 4 [########################....]  84%  design-rule repair  elapsed 3:35  left in pass ~0:03
+pass 4 [########################....]  84%  rip-up              elapsed 3:35  left in pass ~0:03
+pass 4 [#########################...]  89%  design-rule repair  elapsed 3:40  left in pass ~0:02
+pass 4 [#########################...]  89%  rip-up              elapsed 3:40  left in pass ~0:02
+pass 4 [............................]   0%  racing variants 5-8 of 8 elapsed 3:54  left in pass ?
+pass 4 [############################] 100%  variant 1 of 8 kept elapsed 4:30  left in pass ~0:00
+pass 4 [############################] 100%  placing vias        elapsed 4:30  left in pass ~0:00
+pass 5 [............................]   0%  racing variants 1-4 of 8 elapsed 4:38  left in pass ?
+pass 5 [............................]   0%  candidates          elapsed 4:38  left in pass ?
+pass 5: rough estimate for this pass 0:46
+pass 5 [#...........................]   4%  global selection    elapsed 4:39  left in pass ~0:45
+pass 5 [###.........................]  10%  commit              elapsed 4:39  left in pass ~0:45
+pass 5 [######......................]  22%  rip-up              elapsed 4:41  left in pass ~0:13
+pass 5 [#################...........]  62%  refinement          elapsed 4:46  left in pass ~0:05
+pass 5 [##################..........]  66%  geometry            elapsed 4:46  left in pass ~0:04
+pass 5 [######################......]  80%  design-rule repair  elapsed 4:52  left in pass ~0:04
+pass 5 [######################......]  80%  rip-up              elapsed 4:52  left in pass ~0:04
+pass 5 [########################....]  84%  design-rule repair  elapsed 4:58  left in pass ~0:04
+pass 5 [########################....]  84%  rip-up              elapsed 4:58  left in pass ~0:04
+pass 5 [#########################...]  89%  design-rule repair  elapsed 5:06  left in pass ~0:03
+pass 5 [#########################...]  89%  rip-up              elapsed 5:06  left in pass ~0:03
+pass 5 [............................]   0%  racing variants 5-8 of 8 elapsed 5:11  left in pass ?
+pass 5 [############################] 100%  variant 6 of 8 kept elapsed 5:55  left in pass ~0:00
+196/205 connections routed (F.Cu: 60, In1.Cu: 5, In2.Cu: 2, B.Cu: 181; 52 vias), length ratio 1.289, 355.5s -> boards/output/ulx3s.ses
+  unrouted: net +5V: via1215 -> U5-4
+  unrouted: net JTAG_TMS: via1171 -> U6-5
+  unrouted: net JTAG_TMS: J4-5 -> U6-5
+  unrouted: net JTAG_TDO: J4-6 -> U6-6
+  unrouted: net JTAG_TDO: U6-6 -> via1173
+  unrouted: net nRESET: via1206 -> U6-11
+  unrouted: net USB_FTDI_D+: via1207 -> U6-8
+  unrouted: net USB_FTDI_D-: via1208 -> U6-9
+  unrouted: net FT2V5: via1212 -> U6-10
+  246 pads have no reachable boundary (overlapping clearances)
+measured from ulx3s.ses: smallest gap trace-pad 0.2098, trace-trace 0.2099 (rule 0.2), trace-edge 0.2359 (rule 0.2) mm; 0 crossings; widths as ruled -> OK
+.venv/bin/weaveengine boards/ulx3s.dsn -o boards/output/ulx3s.ses --svg   1176.87s user 60.46s system 346% cpu 5:56.81 total

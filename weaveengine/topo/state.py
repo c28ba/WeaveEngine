@@ -1,6 +1,8 @@
 """Topological state (design section 7): ordered wires per gate, corner counts per triangle."""
 import math
 
+import numpy as np
+
 from weaveengine.topo.planar_map import PlanarMap
 
 # A step is (edge_id, tri_id, corner_k, slot): the wire crossed ``edge_id`` at
@@ -21,14 +23,15 @@ class TopoState:
         # uniform wires and stays correct for mixed widths. It is an estimate;
         # DRC feedback may lower it, so the working copy lives here.
         kinds = planar_map.edge_kind_list
-        self.cap: list[float] = [0.0 if kinds[e] == 1 else w / planar_map.pitch + 1.0
-                                 for e, w in enumerate(planar_map.edge_width.tolist())]
-        # A pad edge always lets one trace leave its own pad, however wide:
-        # give every pad edge room for the widest trace that ends on it alone.
+        self.cap = np.where(planar_map.edge_kind == 1, 0.0, planar_map.edge_width / planar_map.pitch + 1.0)
+        # A pad edge always lets one trace leave its own pad, however wide.
         self._terminal = [k == 2 for k in kinds]
-        self.load: list[float] = [0.0] * planar_map.num_edges
+        self.load = np.zeros(planar_map.num_edges)
         self.weight: dict[int, float] = {}
-        self.hist: list[float] = [0.0] * planar_map.num_edges
+        # Flat mirrors of the usage and corner counts, for the compiled search kernel.
+        self.count = np.zeros(planar_map.num_edges, dtype=np.int32)
+        self.corner = np.zeros((planar_map.num_triangles, 3), dtype=np.int32)
+        self.hist = np.zeros(planar_map.num_edges)
 
     def usage(self, edge_id: int) -> int:
         return len(self.gate_order[edge_id])
@@ -40,9 +43,9 @@ class TopoState:
         return max(0, math.ceil(self.load[edge_id] - self.cap[edge_id] - 1e-9))
 
     def overflowed_gates(self) -> list[int]:
-        cap, order, terminal = self.cap, self.gate_order, self._terminal
-        return [e for e, load in enumerate(self.load)
-                if load > cap[e] + 1e-9 and not (terminal[e] and len(order[e]) <= 1)]
+        order, terminal = self.gate_order, self._terminal
+        return [e for e in np.nonzero(self.load > self.cap + 1e-9)[0].tolist()
+                if not (terminal[e] and len(order[e]) <= 1)]
 
     def fits(self, edge_id: int, weight: float) -> bool:
         """Whether one more wire of this weight fits on the edge."""
@@ -65,8 +68,10 @@ class TopoState:
         for edge_id, tri_id, corner_k, slot in steps:
             self.gate_order[edge_id].insert(slot, wire_id)
             self.load[edge_id] += weight
+            self.count[edge_id] += 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] += 1
+                self.corner[tri_id, corner_k] += 1
         self.wire_path[wire_id] = list(steps)
         self.weight[wire_id] = weight
 
@@ -75,16 +80,20 @@ class TopoState:
         for edge_id, tri_id, corner_k, _ in self.wire_path.pop(wire_id):
             self.gate_order[edge_id].remove(wire_id)
             self.load[edge_id] = self.load[edge_id] - weight if self.gate_order[edge_id] else 0.0
+            self.count[edge_id] -= 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] -= 1
+                self.corner[tri_id, corner_k] -= 1
 
     def snapshot(self):
         return ([list(o) for o in self.gate_order], [list(c) for c in self.corner_cnt],
-                {w: list(p) for w, p in self.wire_path.items()}, list(self.load), dict(self.weight))
+                {w: list(p) for w, p in self.wire_path.items()}, self.load.copy(), dict(self.weight))
 
     def restore(self, snap) -> None:
         order, cnt, paths, load, weight = snap
-        self.load, self.weight = list(load), dict(weight)
+        self.load, self.weight = load.copy(), dict(weight)
+        self.count = np.array([len(o) for o in order], dtype=np.int32)
+        self.corner = np.array(cnt, dtype=np.int32).reshape(-1, 3)
         self.gate_order = [list(o) for o in order]
         self.corner_cnt = [list(c) for c in cnt]
         self.wire_path = {w: list(p) for w, p in paths.items()}

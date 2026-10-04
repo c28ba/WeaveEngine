@@ -22,6 +22,8 @@ class CostParams:
     alpha: float = 0.5           # candidate cost slack over the shortest
     max_rounds: int = 100        # Phase 3 iteration limit
     restarts: int = 3            # ICM random restarts
+    h_weight: float = 1.0        # A* heuristic weight; above 1 trades optimality of the estimate for speed
+    batch: int = 1               # connections rerouted against one snapshot of the state, in parallel (section 22)
 
     @classmethod
     def for_map(cls, pmap: PlanarMap, **overrides) -> "CostParams":

@@ -62,7 +62,7 @@
 4. **Incremental updates only.** Committing or ripping up a wire touches only the gates and triangles it crosses. Never rebuild global structures per net. The only rebuild-per-round structure is the barrier union-find (section 9.5).
 5. **Sparse search state.** Use `dict`s keyed by an integer node id, not arrays sized to the whole map.
 6. **`shapely` is used in preprocessing and DRC only**, in batch (vectorised calls and `STRtree`), never per search step.
-7. **Parallelism.** Candidate generation (Phase 1) is read-only per net: use `ProcessPoolExecutor` with `fork` so arrays are shared copy-on-write. Phase 2 and 3 are sequential in v1.
+7. **Parallelism.** Candidate generation (Phase 1) is read-only per net: use `ProcessPoolExecutor` with `fork` so arrays are shared copy-on-write. Phase 2 and 3 are sequential in v1. Wider use of multiple cores is a later step: see section 22.
 8. **Profile before optimising.** `cProfile` and `line_profiler` on the benchmark boards. Allowed accelerations in order: better algorithms, an A* landmark heuristic (via `scipy.sparse.csgraph`), `numba` on the relaxation kernel, only then anything else.
 
 ---
@@ -274,7 +274,7 @@ For each net, try alternative homotopy classes and accept a change if the **real
 
 ## 11. Multi-pin nets
 
-v1: decompose each net into 2-pin connections by a minimum spanning tree over pad positions, then route the connections as independent 2-pin items (each a separate wire id). This loses Steiner-tree optimality, so it is a known limitation. Branches start at pads only. Later improvement: restart a net's routing as a tree grown from its existing copper, with start states on any gate slot adjacent to an existing branch. That requires splitting the wire at the branch point, so it is deferred.
+v1: decompose each net into 2-pin connections by a minimum spanning tree over pad positions, then route the connections as independent 2-pin items (each a separate wire id). This loses Steiner-tree optimality, so it is a known limitation. Branches start at pads only. Since realisation, wires of one net owe each other no spacing: where two of them leave a pad the same way they are drawn as one shared trace until they part, which gives the look and the copper of a branching trace without changing the topology (they are still two wires in the state, so capacity is counted conservatively). Later improvement: restart a net's routing as a tree grown from its existing copper, with start states on any gate slot adjacent to an existing branch. That requires splitting the wire at the branch point, so it is deferred.
 
 ---
 
@@ -316,7 +316,7 @@ Vectorise the sweep with NumPy (all wires processed per gate-index class), or us
 - Optional: round corners to arcs where clearance allows (fillets).
 - Optional: via minimisation once vias exist.
 - **Straight pad exits.** A trace must leave a pad in a straight line from the pad centre. No sharp kink is allowed between the short stub inside the pad's keep-off ring and the taut (elastic) part of the trace. This means the pad edge a wire leaves through is chosen at realisation time, not fixed by the search.
-- **Teardrops** on circular pads and vias: the trace widens smoothly into the pad (tangent lines from a point on the trace to the pad circle). A teardrop is shortened or dropped where it would break clearance.
+- **Teardrops** on circular pads and vias: the trace widens smoothly into the pad (tangent lines from a point on the trace to the pad circle). A teardrop is shortened or dropped where it would break clearance. SES wiring has no filled shapes, so in the session file a teardrop is written as a few short traces that widen towards the pad (`--no-ses-teardrops` leaves them out).
 
 ---
 
@@ -349,6 +349,11 @@ Targets to validate with measurements (these are guesses, not results):
 - Triangulation and table build for about 5,000 pads: a few seconds.
 - A single `search.route` on a mid-size board: low milliseconds average.
 - Phase 3 should converge in tens of rounds, not hundreds, on benchmark boards.
+
+**Status (M9, measured by `python -m bench.perf`, results in `bench/results.md`):** all three targets are met. What got it there, in order of effect:
+1. The search loop and the relaxation sweep are compiled with `numba` (`topo/kernel.py`, `realize/kernel.py`). `numba` is optional: without it the same loops run in Python and give the same routing, only slower. Profiling had shown more than 95 % of the time in these two loops.
+2. Each wire starts relaxation from its exact taut path (string pulling), so the sweep only settles the places where wires press on each other.
+3. The clearance solve along a wall is cached per map.
 
 Techniques: per-half-edge precomputed successor tuples; integer node ids; `dict` visited sets; a stamp-free design (clearing small dicts per search); inverted indexes for `cross_count`; parallel candidate generation; optional A* landmark heuristic. Re-profile after every milestone and record numbers in `bench/results.md`.
 
@@ -396,7 +401,9 @@ Keep a feature only if it improves completion or length ratio without disproport
 | M6 | Multi-pin nets (MST) | Real boards with multi-pin nets route |
 | M7 | Multi-layer with via sites (section 12 option 2) | 2-layer benchmark boards complete |
 | M8 | Post-optimisation: straight pad exits, teardrops on circular pads, optional arcs | Length ratio improves vs M7; no kink at pad exits; teardrops pass DRC |
-| M9 | Performance pass | Meets the section 16 targets or targets are revised with data |
+| M9 | Performance pass | Meets the section 16 targets or targets are revised with data (done: see section 16) |
+| M10 | Parallel execution (section 22) | Wall-clock time on the ALU board drops substantially on a multi-core machine; results independent of the worker count (done: see section 22) |
+| M11 | Desktop application (section 23) | `python main.py` opens the app; a DSN can be imported, routed with live progress, and exported as SES; a single PyInstaller command produces a working standalone build (done on macOS: see section 23) |
 
 ---
 
@@ -443,3 +450,50 @@ Keep a feature only if it improves completion or length ratio without disproport
 - **Homotopy class (topology):** two routes are equivalent if one can be slid into the other without crossing an obstacle. Here, equivalent to having the same gate sequence after pulling taut.
 - **Regret:** how much worse a net's second-best option is than its best.
 - **Negotiated congestion:** repeatedly rip up and reroute, raising the price of overused resources until nothing is overused.
+
+---
+
+## 22. Parallel execution (M10)
+
+Use more than one core wherever it is applicable, practical, and gives a real, substantial speed-up. Do not parallelise for its own sake: measure first (section 3 rule 8) and keep only what pays.
+
+**What is in place** (`weaveengine/parallel.py`):
+1. **Racing variants of a pass** (the big one). How a pass ends depends strongly on small early differences: on the ALU board single runs varied between one pass with no vias and five passes with 18 vias. So the spare cores each run the whole pass with a different seed and search weighting (`Options.portfolio`, default one per worker, at most 8). Variants are taken in a fixed order: the first that connects everything is used, otherwise the best one.
+2. **Phase 1 candidate generation**: one batch over all connections, in worker processes.
+3. **Layers**: maps are built, and geometry (straightening, relaxation, DRC, teardrops) is done, one layer per worker. The two layers of a connection are searched at the same time in threads; the compiled kernel releases the interpreter lock.
+4. **Via proposals** for all open connections, and **benchmarks**.
+
+Workers are forked, so they inherit the maps and the state without copying; only small task data is pickled (a batch costs about 15 ms to start). Without fork (Windows) everything runs in one process with the same results.
+
+**What was tried and not kept as the default:** rerouting several connections at once against one snapshot of the state in Phases 2 and 3 (`CostParams.batch`). A compiled search takes about a millisecond, less than the cost of handing it to another process, and routes computed blind to each other conflict more. It stays available as a parameter; the default is 1.
+
+**Rules**
+- For a given portfolio size the result does not depend on the number of workers or on which finishes first (tested).
+- The portfolio size itself does change the result (more variants, better chance of a clean pass), so it is a setting, not an implementation detail.
+- Everything must still work in a frozen (PyInstaller) build: use `multiprocessing.freeze_support()`; where fork is unavailable the single-process path is used.
+
+**Still open:** Phase 3 is sequential inside a variant; progress is reported only by the plain variant; a persistent worker pool with the state in shared memory would let single searches be spread across cores.
+
+## 23. Desktop application (M11)
+
+A simple GUI started from `main.py` at the repository root (`weaveengine/app.py`, PySide6).
+
+    python main.py [board.dsn]              # run it
+    pyinstaller --noconfirm WeaveEngine.spec # build dist/WeaveEngine.app (macOS) or dist/WeaveEngine/
+
+**What it does**
+- Import a DSN, route it, export the SES (measured against the rules as it is written) or an SVG.
+- **Live view of routing as it happens:** the board filling with traces from the best of the raced variants, wires just placed or rerouted highlighted, both layers with per-layer toggles, vias, unrouted connections as airwires; then the real geometry with teardrops and DRC markers when a pass ends.
+- Live numbers: pass, phase, connections routed and open, vias, rip-up rounds, over-full gates, trace length, wires per layer, which variant is shown, and how each raced variant stands.
+- A progress bar with elapsed time and time left in the pass. Stop cancels the run and its worker processes.
+- A settings editor over `settings.json` (`weaveengine/settings.py`): speed, routing phases and costs, rule overrides, teardrops. Beside `main.py` when run from source; in the user's configuration folder in a packaged app.
+- **Compiled-kernel status** is checked at start-up, off the GUI thread, and shown as a banner; if the kernels are unavailable the reason is shown and confirmed before routing starts. Routing then uses the Python fallback; it never crashes on this (`weaveengine/accel.py`).
+
+**How it is put together**
+- The window never routes. `weaveengine/session.py` runs the router in its own (spawned) process and passes events back through a pipe: status, progress, snapshots of the routing from every variant, pass results, the final result. The router forks its workers inside that process, away from the GUI.
+- Abandoned variants are stopped by a flag and given time to return, not killed, so an event half-written to the shared pipe cannot leave it locked.
+- In a packaged app numba's on-disk cache goes to the user's cache folder (the bundle is read-only).
+
+**Tested** by driving the window with no person present (`main.py --self-test board.dsn --ses out.ses --screenshot out.png`), from source and from the PyInstaller build, on both real two-layer boards.
+
+**Open**: the window has only been exercised through the self-test, not by hand; Windows and Linux builds are untried (without fork the router runs single-process there).

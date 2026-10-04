@@ -1,7 +1,9 @@
 """Candidate generation and scoring (design sections 9.1 - 9.5)."""
 from dataclasses import dataclass
 
+from weaveengine import parallel
 from weaveengine.plan.context import Connection, Context, Layer
+from weaveengine.topo import kernel
 from weaveengine.topo.planar_map import GATE
 from weaveengine.topo.runs import GatePath, cross_count, path_from_steps
 from weaveengine.topo.search import Route, route
@@ -18,41 +20,81 @@ class Candidate:
 
 def generate(ctx: Context, conn: Connection, k: int | None = None) -> list[Candidate]:
     """Up to K topologically distinct routes per usable layer on the current
-    state (9.3): route, penalise every gate of the result, search again."""
-    params = ctx.params
-    k = params.K if k is None else k
+    state (9.3): route, penalise every gate of the result, search again.
+
+    Layers are searched at the same time: each has its own map, state and
+    search workspace, and the compiled kernel does not hold the interpreter lock.
+    """
+    k = ctx.params.K if k is None else k
+    if _use_threads(ctx, conn):
+        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k), conn.layers))
+    else:
+        found = [_layer_routes(ctx, conn, li, k) for li in conn.layers]
     cands: list[Candidate] = []
-    for li in conn.layers:
-        layer = ctx.layers[li]
-        pmap, state = layer.pmap, layer.state
-        first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight)
-        if first is None:
-            continue
-        found = {first.gates: first}
-        limit = (1.0 + params.alpha) * first.cost + 1e-9
-        penalty: dict[int, float] = {}
-        last = first
-        for _ in range(3 * k):
-            if len(found) >= k:
-                break
-            bump = params.alpha * max(first.length, 1e-6) / len(last.steps)
-            for g in last.gates:
-                penalty[g] = penalty.get(g, 0.0) + bump
-            r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight)
-            if r is None:
-                break
-            r.cost -= sum(penalty.get(g, 0.0) for g in r.gates)
-            last = r
-            if r.cost > limit:
-                break
-            found.setdefault(r.gates, r)
-        for r in found.values():
+    for li, routes in zip(conn.layers, found):
+        pmap = ctx.layers[li].pmap
+        for r in routes:
             r.layer = li
             cand = Candidate(r, path_from_steps(pmap, r.steps), li, route_weight=conn.weight)
             cand.score = score(ctx, conn, cand)
             cands.append(cand)
     cands.sort(key=lambda c: c.score)
     return cands
+
+
+_pool = None
+
+
+def _use_threads(ctx: Context, conn: Connection) -> bool:
+    """Layer threads only in the main process: a forked worker has no thread pool
+    (threads do not survive a fork) and is already one of several workers."""
+    return len(conn.layers) > 1 and kernel.AVAILABLE and ctx.workers != 1 and not parallel._inside
+
+
+def _stop_threads() -> None:
+    global _pool
+    if _pool is not None:
+        _pool.shutdown(wait=True)
+        _pool = None
+
+
+parallel.before_fork.append(_stop_threads)
+
+
+def _threads():
+    global _pool
+    if _pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="weave-layer")
+    return _pool
+
+
+def _layer_routes(ctx: Context, conn: Connection, li: int, k: int) -> list[Route]:
+    params = ctx.params
+    layer = ctx.layers[li]
+    pmap, state = layer.pmap, layer.state
+    first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight)
+    if first is None:
+        return []
+    found = {first.gates: first}
+    limit = (1.0 + params.alpha) * first.cost + 1e-9
+    penalty: dict[int, float] = {}
+    last = first
+    for _ in range(3 * k):
+        if len(found) >= k:
+            break
+        bump = params.alpha * max(first.length, 1e-6) / len(last.steps)
+        for g in last.gates:
+            penalty[g] = penalty.get(g, 0.0) + bump
+        r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight)
+        if r is None:
+            break
+        r.cost -= sum(penalty.get(g, 0.0) for g in r.gates)
+        last = r
+        if r.cost > limit:
+            break
+        found.setdefault(r.gates, r)
+    return list(found.values())
 
 
 def score(ctx: Context, conn: Connection, cand: Candidate) -> float:
@@ -121,11 +163,17 @@ def severed(ctx: Context, layer: Layer, conn: Connection, path: GatePath) -> set
 
 
 def plain_route(ctx: Context, conn: Connection, **kwargs) -> Route | None:
-    """Cheapest in-search route over the usable layers."""
-    best = None
-    for li in conn.layers:
+    """Cheapest in-search route over the usable layers (searched at the same time)."""
+    def one(li: int) -> Route | None:
         layer = ctx.layers[li]
-        r = route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, **kwargs)
+        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, **kwargs)
+
+    if _use_threads(ctx, conn):
+        found = list(_threads().map(one, conn.layers))
+    else:
+        found = [one(li) for li in conn.layers]
+    best = None
+    for li, r in zip(conn.layers, found):
         if r is not None and (best is None or r.cost < best.cost):
             r.layer = li
             best = r
@@ -138,3 +186,49 @@ def best_route(ctx: Context, conn: Connection) -> Route | None:
         return plain_route(ctx, conn)
     cands = generate(ctx, conn, ctx.params.K_reroute)
     return cands[0].route if cands else None
+
+
+def _generate_task(ctx: Context, wire_id: int) -> list[Candidate]:
+    return generate(ctx, ctx.conns[wire_id])
+
+
+def generate_all(ctx: Context) -> dict[int, list[Candidate]]:
+    """Phase 1 candidates for every connection. Read-only on the state, so the
+    connections are spread over worker processes (section 3 rule 7)."""
+    ids = list(ctx.conns)
+    found = parallel.run(_generate_task, ctx, ids, ctx.workers)
+    return dict(zip(ids, found))
+
+
+def _best_task(ctx: Context, wire_id: int) -> Route | None:
+    return best_route(ctx, ctx.conns[wire_id])
+
+
+def replay(ctx: Context, conn: Connection, r: Route) -> Route | None:
+    """The same gate sequence on the present state (slots recomputed), or None if it no longer fits."""
+    layer = ctx.layers[r.layer]
+    again = route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, mode="corridor",
+                  corridor=set(r.gates), weight=conn.weight)
+    if again is not None:
+        again.layer = r.layer
+    return again
+
+
+def route_batch(ctx: Context, wire_ids: list[int], compute=_best_task):
+    """Yields (wire id, route or None) for the unrouted connections ``wire_ids``.
+
+    Routes are computed for ``params.batch`` connections at a time against one
+    snapshot of the state, in parallel; the caller commits each yielded route
+    before the next one is yielded. A route that an earlier commit of the same
+    batch has invalidated is recomputed on the spot. The outcome depends on the
+    batch size but not on the number of workers.
+    """
+    size = max(1, ctx.params.batch)
+    for at in range(0, len(wire_ids), size):
+        chunk = wire_ids[at:at + size]
+        routes = parallel.run(compute, ctx, chunk, ctx.workers)
+        for i, (w, r) in enumerate(zip(chunk, routes)):
+            conn = ctx.conns[w]
+            if r is not None and i > 0:
+                r = replay(ctx, conn, r) or best_route(ctx, conn)
+            yield w, r

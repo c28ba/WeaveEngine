@@ -62,10 +62,12 @@ def check(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_ne
             continue
         pair = (ids[i], ids[j])
         need = rules.clearance + half[i] + half[j]
+        if wire_net.get(pair[0], -1) == wire_net.get(pair[1], -2):
+            continue  # one net: its traces may touch, overlap and share a trunk
         if lines[i].crosses(lines[j]):
             pt = lines[i].intersection(lines[j]).representative_point()
             out.append(Violation("crossing", pair, 0.0, need, (pt.x, pt.y), layer))
-        elif wire_net.get(pair[0], -1) != wire_net.get(pair[1], -2):
+        else:
             dist = lines[i].distance(lines[j])
             if dist < need - TOL:
                 out.append(Violation("spacing", pair, dist, need, _closest(lines[i], lines[j]), layer))

@@ -1,0 +1,18 @@
+from ALU.kicad_pro: edge clearance 0.5 mm (hole clearance 0.25 mm is not checked: a DSN has no drill sizes)
+pass 1 [............................]   0%  racing variants 1-4 of 8 elapsed 0:01  left in pass ?
+pass 1 [............................]   0%  candidates          elapsed 0:01  left in pass ?
+pass 1: rough estimate for this pass 1:02
+pass 1 [#...........................]   4%  global selection    elapsed 0:02  left in pass ~1:00
+pass 1 [###.........................]  10%  commit              elapsed 0:05  left in pass ~0:57
+pass 1 [######......................]  22%  rip-up              elapsed 0:10  left in pass ~0:32
+pass 1 [#################...........]  62%  refinement          elapsed 0:30  left in pass ~0:18
+pass 1 [##################..........]  66%  geometry            elapsed 0:31  left in pass ~0:16
+pass 1 [######################......]  80%  design-rule repair  elapsed 0:38  left in pass ~0:09
+pass 1 [######################......]  80%  rip-up              elapsed 0:39  left in pass ~0:09
+pass 1 [########################....]  84%  design-rule repair  elapsed 0:51  left in pass ~0:09
+pass 1 [########################....]  84%  rip-up              elapsed 0:51  left in pass ~0:09
+pass 1 [#########################...]  89%  design-rule repair  elapsed 0:57  left in pass ~0:07
+pass 1 [#########################...]  89%  rip-up              elapsed 0:57  left in pass ~0:07
+pass 1 [############################] 100%  variant 1 of 8 kept elapsed 1:01  left in pass ~0:00
+409/409 connections routed (F.Cu: 236, B.Cu: 173; 0 vias), length ratio 1.529, 61.6s -> boards/output/ALU.ses
+measured from ALU.ses: smallest gap trace-pad 0.2096, trace-trace 0.2090 (rule 0.2), trace-edge 0.6733 (rule 0.5) mm; 0 crossings; widths as ruled -> OK

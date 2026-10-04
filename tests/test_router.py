@@ -9,6 +9,7 @@ from bench.generators import channel, random_grid
 from tests.conftest import demo_board
 from weaveengine.board import Board, Pad, Rules
 from weaveengine.plan.context import Layer, Options, decompose
+from weaveengine.realize.teardrop import tip_of
 from weaveengine.router import route_board
 from weaveengine.topo import planar_map
 
@@ -27,8 +28,8 @@ def assert_clean(board, result):
     for (a, la), (b, lb) in itertools.combinations(lines.items(), 2):
         if result.wire_layer[a] != result.wire_layer[b]:
             continue
-        assert not la.crosses(lb), f"wires {a} and {b} cross"
-        if result.wire_net[a] != result.wire_net[b]:
+        if result.wire_net[a] != result.wire_net[b]:  # traces of one net may touch and share a trunk
+            assert not la.crosses(lb), f"wires {a} and {b} cross"
             assert la.distance(lb) >= rules.clearance + half[a] + half[b] - 1.1e-3
     for w, line in lines.items():
         layer = result.wire_layer[w]
@@ -226,6 +227,7 @@ def test_hopping_a_trace_end_round_its_pad_keeps_the_topology():
 
 
 def test_teardrops_on_round_pads():
+    from weaveengine.realize.teardrop import MAX_LENGTH, MAX_WIDTH, WIDTH
     board = demo_board()
     result = route_board(board)
     pads = {p.pad_id: p for p in board.pads}
@@ -234,17 +236,62 @@ def test_teardrops_on_round_pads():
         conn = result.connections[w]
         line = LineString(result.polylines[w])
         for poly in drops:
-            shape = Polygon(poly)
+            shape = Polygon(poly[:5])
             pad = min((pads[conn.src], pads[conn.dst]), key=lambda p: math.dist(p.centre, poly[0]))
             assert poly[0] == pad.centre
-            # widest at the pad (90 % of its diameter), narrowing to the trace width
-            assert abs(math.dist(poly[1], poly[4]) - 2 * 0.9 * pad.radius * math.sin(math.acos(0.9 * pad.radius / math.dist(pad.centre, _mid(poly[2], poly[3]))))) < 1e-6
-            assert abs(math.dist(poly[2], poly[3]) - board.rules.width(conn.net_id)) < 1e-6
-            assert line.distance(Point(_mid(poly[2], poly[3]))) < 1e-6
+            half = board.rules.width(conn.net_id) / 2
+            tip = tip_of(poly, half)
+            # tangent to a circle of 90 % of the pad, but never wider than the limit
+            r = min(WIDTH * pad.radius, MAX_WIDTH / 2)
+            assert abs(math.dist(poly[1], poly[4]) - 2 * r * math.sin(math.acos(r / math.dist(pad.centre, tip)))) < 1e-6
+            assert math.dist(poly[1], poly[4]) <= MAX_WIDTH + 1e-9
+            # and no longer than the limit beyond the pad
+            assert math.dist(pad.centre, tip) - pad.radius <= MAX_LENGTH + 1e-6
+            # the sides touch the track's round end at the tip tangentially
+            for side_pt, pad_pt in ((poly[2], poly[1]), (poly[3], poly[4])):
+                assert abs(math.dist(side_pt, tip) - half) < 1e-6
+                assert abs((side_pt[0] - tip[0]) * (pad_pt[0] - side_pt[0]) + (side_pt[1] - tip[1]) * (pad_pt[1] - side_pt[1])) < 1e-6
+            assert line.distance(Point(tip)) < 1e-6
             for other in board.pads:
                 if other.net_id != conn.net_id:
-                    assert shape.distance(other.shape) >= board.rules.clearance
+                    assert shape.distance(other.shape) >= 1.5 * board.rules.clearance
     assert route_board(board, options=Options(teardrops=False)).teardrops == {}
+
+
+def test_teardrop_size_is_limited_on_large_pads():
+    board = Board.rectangle(60, 30, Rules(0.2, 0.2))
+    board.pads.append(Pad.circle(0, 12, 15, 6.0, net_id=0))      # a 12 mm pad
+    board.pads.append(Pad.rect(1, 48, 15, 10.0, 8.0, net_id=0))  # and a 10 x 8 mm one
+    result = route_board(board)
+    drops = [poly for d in result.teardrops.values() for poly in d]
+    assert len(drops) == 2
+    for poly in drops:
+        assert math.dist(poly[1], poly[4]) <= 2.0 + 1e-6            # default limit across
+        assert Polygon(poly[:5]).area < 0.5 * 6.0 * 2.0 + 2.0 * 1.2      # nowhere near "half the board"
+    wide = route_board(board, options=Options(teardrop_max_width=4.0, teardrop_max_length=3.0))
+    assert max(math.dist(poly[1], poly[4]) for d in wide.teardrops.values() for poly in d) > 3.0
+
+
+def test_teardrop_is_left_out_where_it_is_cramped():
+    """A teardrop needs breathing room; next to foreign copper it is shortened, then omitted."""
+    board = Board.rectangle(30, 20, Rules(0.2, 0.2))
+    board.pads.append(Pad.circle(0, 5, 10, 1.0, net_id=0))
+    board.pads.append(Pad.circle(1, 25, 10, 1.0, net_id=0))
+    open_board = route_board(board)
+    assert sum(len(d) for d in open_board.teardrops.values()) == 2
+    # a foreign pad just above the trace, right outside pad 0
+    board.pads.append(Pad.circle(2, 6.6, 10.75, 0.3, net_id=1))
+    board.pads.append(Pad.circle(3, 6.6, 3, 0.3, net_id=1))
+    cramped = route_board(board)
+    assert cramped.unrouted == []
+    near_pad0 = [poly for d in cramped.teardrops.values() for poly in d if math.dist(poly[0], (5, 10)) < 1e-6]
+    assert near_pad0 == []
+    assert_clean(board, cramped)
+    relaxed = route_board(board, options=Options(teardrop_breathing=1.0))
+    for w, d in relaxed.teardrops.items():
+        if relaxed.wire_net[w] == 0:
+            for poly in d:
+                assert Polygon(poly[:5]).distance(board.pads[2].shape) >= board.rules.clearance - 1e-6
 
 
 def square_pad_board(width: float = 0.2) -> Board:
@@ -265,17 +312,22 @@ def test_teardrops_on_square_pads():
         line = LineString(result.polylines[w])
         for poly in drops:
             pad = min((pads[conn.src], pads[conn.dst]), key=lambda p: math.dist(p.centre, poly[0]))
-            shape = Polygon(poly)
+            shape = Polygon(poly[:5])
             assert shape.is_valid and poly[0] == pad.centre
             # the pad end sits on two corners of the pad shrunk to 90 %, inside the pad's copper
             for corner in (poly[1], poly[4]):
                 assert pad.shape.contains(Point(corner))
-                assert any(math.dist(corner, (pad.centre[0] + 0.9 * (x - pad.centre[0]), pad.centre[1] + 0.9 * (y - pad.centre[1]))) < 1e-9
-                           for x, y in pad.shape.exterior.coords)
+                # on a corner of the pad shrunk towards its centre (by 90 %, or more to respect the width limit)
+                scales = [math.dist(corner, pad.centre) / math.dist((x, y), pad.centre) for x, y in pad.shape.exterior.coords
+                          if abs((corner[0] - pad.centre[0]) * (y - pad.centre[1]) - (corner[1] - pad.centre[1]) * (x - pad.centre[0])) < 1e-9
+                          and (corner[0] - pad.centre[0]) * (x - pad.centre[0]) + (corner[1] - pad.centre[1]) * (y - pad.centre[1]) > 0]
+                assert scales and max(scales) <= 0.9 + 1e-9
+            assert math.dist(poly[1], poly[4]) <= 2.0 + 1e-6
             assert math.dist(poly[1], poly[4]) > 1.0  # much wider than the trace at the pad
             # the narrow end is the trace itself, outside the pad
-            assert abs(math.dist(poly[2], poly[3]) - 0.2) < 1e-6
-            assert line.distance(Point(_mid(poly[2], poly[3]))) < 1e-6 and not pad.shape.contains(Point(_mid(poly[2], poly[3])))
+            tip = tip_of(poly, 0.1)
+            assert 0.15 < math.dist(poly[2], poly[3]) <= 0.2 + 1e-9
+            assert line.distance(Point(tip)) < 1e-6 and not pad.shape.contains(Point(tip))
             # the trace runs down the middle of it
             assert shape.buffer(1e-6).contains(line.intersection(Point(pad.centre).buffer(math.dist(pad.centre, _mid(poly[2], poly[3])) - 1e-3)))
 
@@ -317,7 +369,7 @@ def test_word_of_ram_board(tmp_path):
     assert min(result.stats["wires_per_layer"].values()) > 10  # both layers are used
 
     out = str(tmp_path / "ram.ses")
-    write_ses(design, result, out)
+    write_ses(design, result, out, teardrops=False)
     session = parse_sexpr(open(out).read())
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
@@ -326,3 +378,223 @@ def test_word_of_ram_board(tmp_path):
     assert {w[1] for w in wires} == {"F.Cu", "B.Cu"}
     gnd = next(n for n in nets if n[1] == "GND")
     assert {w[1][2] for w in gnd[2:] if w[0] == "wire"} == {"5000"}  # 0.5 mm at 0.1 um
+
+
+def test_result_does_not_depend_on_the_number_of_workers():
+    """Section 22: for a given portfolio size the outcome is the same on one core and on many."""
+    board = random_grid(8, 8, nets=14, seed=4)
+    runs = [route_board(board, options=Options(portfolio=3), workers=w) for w in (1, 4)]
+    assert runs[0].polylines == runs[1].polylines
+    assert runs[0].unrouted == runs[1].unrouted and runs[0].wire_layer == runs[1].wire_layer
+    alone = [route_board(board, options=Options(portfolio=1), workers=w) for w in (1, 4)]
+    assert alone[0].polylines == alone[1].polylines
+    for r in runs + alone:
+        assert_clean(board, r)
+
+
+def test_racing_variants_never_does_worse_than_the_plain_run():
+    board = random_grid(8, 8, nets=14, seed=4)
+    plain = route_board(board, options=Options(portfolio=1))
+    raced = route_board(board, options=Options(portfolio=4))
+    assert raced.stats["routed"] >= plain.stats["routed"]
+    assert_clean(board, raced)
+
+
+def test_progress_is_reported():
+    seen = []
+    route_board(demo_board(), options=Options(portfolio=1), progress=lambda phase, done=0.0, total=1.0: seen.append(phase))
+    phases = [p.split(": ")[1] for p in seen]
+    assert all(p.startswith("pass 1: ") for p in seen)
+    for wanted in ("candidates", "global selection", "commit", "geometry"):
+        assert wanted in phases
+    assert phases.index("candidates") < phases.index("commit") < phases.index("geometry")
+
+
+def test_python_fallback_without_numba():
+    """The compiled kernels are optional: the pure-Python loops give the same routing."""
+    import subprocess
+    import sys
+    code = ("from tests.conftest import demo_board\n"
+            "from weaveengine.router import route_board\n"
+            "from weaveengine.plan.context import Options\n"
+            "from weaveengine.topo import kernel\n"
+            "r = route_board(demo_board(), options=Options(portfolio=1))\n"
+            "print(kernel.AVAILABLE, len(r.unrouted), len(r.violations), sorted((w, len(p)) for w, p in r.polylines.items()))\n")
+    root = os.path.dirname(os.path.dirname(__file__))
+    out = {}
+    for flag in ("", "1"):
+        env = dict(os.environ, WEAVEENGINE_NO_NUMBA=flag) if flag else {k: v for k, v in os.environ.items() if k != "WEAVEENGINE_NO_NUMBA"}
+        done = subprocess.run([sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True, check=True)
+        out[flag] = done.stdout.strip().split(" ", 1)
+    assert out["1"][0] == "False"
+    assert out[""][1] == out["1"][1]  # same wires, same shapes, compiled or not
+    assert out["1"][1].startswith("0 0 ")
+
+
+def test_traces_of_one_net_share_a_trunk():
+    """Two connections of a net that leave a pad the same way run as one trace
+    until they part, instead of side by side."""
+    board = Board.rectangle(30, 40, Rules(0.2, 0.2))
+    for pad_id, x, y in [(0, 5, 10), (1, 20, 2), (2, 20, 21.5)]:
+        board.pads.append(Pad.circle(pad_id, x, y, 0.6, net_id=0))
+    # a wall both connections from pad 0 have to go round the top of
+    board.add_keepout([(12, 0), (13, 0), (13, 22), (12, 22)])
+    result = route_board(board)
+    assert result.unrouted == [] and len(result.polylines) == 2
+    assert {(c.src, c.dst) for c in result.connections.values()} == {(0, 1), (0, 2)}
+    a, b = (LineString(p) for p in result.polylines.values())
+    shared = a.intersection(b.buffer(1e-3)).length
+    assert shared > 12.0         # from the pad to the end of the wall, as one trace
+    assert a.length - shared > 1 and b.length - shared > 1  # and then they part
+    assert_clean(board, result)
+
+
+def test_teardrops_are_written_to_the_session_as_traces(tmp_path):
+    """SES has no filled shapes: a teardrop goes out as ordinary traces fanned
+    from where it starts on the track to its edge at the pad, outer lines first,
+    filling it without reaching outside it."""
+    from weaveengine.io.check import measure, read_session
+    from weaveengine.io.dsn import Design
+    from shapely.ops import unary_union
+    from weaveengine.io.ses import teardrop_tracks, write_ses
+    board = demo_board()
+    board.pads.append(Pad.rect(900, 50, 52, 6.0, 2.5, net_id=5, rotation=20))   # an oblong pad at an angle
+    board.pads.append(Pad.rect(901, 50, 8, 2.5, 6.0, net_id=5))
+    with_drops, without = (str(tmp_path / n) for n in ("a.ses", "b.ses"))
+    design = Design("demo", board, net_ids={f"N{n}": n for n in board.nets()})
+    result = route_board(board)
+    assert result.unrouted == [] and sum(len(d) for d in result.teardrops.values()) == 8
+    pads = {p.pad_id: p for p in board.pads}
+    count = 0
+    for w, drops in result.teardrops.items():
+        conn = result.connections[w]
+        width = board.rules.width(conn.net_id)
+        for poly in drops:
+            pad = min((pads[conn.src], pads[conn.dst]), key=lambda p: math.dist(p.centre, poly[0]))
+            tear = Polygon(poly[:5])
+            tip = tip_of(poly, width / 2)
+            tracks = teardrop_tracks(poly, width)
+            assert len(tracks) >= 2
+            assert all(t[0] == width and t[1] == tip for t in tracks)       # ordinary traces, all from the tip
+            copper = [LineString([a, b]).buffer(w_ / 2.0) for w_, a, b in tracks]
+            track = LineString(result.polylines[w]).buffer(width / 2.0)
+            for c in copper:
+                # all of it lies over the teardrop, the track or the pad itself: nothing reaches
+                # past the pad, not even the round end of a line
+                assert unary_union([tear, track, pad.shape]).buffer(1e-5).contains(c)
+            # the first two are the outer lines, hard against the teardrop's two sides
+            sides = [LineString([poly[2], poly[1]]), LineString([poly[3], poly[4]])]
+            assert {min(range(2), key=lambda i: sides[i].distance(Point(t[2]))) for t in tracks[:2]} == {0, 1}
+            # together they fill it
+            assert unary_union(copper + [pad.shape, track]).area > 0.999 * unary_union([tear, pad.shape, track]).area
+            count += len(tracks)
+    write_ses(design, result, with_drops)
+    write_ses(design, result, without, teardrops=False)
+    assert len(read_session(without)[0]) == 4
+    assert len(read_session(with_drops)[0]) == 4 + count
+    assert measure(design, with_drops).ok  # the fill keeps every clearance too
+
+
+def test_kernel_self_check_never_crashes_and_falls_back(monkeypatch):
+    """A numba that loads but does not work must give a clear warning and a working router."""
+    from weaveengine import accel
+    from weaveengine.realize import kernel as relax_kernel
+    from weaveengine.topo import kernel as search_kernel
+    if not search_kernel.AVAILABLE:
+        pytest.skip("numba not in use")
+    good = accel.check(force=True)
+    assert good.compiled and good.warning == "" and "numba" in good.message
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("LLVM ERROR: simulated")
+
+    real_sweep = relax_kernel.sweep
+    try:
+        # the search kernel fails
+        monkeypatch.setattr(search_kernel, "astar", broken)
+        bad = accel.check(force=True)
+        assert not bad.compiled and "search" in bad.message and "simulated" in bad.detail
+        assert bad.warning.startswith("WARNING") and "slower" in bad.warning
+        result = route_board(demo_board(), options=Options(portfolio=1))   # and routing still works
+        assert result.unrouted == [] and result.violations == []
+        monkeypatch.undo()
+        # the relaxation kernel fails
+        search_kernel.AVAILABLE = True
+        broken.py_func = real_sweep.py_func   # as a real compiled function has
+        monkeypatch.setattr(relax_kernel, "sweep", broken)
+        bad = accel.check(force=True)
+        assert not bad.compiled and "relaxation" in bad.message
+        assert relax_kernel.sweep is not broken
+    finally:
+        monkeypatch.undo()
+        relax_kernel.sweep = real_sweep
+        search_kernel.AVAILABLE = True
+        assert accel.check(force=True).compiled
+
+
+def test_wide_trace_teardrop_on_a_square_pad_stays_clear_of_a_neighbour(tmp_path):
+    """Regression: the round end of a fill line used to poke past the pad's
+    corner, closer to a foreign trace than the rules allow."""
+    from weaveengine.io.check import measure
+    from weaveengine.io.dsn import Design
+    from weaveengine.io.ses import write_ses
+    board = Board.rectangle(20, 14, Rules(0.2, 0.2))
+    board.rules.net_width = {0: 0.5}
+    board.pads.append(Pad.rect(0, 12, 8, 1.6, 1.8, net_id=0))
+    board.pads.append(Pad.circle(1, 5, 2.5, 0.8, net_id=0))      # the wide trace arrives at the square pad's corner
+    board.pads.append(Pad.circle(2, 9.6, 12, 0.5, net_id=1))     # a foreign trace passes just beside that corner
+    board.pads.append(Pad.circle(3, 9.6, 2, 0.5, net_id=1))
+    design = Design("t", board, net_ids={"N0": 0, "N1": 1})
+    result = route_board(board, options=Options(teardrop_breathing=1.0))
+    assert result.unrouted == []
+    out = str(tmp_path / "t.ses")
+    write_ses(design, result, out)
+    m = measure(design, out)
+    assert m.ok, (m.track_to_pad, m.track_to_track)
+
+
+def sharp_corners(result, degrees: float = 12.0) -> int:
+    count = 0
+    for line in result.polylines.values():
+        for a, b, c in zip(line, line[1:], line[2:]):
+            h1 = math.atan2(b[1] - a[1], b[0] - a[0])
+            h2 = math.atan2(c[1] - b[1], c[0] - b[0])
+            count += abs(math.degrees((h2 - h1 + math.pi) % (2 * math.pi) - math.pi)) >= degrees
+    return count
+
+
+def test_sharp_corners_are_rounded_within_the_rules():
+    board = demo_board()                      # traces bend round the keepout and each other's pads
+    plain = route_board(board, options=Options(smooth=False))
+    smooth = route_board(board, options=Options(smooth=True))
+    assert sharp_corners(plain) >= 6
+    assert sharp_corners(smooth) <= sharp_corners(plain) // 3
+    assert smooth.stats["corners_rounded"] >= 6 and plain.stats["corners_rounded"] == 0
+    # an arc inside a corner is a short cut: never longer, same connections, still clean
+    assert smooth.stats["length"] <= plain.stats["length"] + 1e-6
+    assert smooth.unrouted == [] and set(smooth.polylines) == set(plain.polylines)
+    assert_clean(board, smooth)
+    for w, line in smooth.polylines.items():  # the ends have not moved
+        assert line[0] == plain.polylines[w][0] and line[-1] == plain.polylines[w][-1]
+
+
+def test_corner_is_left_alone_where_an_arc_would_break_a_rule():
+    from weaveengine.realize.smooth import smooth
+    board = Board.rectangle(20, 20, Rules(0.2, 0.2))
+    board.pads.append(Pad.circle(0, 2, 2, 0.4, net_id=0))
+    board.pads.append(Pad.circle(1, 18, 18, 0.4, net_id=0))
+    corner = [(2, 2), (18, 2), (18, 18)]       # a right angle at (18, 2)
+    free, rounded, kept = smooth(board, {1: corner}, {1: 0})
+    assert (rounded, kept) == (1, 0) and len(free[1]) > 10
+    arc = LineString(free[1])
+    assert arc.length < LineString(corner).length and arc.distance(Point(18, 2)) > 2.0   # a generous arc
+    # the same corner hugging a foreign pad: only a small arc fits, and it keeps its clearance
+    board.pads.append(Pad.circle(2, 17.0, 3.0, 0.5, net_id=1))
+    tight, rounded, kept = smooth(board, {1: corner}, {1: 0})
+    assert rounded == 1
+    gap = LineString(tight[1]).distance(board.pads[2].shape) - 0.1
+    assert gap >= board.rules.clearance and LineString(tight[1]).distance(Point(18, 2)) < 0.5
+    # and with the foreign pad right in the corner, nothing fits: the corner stays
+    board.pads[2] = Pad.circle(2, 17.55, 2.45, 0.1, net_id=1)
+    stuck, rounded, kept = smooth(board, {1: corner}, {1: 0})
+    assert (rounded, kept) == (0, 1) and stuck[1] == corner

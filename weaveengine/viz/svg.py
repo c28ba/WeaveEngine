@@ -46,7 +46,7 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
         out.append(f'<polyline points="{pts(line)}" fill="none" stroke="{color}" stroke-width="{stroke:.2f}" '
                    f'stroke-linecap="round" stroke-linejoin="round" opacity="0.85"><title>{label}</title></polyline>')
         for poly in (teardrops or {}).get(wire, []):
-            out.append(f'<polygon points="{pts(poly)}" fill="{color}" opacity="0.85"/>')
+            out.append(f'<polygon points="{pts(poly[:5])}" fill="{color}" opacity="0.85"/>')
     for a, b in unrouted or []:
         out.append(f'<polyline points="{pts((a, b))}" stroke="#ffffff" stroke-width="1" stroke-dasharray="5,4" fill="none" opacity="0.7"/>')
     for pad in board.pads:

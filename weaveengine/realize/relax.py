@@ -1,9 +1,11 @@
 """Geometry realisation (design section 13.1): taut string with ordering."""
 import math
 
+import numpy as np
 from shapely.geometry import LineString
 
 from weaveengine.board import Board
+from weaveengine.realize import drc, kernel
 from weaveengine.realize.funnel import string_pull
 from weaveengine.topo.planar_map import TERMINAL
 from weaveengine.topo.state import TopoState
@@ -69,7 +71,10 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
     half = {w: board.rules.extra(net) for w, net in wire_net.items()}
 
     def spacing(w1: int, w2: int) -> float:
-        """Centreline distance two neighbouring wires must keep."""
+        """Centreline distance two neighbouring wires must keep. Wires of one
+        net owe each other nothing: side by side they merge into one trace."""
+        if wire_net[w1] == wire_net[w2] and wire_net[w1] >= 0:
+            return 0.0
         gap = d + half[w1] + half[w2]
         return gap * max(scale.get(w1, 1.0), scale.get(w2, 1.0)) if scale else gap
 
@@ -245,88 +250,64 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
     # still be pulled against each other inside overlapping windows, so the
     # sweep also keeps each wire a pitch from its neighbours on the same gate
     # (13.1 step 2), measured perpendicular to the wires rather than along the gate.
-    coupled = [e for e in window if len(order[e]) > 1]
-    where = {(e, k): (w, i) for w, pts in wires.items() for i, (e, k) in enumerate(pts)}
-
-    def obliqueness(e: int, k: int) -> float:
-        """min |sin| of the angle between gate e and the wire segments meeting it at slot k."""
-        w, i = where[(e, k)]
-        pts = wires[w]
-        ux, uy, dx, dy, _ = frame[e]
-        px, py = ux + S[e][k] * dx, uy + S[e][k] * dy
-        low = 1.0
-        for j in (i - 1, i + 1):
-            if 0 <= j < len(pts):
-                qe, qk = pts[j]
-                qx, qy = point(qe, S[qe][qk])
-                n = math.hypot(qx - px, qy - py)
-                if n > 1e-9:
-                    low = min(low, abs(dx * (qy - py) - dy * (qx - px)) / n)
-        return low
-
-    gaps: dict[int, list[float]] = {}  # per gate: spacing along the gate between slot k and k + 1
-
-    def refresh_gaps() -> None:
-        for e in coupled:
-            row = order[e]
-            sin = [obliqueness(e, k) for k in range(len(row))]
-            gaps[e] = [spacing(row[k], row[k + 1]) / max(MIN_SIN, min(sin[k], sin[k + 1])) for k in range(len(row) - 1)]
-
+    # Flatten to arrays for the compiled sweep: one slot per (gate, wire).
+    base: dict[int, int] = {}
+    total = 0
+    for e, row in S.items():
+        base[e] = total
+        total += len(row)
+    pos = np.zeros(total)
+    fr = np.zeros((total, 5))
+    wlo, whi = np.zeros(total), np.zeros(total)
+    is_term = np.zeros(total, dtype=np.uint8)
+    has_prev, has_next = np.zeros(total, dtype=np.uint8), np.zeros(total, dtype=np.uint8)
+    space, share = np.zeros(total), np.zeros(total)
+    for e, row in S.items():
+        o, n = base[e], len(row)
+        pos[o:o + n] = row
+        fr[o:o + n] = frame[e]
+        has_prev[o + 1:o + n] = 1
+        has_next[o:o + n - 1] = 1
+        if e in window:
+            win = window[e]
+            wlo[o:o + n] = [a for a, _ in win]
+            whi[o:o + n] = [b for _, b in win]
+            wires_e = order[e]
+            for k in range(n - 1):
+                space[o + k] = spacing(wires_e[k], wires_e[k + 1])
+        else:
+            is_term[o:o + n] = 1
+            share[o:o + n] = min(d, frame[e][4] / n)
+    wire_ids = list(wires)
+    wire_ptr = np.zeros(len(wire_ids) + 1, dtype=np.int64)
+    wire_slot = np.zeros(sum(len(wires[w]) for w in wire_ids), dtype=np.int64)
+    centre = np.zeros((len(wire_ids), 4))
+    along_prev, along_next = np.full(total, -1, dtype=np.int64), np.full(total, -1, dtype=np.int64)
+    at = 0
+    for wi, w in enumerate(wire_ids):
+        slots = [base[e] + k for e, k in wires[w]]
+        wire_slot[at:at + len(slots)] = slots
+        along_prev[slots[1:]] = slots[:-1]
+        along_next[slots[:-1]] = slots[1:]
+        at += len(slots)
+        wire_ptr[wi + 1] = at
+        centre[wi, 0:2] = pmap.pad_centre[ends[w][0]]
+        centre[wi, 2:4] = pmap.pad_centre[ends[w][1]]
+    if total:
+        args = (pos, fr, wlo, whi, is_term, has_prev, has_next, space, share, wire_ptr, wire_slot, centre,
+                along_prev, along_next, bool(slide), max_sweeps, tol, MIN_SIN)
+        try:
+            kernel.sweep(*args)
+        except Exception as error:  # the compiled kernel failed: never crash, fall back for good
+            from weaveengine import accel
+            accel.failed("relaxation", error)
+            for e, row in S.items():
+                pos[base[e]:base[e] + len(row)] = row
+            kernel.sweep(*args)
+    for e, row in S.items():
+        o = base[e]
+        row[:] = pos[o:o + len(row)].tolist()
     clamped: dict[tuple[int, bool], int] = {}
-    for sweep in range(max_sweeps):
-        if sweep % 4 == 0:  # angles change slowly; refreshing every sweep makes the iteration jitter
-            refresh_gaps()
-        moved = 0.0
-        for w, pts in wires.items():
-            last = len(pts) - 1
-            if slide:
-                ax, ay = pmap.pad_centre[ends[w][0]]
-                todo = range(0, last + 1)
-            else:
-                ax, ay = point(*_at(S, pts[0]))
-                todo = range(1, last)
-            for i in todo:
-                e, k = pts[i]
-                ux, uy, dx, dy, L = frame[e]
-                row = S[e]
-                if i < last:
-                    ne, nk = pts[i + 1]
-                    bx, by = point(ne, S[ne][nk])
-                else:
-                    bx, by = pmap.pad_centre[ends[w][1]]
-                rx, ry = bx - ax, by - ay
-                den = dx * ry - dy * rx
-                s = row[k] if abs(den) < 1e-12 else ((ax - ux) * ry - (ay - uy) * rx) / den
-                if i == 0 or i == last:
-                    # An end slides along its pad edge towards the straight line
-                    # from the pad centre; wires sharing the edge keep their order.
-                    if s < -1e-6 or s > L + 1e-6:
-                        clamped[(w, i == 0)] = edge_v[e][0] if s < 0 else edge_v[e][1]
-                    else:
-                        clamped.pop((w, i == 0), None)
-                    share = min(d, L / len(row))
-                    lo = row[k - 1] + share if k > 0 else 0.0
-                    hi = row[k + 1] - share if k < len(row) - 1 else L
-                    s = min(max(s, lo), hi) if lo <= hi else (lo + hi) / 2.0
-                    s = min(max(s, 0.0), L)
-                else:
-                    lo, hi = window[e][k]
-                    if k > 0:
-                        lo = max(lo, row[k - 1] + gaps[e][k - 1])
-                    if k < len(row) - 1:
-                        hi = min(hi, row[k + 1] - gaps[e][k])
-                    if lo > hi:
-                        s = (lo + hi) / 2.0  # no room for the spacing here; DRC will report it
-                    else:
-                        s = min(max(s, lo), hi)
-                    # Never leave the window or overtake a neighbour: the order is the topology.
-                    lo, hi = window[e][k]
-                    s = min(max(s, row[k - 1] if k > 0 else lo, lo), row[k + 1] if k < len(row) - 1 else hi, hi)
-                moved = max(moved, abs(s - row[k]))
-                row[k] = s
-                ax, ay = ux + s * dx, uy + s * dy
-        if moved < tol:
-            break
 
     if slide:
         # The windows that keep foreign wires away from pad exits were built for
@@ -356,10 +337,13 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
                         if s < -0.02 * L or s > 1.02 * L:
                             clamped[(w, first)] = edge_v[e][0] if s < 0 else edge_v[e][1]
             report["clamped"] = [(w, first, v) for (w, first), v in clamped.items()]
+        if report is not None and report.get("detect_only"):
+            return {}
         ends_now = {e: list(row) for e, row in S.items() if kind[e] == TERMINAL}
         return relax(state, board, tol, max_sweeps, arcs, spacing_scale, ends_now, slide - 1, report)
 
     result: dict[int, Polyline] = {}
+    pressed: list[tuple[int, bool, tuple[float, float]]] = []
     for w, pts in wires.items():
         body = [point(e, S[e][k]) for e, k in pts]
         line = [body[0]]
@@ -371,7 +355,66 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
         src, dst = ends[w]
         line = [pmap.pad_centre[src]] + line + [pmap.pad_centre[dst]]
         result[w] = _simplify(line)
+        # Ends pressed against a corner of their pad edge (they could not move
+        # round the pad because another wire of the same pad is in the way).
+        for first in (True, False):
+            e, k = pts[0] if first else pts[-1]
+            L = frame[e][4]
+            if (S[e][k] < 1e-6 or S[e][k] > L - 1e-6) and len(line) > 3:
+                pressed.append((w, first, point(e, S[e][k])))
+    if pressed:
+        _merge_pressed_ends(result, pressed, pmap, wire_net, half, board)
     return result
+
+
+def _merge_pressed_ends(result, pressed, pmap, wire_net, half, board) -> None:
+    """Straightens wire ends that are pressed against a corner of their pad's
+    keep-off ring: the corner point is dropped, so the trace runs from the pad
+    centre straight to its next vertex. That takes it over the wires of its own
+    net that held it there (which is fine: one net, one piece of copper). It is
+    only done where the new segment keeps its distance from every foreign trace
+    and stays in free space or over its own pad."""
+    import shapely
+    import shapely.prepared
+    ids = list(result)
+    lines = [LineString(result[w]) for w in ids]
+    tree = shapely.STRtree(lines)
+    rules = board.rules
+    for w, first, corner in pressed:
+        line = result[w]
+        i = next((j for j, p in enumerate(line) if math.hypot(p[0] - corner[0], p[1] - corner[1]) < 1e-6), None)
+        if i is None or not (1 <= i <= len(line) - 2) or (first and i != 1) or (not first and i != len(line) - 2):
+            continue
+        new = line[:i] + line[i + 1:]
+        seg = LineString([line[i - 1], line[i + 1]])
+        # The new segment must lie in free space, or over the wire's own pad.
+        # (The free-space shape is large: prepare it once per map, and only test
+        # the part of the segment that is outside the pad's keep-off ring.)
+        free = pmap.__dict__.get("_free_prepared")
+        if free is None:
+            free = pmap.__dict__["_free_prepared"] = shapely.prepared.prep(pmap.free_space.free.buffer(1e-6))
+        own = pmap.free_space.inflated_pads.get(_end_pad(pmap, line, first))
+        outside = seg if own is None else seg.difference(own)
+        if not outside.is_empty and not free.contains(outside):
+            continue
+        ok = True
+        for j in tree.query(seg, predicate="dwithin", distance=rules.pitch + 2 * max(half.values(), default=0.0) + 1e-3).tolist():
+            other = ids[j]
+            if other != w and wire_net[other] != wire_net[w]:
+                if seg.distance(lines[j]) < rules.pitch + half[w] + half[other] - 1e-6:
+                    ok = False
+                    break
+        if ok:
+            result[w] = _simplify(new)
+
+
+def _end_pad(pmap, line, first: bool):
+    """Pad whose centre the given end of the polyline sits on."""
+    p = line[0] if first else line[-1]
+    for pad, c in pmap.pad_centre.items():
+        if abs(c[0] - p[0]) < 1e-9 and abs(c[1] - p[1]) < 1e-9:
+            return pad
+    return None
 
 
 def _corner_arc(state: TopoState, w: int, prev_edge: int, step, a, b, radial) -> Polyline:
@@ -477,8 +520,6 @@ def realize(state: TopoState, board: Board, repair_rounds: int = 4, **kwargs):  
 
     Returns (polylines, violations, wire_net).
     """
-    from weaveengine.realize import drc
-
     pmap = state.map
     wire_net = {w: pmap.pad_net.get(pmap.edge_owner_list[steps[0][0]], -1) for w, steps in state.wire_path.items()}
     scale: dict[int, float] = {}

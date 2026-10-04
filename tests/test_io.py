@@ -127,7 +127,7 @@ def test_session_measured_independently(tmp_path, capsys):
     from weaveengine.io.check import measure, read_session
     dsn, ses = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
     write_dsn(channel(6, seed=8), dsn)
-    assert main([dsn, "-o", ses, "--margin", "0"]) == 0
+    assert main([dsn, "-o", ses, "--margin", "0", "--no-ses-teardrops"]) == 0
     assert "-> OK" in capsys.readouterr().out
     design = read_dsn(dsn)
     wires, vias = read_session(ses)
@@ -152,7 +152,9 @@ def test_session_names_are_quoted(tmp_path):
     write_dsn(channel(4, seed=1), dsn)
     main([dsn, "-o", ses])
     text = open(ses).read()
-    assert '(place "P0" ' in text and '(component "IMG0"' in text and '(net "N0"' in text
+    assert '(net "N0"' in text
+    # No components are listed (nothing is ever moved), so the CAD tool has no reference to resolve.
+    assert "(placement" in text and "(component" not in text and "(place " not in text
     for line in text.splitlines():
         if "(path " in line:
             pts = line.split("(path ")[1].rstrip(")").split()[2:]
@@ -170,3 +172,20 @@ def test_kicad_project_rules(tmp_path):
     main([dsn, "-o", ses])
     from weaveengine.io.check import measure
     assert measure(read_dsn(dsn), ses).track_to_edge >= 0.5
+
+
+def test_components_outlines_and_values_are_read(tmp_path):
+    """Part outlines, references and values come from the DSN, for display and selection."""
+    text = KICAD_STYLE.replace(
+        "(image R_0805 (pin", "(image R_0805 (outline (path signal 100 -1000 -500 1000 -500)) (outline (rect signal -1000 -500 1000 500)) (pin")
+    path = tmp_path / "parts.dsn"
+    path.write_text(text)
+    board = read_dsn(str(path)).board
+    parts = {c.reference: c for c in board.components}
+    assert set(parts) == {"R1", "R2", "TP1"}
+    r1, r2 = parts["R1"], parts["R2"]
+    assert r1.value == "10k" and r2.value == "" and r1.footprint == "R_0805" and r1.side == "front"
+    assert [board.pads[i].name for i in r1.pads] == ["R1-1", "R1-2"]
+    assert [round(v, 3) for v in r1.bounds()] == [4.0, -5.5, 6.0, -4.5]          # 2 x 1 mm about (5, -5)
+    assert [round(v, 3) for v in r2.bounds()] == [14.5, -6.0, 15.5, -4.0]        # the same, turned 90 degrees
+    assert len(r1.outlines) == 2 and parts["TP1"].outlines == []

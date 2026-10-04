@@ -106,8 +106,12 @@ def real_boards() -> dict[str, Board]:
     """Boards exported from a CAD tool, if present in the repository root."""
     import os
     from weaveengine.io.dsn import read_dsn
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", "Word of RAM.dsn")
-    return {"word_of_ram (KiCad, 2 layers)": read_dsn(path).board} if os.path.exists(path) else {}
+    boards = {}
+    for label, file in (("word_of_ram (KiCad, 2 layers)", "Word of RAM.dsn"), ("alu (KiCad, 2 layers)", "ALU.dsn")):
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", file)
+        if os.path.exists(path):
+            boards[label] = read_dsn(path).board
+    return boards
 
 
 def suite() -> dict[str, Board]:

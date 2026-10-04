@@ -1,0 +1,269 @@
+ignoring 33 keepout areas
+rules: trace 0.127 mm, clearance 0.127 mm, via 0.45/0.2 mm; 4 layers, 1171 pads
+edge clearance 0.127 mm (the DSN does not carry one; set it with --edge-clearance or --kicad-pro)
+5 nets have a copper plane and are not routed as traces: +1V1, +2V5, +3V3, 2V5_3V3, GND
+pass 1 [............................]   0%  racing variants 1-4 of 8 elapsed 0:01  left in pass ?
+pass 1 [............................]   0%  candidates          elapsed 0:01  left in pass ?
+pass 1: rough estimate for this pass 0:16
+pass 1 [#...........................]   4%  global selection    elapsed 0:01  left in pass ~0:15
+pass 1 [###.........................]  10%  commit              elapsed 0:01  left in pass ~0:15
+pass 1 [######......................]  22%  rip-up              elapsed 0:02  left in pass ~0:04
+pass 1 [#################...........]  62%  refinement          elapsed 0:02  left in pass ~0:01
+pass 1 [##################..........]  66%  geometry            elapsed 0:02  left in pass ~0:01
+pass 1 [######################......]  80%  design-rule repair  elapsed 0:04  left in pass ~0:01
+pass 1 [######################......]  80%  rip-up              elapsed 0:04  left in pass ~0:01
+pass 1 [########################....]  84%  design-rule repair  elapsed 0:06  left in pass ~0:01
+pass 1 [########################....]  84%  rip-up              elapsed 0:06  left in pass ~0:01
+pass 1 [#########################...]  89%  design-rule repair  elapsed 0:08  left in pass ~0:01
+pass 1 [#########################...]  89%  rip-up              elapsed 0:08  left in pass ~0:01
+pass 1 [##########################..]  94%  design-rule repair  elapsed 0:10  left in pass ~0:01
+pass 1 [##########################..]  94%  rip-up              elapsed 0:10  left in pass ~0:01
+pass 1 [............................]   0%  racing variants 5-8 of 8 elapsed 0:15  left in pass ?
+pass 1 [############################] 100%  variant 4 of 8 kept elapsed 0:30  left in pass ~0:00
+pass 1 [############################] 100%  placing vias        elapsed 0:30  left in pass ~0:00
+pass 2 [............................]   0%  racing variants 1-4 of 8 elapsed 1:11  left in pass ?
+pass 2 [............................]   0%  candidates          elapsed 1:11  left in pass ?
+pass 2: rough estimate for this pass 1:04
+pass 2 [#...........................]   4%  global selection    elapsed 1:12  left in pass ~1:03
+pass 2 [###.........................]  10%  commit              elapsed 1:14  left in pass ~1:02
+pass 2 [######......................]  22%  rip-up              elapsed 1:19  left in pass ~0:29
+pass 2 [################............]  56%  rip-up              elapsed 1:31  left in pass ~0:16
+pass 2 [################............]  56%  rip-up              elapsed 1:42  left in pass ~0:25
+pass 2 [################............]  56%  rip-up              elapsed 1:52  left in pass ~0:33
+pass 2 [#################...........]  62%  refinement          elapsed 1:57  left in pass ~0:28
+pass 2 [##################..........]  66%  geometry            elapsed 1:57  left in pass ~0:24
+pass 2 [######################......]  80%  design-rule repair  elapsed 2:04  left in pass ~0:13
+pass 2 [######################......]  80%  rip-up              elapsed 2:04  left in pass ~0:13
+pass 2 [######################......]  80%  rip-up              elapsed 2:15  left in pass ~0:16
+pass 2 [########################....]  84%  design-rule repair  elapsed 2:29  left in pass ~0:14
+pass 2 [########################....]  84%  rip-up              elapsed 2:29  left in pass ~0:14
+pass 2 [########################....]  84%  rip-up              elapsed 2:41  left in pass ~0:16
+pass 2 [#########################...]  89%  design-rule repair  elapsed 2:54  left in pass ~0:13
+pass 2 [#########################...]  89%  rip-up              elapsed 2:54  left in pass ~0:13
+pass 2 [#########################...]  89%  rip-up              elapsed 3:07  left in pass ~0:14
+pass 2 [##########################..]  94%  design-rule repair  elapsed 3:21  left in pass ~0:09
+pass 2 [##########################..]  94%  rip-up              elapsed 3:21  left in pass ~0:09
+pass 2 [##########################..]  94%  rip-up              elapsed 3:34  left in pass ~0:10
+pass 2 [............................]   0%  racing variants 5-8 of 8 elapsed 3:50  left in pass ?
+pass 2 [############################] 100%  variant 6 of 8 kept elapsed 6:56  left in pass ~0:00
+pass 2 [############################] 100%  placing vias        elapsed 6:56  left in pass ~0:00
+pass 3 [............................]   0%  racing variants 1-4 of 8 elapsed 7:58  left in pass ?
+pass 3 [............................]   0%  candidates          elapsed 7:58  left in pass ?
+pass 3: rough estimate for this pass 2:50
+pass 3 [#...........................]   4%  global selection    elapsed 8:02  left in pass ~2:47
+pass 3 [###.........................]  10%  commit              elapsed 8:05  left in pass ~2:44
+pass 3 [######......................]  22%  rip-up              elapsed 8:11  left in pass ~0:47
+pass 3 [###############.............]  55%  rip-up              elapsed 8:23  left in pass ~0:21
+pass 3 [###############.............]  55%  rip-up              elapsed 8:34  left in pass ~0:30
+pass 3 [#################...........]  62%  refinement          elapsed 8:41  left in pass ~0:26
+pass 3 [##################..........]  66%  geometry            elapsed 8:41  left in pass ~0:22
+pass 3 [######################......]  80%  design-rule repair  elapsed 8:47  left in pass ~0:12
+pass 3 [######################......]  80%  rip-up              elapsed 8:47  left in pass ~0:12
+pass 3 [######################......]  80%  rip-up              elapsed 8:58  left in pass ~0:15
+pass 3 [########################....]  84%  design-rule repair  elapsed 9:05  left in pass ~0:12
+pass 3 [########################....]  84%  rip-up              elapsed 9:05  left in pass ~0:12
+pass 3 [########################....]  84%  rip-up              elapsed 9:17  left in pass ~0:14
+pass 3 [#########################...]  89%  design-rule repair  elapsed 9:24  left in pass ~0:11
+pass 3 [#########################...]  89%  rip-up              elapsed 9:24  left in pass ~0:11
+pass 3 [#########################...]  89%  rip-up              elapsed 9:36  left in pass ~0:12
+pass 3 [##########################..]  94%  design-rule repair  elapsed 9:44  left in pass ~0:07
+pass 3 [##########################..]  94%  rip-up              elapsed 9:44  left in pass ~0:07
+pass 3 [##########################..]  94%  rip-up              elapsed 9:55  left in pass ~0:08
+pass 3 [............................]   0%  racing variants 5-8 of 8 elapsed 10:14  left in pass ?
+pass 3 [############################] 100%  variant 8 of 8 kept elapsed 12:22  left in pass ~0:00
+pass 3 [############################] 100%  placing vias        elapsed 12:22  left in pass ~0:00
+pass 4 [............................]   0%  racing variants 1-4 of 8 elapsed 13:16  left in pass ?
+pass 4 [............................]   0%  candidates          elapsed 13:16  left in pass ?
+pass 4: rough estimate for this pass 3:53
+pass 4 [#...........................]   4%  global selection    elapsed 13:22  left in pass ~3:48
+pass 4 [###.........................]  10%  commit              elapsed 13:25  left in pass ~3:45
+pass 4 [######......................]  22%  rip-up              elapsed 13:35  left in pass ~1:05
+pass 4 [################............]  58%  rip-up              elapsed 13:46  left in pass ~0:21
+pass 4 [################............]  58%  rip-up              elapsed 13:56  left in pass ~0:28
+pass 4 [#################...........]  62%  refinement          elapsed 13:56  left in pass ~0:24
+pass 4 [##################..........]  66%  geometry            elapsed 13:56  left in pass ~0:21
+pass 4 [######################......]  80%  design-rule repair  elapsed 14:03  left in pass ~0:12
+pass 4 [######################......]  80%  rip-up              elapsed 14:03  left in pass ~0:12
+pass 4 [########################....]  84%  design-rule repair  elapsed 14:19  left in pass ~0:12
+pass 4 [########################....]  84%  rip-up              elapsed 14:19  left in pass ~0:12
+pass 4 [########################....]  84%  rip-up              elapsed 14:31  left in pass ~0:14
+pass 4 [#########################...]  89%  design-rule repair  elapsed 14:39  left in pass ~0:10
+pass 4 [#########################...]  89%  rip-up              elapsed 14:39  left in pass ~0:10
+pass 4 [............................]   0%  racing variants 5-8 of 8 elapsed 15:00  left in pass ?
+pass 4 [############################] 100%  variant 8 of 8 kept elapsed 16:31  left in pass ~0:00
+pass 4 [############################] 100%  placing vias        elapsed 16:32  left in pass ~0:00
+pass 5 [............................]   0%  racing variants 1-4 of 8 elapsed 17:24  left in pass ?
+pass 5 [............................]   0%  candidates          elapsed 17:24  left in pass ?
+pass 5: rough estimate for this pass 4:35
+pass 5 [#...........................]   4%  global selection    elapsed 17:31  left in pass ~4:29
+pass 5 [###.........................]  10%  commit              elapsed 17:34  left in pass ~4:25
+pass 5 [######......................]  22%  rip-up              elapsed 17:41  left in pass ~0:59
+pass 5 [################............]  59%  rip-up              elapsed 17:51  left in pass ~0:19
+pass 5 [#################...........]  62%  refinement          elapsed 17:55  left in pass ~0:19
+pass 5 [##################..........]  66%  geometry            elapsed 17:56  left in pass ~0:16
+pass 5 [######################......]  80%  design-rule repair  elapsed 18:04  left in pass ~0:10
+pass 5 [######################......]  80%  rip-up              elapsed 18:04  left in pass ~0:10
+pass 5 [########################....]  84%  design-rule repair  elapsed 18:15  left in pass ~0:09
+pass 5 [########################....]  84%  rip-up              elapsed 18:15  left in pass ~0:09
+pass 5 [#########################...]  89%  design-rule repair  elapsed 18:25  left in pass ~0:08
+pass 5 [#########################...]  89%  rip-up              elapsed 18:25  left in pass ~0:08
+pass 5 [##########################..]  94%  design-rule repair  elapsed 18:35  left in pass ~0:05
+pass 5 [##########################..]  94%  rip-up              elapsed 18:35  left in pass ~0:05
+pass 5 [............................]   0%  racing variants 5-8 of 8 elapsed 18:53  left in pass ?
+pass 5 [############################] 100%  variant 7 of 8 kept elapsed 20:19  left in pass ~0:00
+297/446 connections routed (F.Cu: 233, In1.Cu: 46, In2.Cu: 43, B.Cu: 229; 259 vias), length ratio 1.238, 1219.7s -> boards/output/ulx3s_fine.ses
+  unrouted: net +5V: GPDI1-18 -> via1410
+  unrouted: net BTN_R: U1-H16 -> via1173
+  unrouted: net BTN_U: U1-R18 -> via1174
+  unrouted: net JTAG_TDI: via1411 -> U6-2
+  unrouted: net JTAG_TMS: U1-U5 -> U9-29
+  unrouted: net JTAG_TDO: U1-V4 -> U6-6
+  unrouted: net SHUTDOWN: U1-G16 -> R13-1
+  unrouted: net GPDI_SDA: GPDI1-16 -> via1366
+  unrouted: net GPDI_SCL: GPDI1-15 -> via1367
+  unrouted: net SD_CLK: U1-H2 -> U9-13
+  unrouted: net SD_D0: U1-J3 -> U9-24
+  unrouted: net USB5V: via1310 -> U6-12
+  unrouted: net SDRAM_CKE: U1-F20 -> U2-37
+  unrouted: net SDRAM_D15: U1-J17 -> via1191
+  unrouted: net SDRAM_A6: U1-K18 -> via1192
+  unrouted: net SDRAM_CLK: U1-F19 -> via1193
+  unrouted: net SDRAM_D13: U1-F18 -> via1194
+  unrouted: net SDRAM_BA0: U1-P19 -> via1195
+  unrouted: net SDRAM_BA0: via1314 -> U2-20
+  unrouted: net SDRAM_D6: U1-T17 -> via1196
+  unrouted: net SDRAM_A5: U1-K19 -> via1197
+  unrouted: net SDRAM_D14: U1-J18 -> via1198
+  unrouted: net SDRAM_D12: U1-E18 -> via1199
+  unrouted: net SDRAM_D5: U1-T18 -> via1200
+  unrouted: net SDRAM_A10: U1-N19 -> via1201
+  unrouted: net SDRAM_A3: U1-L19 -> via1202
+  unrouted: net SDRAM_D4: U1-P18 -> via1203
+  unrouted: net SDRAM_D4: via1415 -> U2-8
+  unrouted: net SDRAM_D10: U1-D19 -> via1204
+  unrouted: net SDRAM_D3: U1-N18 -> via1206
+  unrouted: net SDRAM_D3: via1416 -> U2-7
+  unrouted: net SDRAM_D8: U1-E19 -> via1207
+  unrouted: net SDRAM_A8: U1-J19 -> via1208
+  unrouted: net SDRAM_A1: U1-M19 -> via1210
+  unrouted: net SDRAM_D2: U1-M18 -> via1211
+  unrouted: net SDRAM_D1: U1-L18 -> via1212
+  unrouted: net SDRAM_D0: U1-J16 -> via1213
+  unrouted: net SDRAM_D0: via1417 -> U2-2
+  unrouted: net SDRAM_DQM0: U1-U19 -> via1214
+  unrouted: net SDRAM_nCAS: U1-T19 -> via1216
+  unrouted: net /flash/FLASH_MISO: U1-V2 -> U10-2
+  unrouted: net /flash/FLASH_SCK: U1-U3 -> U10-6
+  unrouted: net /flash/FLASH_nCS: U1-R2 -> U10-1
+  unrouted: net /flash/FPGA_INITN: U1-V3 -> R33-2
+  unrouted: net OLED_RES: U1-P2 -> C66-2
+  unrouted: net OLED_CS: U1-N2 -> C64-2
+  unrouted: net WIFI_EN: U1-J5 -> R35-1
+  unrouted: net FTDI_nRTS: U1-M3 -> U6-19
+  unrouted: net FTDI_RXD: U1-L4 -> U6-1
+  unrouted: net WIFI_RXD: U1-K3 -> U9-34
+  unrouted: net WIFI_TXD: U1-K4 -> U9-35
+  unrouted: net SD_D3: U1-K2 -> U9-16
+  unrouted: net AUDIO_L3: U1-B3 -> R17-1
+  unrouted: net AUDIO_L2: U1-C3 -> R16-1
+  unrouted: net AUDIO_L1: U1-D3 -> R15-1
+  unrouted: net AUDIO_L0: U1-E4 -> R14-1
+  unrouted: net AUDIO_R3: U1-C5 -> R21-1
+  unrouted: net AUDIO_R2: U1-D5 -> R20-1
+  unrouted: net AUDIO_R1: U1-B5 -> R19-1
+  unrouted: net OLED_CLK: U1-P4 -> C68-2
+  unrouted: net OLED_MOSI: U1-P3 -> C67-1
+  unrouted: net LED1: U1-C2 -> via1228
+  unrouted: net LED3: U1-D2 -> via1229
+  unrouted: net LED5: U1-E2 -> via1230
+  unrouted: net LED7: U1-H3 -> via1231
+  unrouted: net BTN_PWRn: U1-D6 -> D17-2
+  unrouted: net CLK_25MHz: U1-G2 -> via1235
+  unrouted: net USB_FPGA_D+: U1-E16 -> D20-1
+  unrouted: net ADC_MISO: U1-U16 -> via1242
+  unrouted: net ADC_CSn: U1-R17 -> via1244
+  unrouted: net ADC_SCLK: U1-P17 -> via1245
+  unrouted: net SW3: U1-D7 -> via1246
+  unrouted: net SW2: U1-D8 -> via1247
+  unrouted: net SW1: U1-E8 -> via1248
+  unrouted: net USB_FPGA_D-: U1-F16 -> R52-1
+  unrouted: net FTDI_TXDEN: U1-L3 -> U6-15
+  unrouted: net SDRAM_A12: U1-G19 -> via1252
+  unrouted: net AUDIO_V3: U1-E5 -> R60-1
+  unrouted: net AUDIO_V2: U1-F5 -> R59-1
+  unrouted: net AUDIO_V1: U1-F2 -> R58-1
+  unrouted: net AUDIO_V0: U1-H5 -> R57-1
+  unrouted: net SW4: U1-E7 -> via1254
+  unrouted: net GN0: U1-C11 -> J1-5
+  unrouted: net GP0: U1-B11 -> J1-6
+  unrouted: net GN2: U1-B10 -> J1-9
+  unrouted: net GN3: U1-C10 -> J1-11
+  unrouted: net GP3: U1-B9 -> J1-12
+  unrouted: net GN5: U1-B8 -> J1-15
+  unrouted: net GP5: U1-C8 -> J1-16
+  unrouted: net GN6: U1-C7 -> J1-17
+  unrouted: net GP6: U1-C6 -> J1-18
+  unrouted: net GN14: U1-U17 -> via1258
+  unrouted: net GP14: U1-U18 -> via1259
+  unrouted: net GN15: U1-P16 -> via1344
+  unrouted: net GP15: U1-N17 -> via1261
+  unrouted: net GN16: U1-M17 -> via1262
+  unrouted: net GP16: U1-N16 -> via1263
+  unrouted: net GP16: via1422 -> U8-3
+  unrouted: net GN17: U1-L17 -> via1264
+  unrouted: net GN17: via1423 -> U8-4
+  unrouted: net GP17: U1-L16 -> via1265
+  unrouted: net GP17: via1424 -> U8-5
+  unrouted: net GP17: via1395 -> U8-5
+  unrouted: net GN18: U1-H17 -> J2-13
+  unrouted: net GP18: U1-H18 -> J2-14
+  unrouted: net GN19: U1-G18 -> J2-15
+  unrouted: net GP19: U1-F17 -> J2-16
+  unrouted: net GN20: U1-E17 -> J2-17
+  unrouted: net GP20: U1-D18 -> J2-18
+  unrouted: net GN21: U1-D17 -> J2-23
+  unrouted: net GP21: U1-C18 -> J2-24
+  unrouted: net GN22: U1-C15 -> J2-25
+  unrouted: net GP22: U1-B15 -> J2-26
+  unrouted: net GN23: U1-C17 -> J2-27
+  unrouted: net GP23: U1-B17 -> J2-28
+  unrouted: net GN24: U1-D16 -> J2-29
+  unrouted: net GP24: U1-C16 -> J2-30
+  unrouted: net GN25: U1-E14 -> J2-31
+  unrouted: net GP25: U1-D14 -> J2-32
+  unrouted: net GN26: U1-C13 -> J2-33
+  unrouted: net GP26: U1-B13 -> J2-34
+  unrouted: net GN27: U1-E13 -> J2-35
+  unrouted: net GP27: U1-D13 -> J2-36
+  unrouted: net GN7: U1-B6 -> J1-23
+  unrouted: net GN10: U1-B4 -> J1-29
+  unrouted: net GP10: U1-C4 -> J1-30
+  unrouted: net GN11: U1-E3 -> J1-31
+  unrouted: net GP11: U1-F4 -> J1-32
+  unrouted: net GN12: U1-F3 -> U9-8
+  unrouted: net GP12: U1-G3 -> U9-9
+  unrouted: net GN13: U1-G5 -> U9-5
+  unrouted: net GP13: U1-H4 -> U9-4
+  unrouted: net USB_FPGA_PULL_D+: U1-B12 -> D23-1
+  unrouted: net USB_FPGA_PULL_D-: U1-C12 -> D25-1
+  unrouted: net /gpdi/GPDI_D2-: via1349 -> GPDI1-3
+  unrouted: net /gpdi/GPDI_D1-: via1425 -> GPDI1-6
+  unrouted: net FPDI_D1-: U1-C14 -> via1267
+  unrouted: net FPDI_D0-: U1-B16 -> via1269
+  unrouted: net FPDI_CLK-: U1-B18 -> via1271
+  unrouted: net /gpdi/GPDI_D2+: C38-2 -> GPDI1-1
+  unrouted: net /gpdi/GPDI_CLK+: via1401 -> GPDI1-10
+  unrouted: net FPDI_SDA: U1-B19 -> via1272
+  unrouted: net FPDI_SDA: U1-B19 -> via1354
+  unrouted: net FPDI_SCL: U1-E12 -> U7-6
+  unrouted: net FPDI_SCL: U1-E12 -> R23-2
+  unrouted: net USER_PROGRAMN: U1-M4 -> D29-1
+  unrouted: net FTDI_nRXLED: U1-L5 -> U6-14
+  unrouted: net WIFI_GPIO19: U1-N4 -> U9-31
+  unrouted: net WIFI_GPIO22: U1-L2 -> U9-36
+  unrouted: net WIFI_GPIO21: U1-K5 -> U9-33
+  unrouted: net OLED_BL: U1-J4 -> C63-1
+  unrouted: net WIFI_GPIO27: U1-N3 -> U9-12
+  unrouted: net WIFI_GPIO25: U1-E9 -> U9-10
+  unrouted: net WIFI_GPIO35: U1-E6 -> U9-7
+measured from ulx3s_fine.ses: smallest gap trace-pad 0.1367, trace-trace 0.1367 (rule 0.127), trace-edge 0.1385 (rule 0.127) mm; 0 crossings; widths as ruled -> OK

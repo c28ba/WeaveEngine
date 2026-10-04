@@ -1,5 +1,5 @@
 """Phase 3: negotiated rip-up and reroute, and Phase 4 refinement (section 10)."""
-from weaveengine.plan.candidates import best_route, plain_route
+from weaveengine.plan.candidates import best_route, plain_route, route_batch
 from weaveengine.plan.context import Context
 from weaveengine.topo.search import Route
 
@@ -12,6 +12,7 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
     params = ctx.params
     max_rounds = params.max_rounds if max_rounds is None else max_rounds
     best_key, best_snap, stall = None, None, 0
+    first_violations = max(1, ctx.violations())
 
     for _ in range(max_rounds + 1):
         key = (ctx.violations(), ctx.estimated_length())
@@ -24,6 +25,7 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
         if (not over and not open_conns) or stall >= STALL_LIMIT or ctx.rounds >= max_rounds:
             break
         ctx.rounds += 1
+        ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
 
         # 1. Raise prices. Capped: beyond a few crossing penalties it only blunts the A* heuristic.
         params.pres_fac = min(10.0 * params.cross_penalty, params.pres_fac * params.pres_growth)
@@ -51,13 +53,13 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
         # 4. Reroute: connections that were stuck go first, then the ripped ones.
         todo = sorted((w for w in ctx.unrouted if not ctx.conns[w].dead),
                       key=lambda w: (w in rip, -ctx.conns[w].fails, ctx.conns[w].air_len))
-        for w in todo:
+        for w, r in route_batch(ctx, todo):
             conn = ctx.conns[w]
-            r = best_route(ctx, conn)
             if r is None:
                 conn.fails += 1
             else:
                 ctx.commit(conn, r)
+        ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
 
     if best_snap is not None and (ctx.violations(), ctx.estimated_length()) > best_key:
         ctx.restore(best_snap)

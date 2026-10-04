@@ -105,7 +105,7 @@ def straighten(state: TopoState, board: Board, rounds: int = 8) -> set[int]:
         return path[0][0] if at_start else path[-1][0]
 
     for _ in range(rounds):
-        report: dict = {}
+        report: dict = {"detect_only": True}
         relax(state, board, max_sweeps=40, arcs=False, slide=1, report=report)  # a rough pass is enough to see which ends are pressed
         moved = False
         for wire, at_start, vertex in report.get("clamped", []):
