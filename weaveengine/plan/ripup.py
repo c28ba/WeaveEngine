@@ -70,7 +70,7 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
 
 def legalise(ctx: Context) -> None:
     """Final guarantee: no gate over capacity. Rips the worst offenders, then
-    tries once more to place whatever is unrouted without creating overflow."""
+    places whatever is unrouted that fits without creating overflow."""
     while True:
         count: dict[int, int] = {}
         for layer in ctx.layers:
@@ -82,8 +82,26 @@ def legalise(ctx: Context) -> None:
             break
         ctx.rip(max(count, key=lambda w: (count[w], w)))
     ctx.rebuild_barrier()
-    for w in sorted(ctx.unrouted, key=lambda w: (ctx.conns[w].air_len, w)):
-        place(ctx, ctx.conns[w], find(ctx, ctx.conns[w], hard_cap=True), hard_cap=True)
+    fill(ctx)
+
+
+def fill(ctx: Context) -> int:
+    """Places every open connection that fits with no gate over capacity,
+    shortest first, until a pass places none (one placed can be what another
+    was waiting for: its vias are new places to change layer). Nothing is
+    ripped up, so this only ever adds. Returns the number placed.
+
+    Negotiation does not do this: there an over-full gate is cheaper than a
+    via (9), so that it settles which connections share a layer, and an open
+    connection that could go round by vias keeps asking for the gate instead."""
+    placed = 0
+    while True:
+        before = len(ctx.unrouted)
+        for w in sorted(ctx.unrouted, key=lambda w: (ctx.conns[w].air_len, w)):
+            place(ctx, ctx.conns[w], find(ctx, ctx.conns[w], hard_cap=True), hard_cap=True)
+        if len(ctx.unrouted) == before:
+            return placed
+        placed += before - len(ctx.unrouted)
 
 
 def refine(ctx: Context, passes: int = 2) -> int:

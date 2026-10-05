@@ -592,13 +592,17 @@ End to end, one variant, every result measured from the written file and clean:
 
 | Board | Before | Rubber band |
 |---|---|---|
-| RAM Selector Tree | 360 of 400, 216 vias, 18 min (349, 218 vias, 20 min with the spreading) | 368 of 400, 215 vias, 9 min (see below: 393 with 253 vias in 16 min when repair rounds ran) |
+| RAM Selector Tree | 360 of 400, 216 vias, 18 min (349, 218 vias, 20 min with the spreading) | 368 of 400, 215 vias, 9 min; **382, 255 vias, 12 min** with the fill step (see below; 393 in 16 min when repair rounds ran) |
 | blinkSP1 (18 runs) | 48 (45 to 52) of 58, 14 s | 48 (47 to 51), 9 s |
 | ALU | 409 of 409, 5 vias | 409 of 409, 3 vias, 27 s |
 | ulx3s | 200 of 203, 39 vias, 50 s | 200 of 203, 37 vias, 36 s |
 | Word of RAM | 85 of 85, 0 vias | 85 of 85, 0 vias, 1.5 s |
 
 **Read the RAM Selector Tree row with care.** With the final code its first geometry check finds nothing, so no design-rule repair round runs and the result is the routing as rip-up left it: 368, in half the time. Two runs made earlier the same day, when the geometry still left one or two violations, went through the repair rounds, and each repair round also runs up to five more rounds of rip-up; those runs ended at 393 of 400 with 253 vias. So 25 connections are there to be had by negotiating longer, and the rule that stops rip-up once nothing is over-full and the open count has stalled for three rounds (12.7) is stopping too soon on this board. That is a search question, not a geometry one, and it is open.
+
+**Followed up: it is not the stop rule.** From the saved routing (32 open, rip-up just stopped), with the stall limit at 3, 8 or 20 rounds the outcome is the same. Each further round of negotiation has fewer open (15 to 29) and 80 to 330 gates over-full, never fewer of both, and the loop rightly falls back to where it was. What had routed the extra connections in those earlier runs was the last step of every repair round: placing what is open with every gate held to its capacity. Done again after refinement has shortened the routes, that step alone takes 32 open to 18 in 13 seconds. Negotiation cannot do it, because there an over-full gate is cheaper than a via (so that it settles who shares a layer), and an open connection that could go round by vias keeps asking for the gate.
+
+So that step is now its own (`ripup.fill`: place what fits, shortest first, until a pass places none) and runs after refinement, alternating with it while it places anything. End to end: **382 of 400**, 255 vias, 12 minutes, no repair round, clean. The other four boards are unchanged. Still open: whether a deliberate second cycle of negotiation and filling is worth its time (the runs that reached 393 had made several, by accident).
 
 What the geometry itself changed: nothing that fits is ripped up or dropped any more because its trace could not be drawn (360 to 368 with no repair rounds at all, against 18 minutes half spent in them). blinkSP1 does not change, as expected: it had no geometry problem, and its open connections are the search's (12.7).
 
