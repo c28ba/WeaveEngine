@@ -9,6 +9,7 @@
 - This is a design, not a tested result. Anything marked **[HYPOTHESIS]** is a design bet that must be validated by the experiments in section 17 before it is relied on.
 - TopoR's internal algorithms are not public in anything I could verify. This design is built from general topological-routing ideas (homotopic routing, rubber-band sketches, negotiated congestion), not from TopoR's source. Do not describe it as a reimplementation.
 - The riskiest piece is the slot-aware topological search (section 8). Milestone M2 is a deliberate spike to prove or kill it early.
+- Geometry. Since M14e a trace is the taut line against discs at the vertices it passes (13.1). On the five benchmark boards every written result checks clean, and the board that needs most vias went from 360 to 393 of 400 connections for it (12.8).
 - Vias. The machinery for putting a via into the map is built and tested (12.2, M13). The layer that decides *where* vias go has been prototyped (12.3) and is not good enough: it uses several vias per connection and no board that needs vias routes completely. It is to be reworked (12.5). Section 12.4 records what the prototype showed, with numbers.
 - Library API details (`triangle`, `shapely`) are from memory. Check them when implementing.
 
@@ -352,8 +353,8 @@ A site must also really lie in the middle cell it is declared to be in: if five 
 **Removing a via.** The site is put to sleep and then deleted from the map (12.5, step 2). A sleeping site that could not be deleted keeps half a pitch clear around its hole, because wires pass it on both sides and must not meet at it.
 
 **The 2 µm hole realises as a correct via: go (M13).** This was the hypothesis the spike was for. What it took in `realize/`:
-- the keep-off is one more term where relaxation sums the distance a wire keeps from a gate's end vertex (windows, and `radial` for the arcs);
-- a wire crossing the gate *opposite* a via vertex is kept out of the keep-off disc on its own side of the via (`via_shadow`), for the edges that could not be flipped;
+- the keep-off is what a foreign wire keeps from the via at the least, whatever lies in between (13.1);
+- for a wire that goes round it, a via is one disc at its centre, not the three corners of its hole. Three discs of half a millimetre whose centres are 3 µm apart have tangents between them that point anywhere (13.1, "what does not carry over");
 - the via's own trace: which of the three hole edges it leaves through is the search's accident, so its heading is judged a trace width away from the hole, a trace heading away from its edge goes round the nearer way, and it may take the innermost place inside foreign traces that wrap the via (`terminals.hop`). All three apply to via sites only; ordinary pads behave as before.
 
 Results (details in the M13 row of section 18): 10,000 random operations with the invariant intact; hand-placed vias clean at 55 of 55 random positions, the smallest gap from a foreign trace to the via copper 0.307 mm against a rule of 0.300.
@@ -565,7 +566,7 @@ So the count of how many wires fit through a gate is right as arithmetic and too
 
 **Tried: count a bundle less tightly** (from the fourth wire on, 1.25 pitches each). Not kept. `RAM Selector Tree`: 364 of 400 with 273 vias, against 360 with 216. `blinkSP1`, which has no geometry problem: 45 (38 to 49) routed against 48 (45 to 50). It takes room from every board to spare one, and by the table it would have to be nearer 1.5 to work.
 
-**Kept: the geometry uses the room that is there** (13.1). On each gate, whatever room is left over once every wire has its window is put between the wires, up to 0.15 of a pitch per pair of different nets, instead of leaving the bundle packed at the minimum. It costs no routing capacity. On the saved state: 123 violations to 82. More than about 0.2 of a pitch makes it worse again. `Word of RAM`, `ALU` and `ulx3s` route as before and their smallest trace-to-trace gaps go up (0.210 to 0.269, 0.213 and 0.230 mm against a rule of 0.2); `blinkSP1` 48 (45 to 52) routed, 42 vias.
+**Kept for a while, then removed with the rewrite below: the geometry uses the room that is there.** On each gate, whatever room is left over once every wire has its window is put between the wires, up to 0.15 of a pitch per pair of different nets, instead of leaving the bundle packed at the minimum. It costs no routing capacity. On the saved state: 123 violations to 82. More than about 0.2 of a pitch makes it worse again. `Word of RAM`, `ALU` and `ulx3s` route as before and their smallest trace-to-trace gaps go up (0.210 to 0.269, 0.213 and 0.230 mm against a rule of 0.2); `blinkSP1` 48 (45 to 52) routed, 42 vias.
 
 **The other two thirds: the way the geometry is built cannot hold a bundle that crosses a gate at a slant.** Measured on the same saved state, after the change above (82 violations left):
 
@@ -576,9 +577,28 @@ So the count of how many wires fit through a gate is right as arithmetic and too
 
 Those wires do fit. Wire number k from one end of a gate has to stay k pitches from that end's vertex and the rest of the pitches from the other end's: two discs, which do not overlap whenever the capacity count says the wires fit. A bundle crossing at a slant bends round the one disc and then the other, as concentric arcs, and keeps its spacing. Relaxation as built (13.1) gives every wire one point on each gate and joins the points with straight chords, adding an arc afterwards round at most one vertex per triangle; it has no way to draw that double bend, so it asks for room along the gate instead, more than is there.
 
-So the capacity count of 6.3 is right, and the fix is in realisation: the taut path of a wire against *discs* at the vertices it passes (radius: what lies between it and the vertex), which is the rubber-band construction this design started from. Tangent lines between discs and arcs round them are spaced correctly by construction, for any number of wires at any slant. That is a rewrite of the core of `realize/relax.py`, not a change to it. **Not started.**
+So the capacity count of 6.3 is right, and the fix is in realisation: the taut path of a wire against *discs* at the vertices it passes (radius: what lies between it and the vertex), which is the rubber-band construction this design started from. Tangent lines between discs and arcs round them are spaced correctly by construction, for any number of wires at any slant.
 
-`RAM Selector Tree` has not been run end to end since the change above.
+**Done (M14e): realisation rebuilt that way** (13.1). The sweep, the spacing along gates and the spare-room spreading above are gone. On the same saved state:
+
+| Realisation | Violations |
+|---|---|
+| as it was (one point per gate) | 123 |
+| with spare room spread between the wires | 82 |
+| rubber band, first check | 1 |
+| rubber band, after repair (13.2) | 0 |
+
+End to end, one variant, every result measured from the written file and clean:
+
+| Board | Before | Rubber band |
+|---|---|---|
+| RAM Selector Tree | 360 of 400, 216 vias, 18 min (349, 218 vias, 20 min with the spreading) | **393 of 400**, 253 vias, 16 min |
+| blinkSP1 (18 runs) | 48 (45 to 52) of 58, 14 s | 48 (47 to 51), 9 s |
+| ALU | 409 of 409, 5 vias | 409 of 409, 3 vias, 27 s |
+| ulx3s | 200 of 203, 39 vias, 50 s | 200 of 203, 37 vias, 36 s |
+| Word of RAM | 85 of 85, 0 vias | 85 of 85, 0 vias, 1.5 s |
+
+What RAM Selector Tree was losing to the geometry it now keeps: connections that fitted and were ripped up or dropped because their traces could not be drawn. blinkSP1 does not change, as expected: it had no geometry problem, and its open connections are the search's (12.7).
 
 ### 12.9 Not in scope
 - Blind and buried vias: a site is on every layer.
@@ -590,22 +610,44 @@ So the capacity count of 6.3 is right, and the fix is in realisation: the taut p
 
 Input: per wire, the gate sequence and the per-gate ordering `gate_order`.
 
-### 13.1 Relaxation (taut string with ordering)
+### 13.1 Relaxation: the rubber band with thickness (`realize/relax.py`, `realize/kernel.py`)
 
-1. **Initial placement.** On each gate with `k` wires ordered `w_1..w_k`, place wire `w_i`'s crossing point at fraction `(i - 0.5) / k` along the gate (gate endpoints already include the clearance inflation).
-2. **Gauss-Seidel sweeps.** For each wire, for each interior crossing point, move it to the point on its gate that minimises path length (intersect the line between its two neighbours' points with the gate, clamp to the gate). Then clamp it between its ordered neighbours on the same gate: at least `(t + s)` away from the previous wire's point and from the next wire's point. Repeat until the largest movement in a sweep is below `1e-4 mm` or a sweep limit is hit. Room left over on a gate once every wire has its window is shared out between its wires (up to 0.15 of a pitch per pair of different nets), so that a bundle is not packed at exactly the spacing it owes (12.8).
-3. **Bends.** A point clamped to a gate endpoint means the wire bends around that obstacle vertex. Because obstacles are already inflated by `s + t/2`, a wire touching the inflated vertex is DRC-legal. Use a mitred/rounded inflation with enough resolution to avoid clearance loss at convex corners.
-4. **Terminals.** The wire's first and last points lie on the inflated pad boundary. A short straight stub joins that point to the pad centre. The ring guarantees only that the point itself is clear of foreign copper. Where the rings of neighbouring pads have merged (fine-pitch parts), a stub from the part of the ring over the gap cuts across towards the neighbour. So each pad edge has a window, the part of it from which the stub keeps its clearance, found once per map by trying 17 points along the edge (`geom/exits.py`). An edge with no such part is made a wall, so the search never leaves a pad through it; relaxation keeps a trace's end inside the window. A pad with no legal edge at all cannot be reached on that layer and is reported with the other unreachable pads.
+**The construction.** A wire with other wires between it and a vertex has to stay their combined spacing away from that vertex. That is a disc round the vertex, and its radius comes from the topology alone: on any gate ending at the vertex, add up the spacings of the wires nearer to the vertex (wires of one net owe each other nothing). The wire's trace is the shortest line in its route that stays outside the discs of the vertices it passes: straight runs tangent to the discs it touches, and arcs round them. Each wire is pulled on its own; no wire's trace depends on another's.
 
-Vectorise the sweep with NumPy (all wires processed per gate-index class), or use `numba` for this kernel only.
+Two wires pulled against the same two vertices get radii that differ by the spacing they owe, so their straight runs are parallel and their arcs concentric, that spacing apart, whatever the angle at which they cross the gates. Nothing has to be spaced along a gate. (If the wires fit through every gap by the capacity count, the discs either side of each gap do not overlap for any of them.)
+
+**The discs of one wire** are the vertices of the triangles it crosses, in order, each on a known side: when the wire moves on to its next gate, one end of the gate is new. Details:
+- a wire is not held away from the corners of its own two pads, and a via's keep-off (12.2) is the least any foreign wire's radius can be there;
+- a via is one disc at its centre;
+- the two ends of the window on each pad edge (see Terminals) are points the trace has to pass between.
+
+**Pulling taut (`kernel.pull`, compiled).** This is the funnel algorithm with discs for points: the line between two points becomes the tangent between two discs. Two things do not carry over from points, and both were found by the traces they broke.
+1. *The two sides of the funnel do not only meet at its apex.* A disc reaches into the other side's string anywhere along it: a via beside a pad makes a slot the string has to thread, touching a disc on its left, then one on its right, then one on its left. So the funnel is kept as what it stands for, two taut strings from the start, one to the last disc met on each side, each free to touch discs of either side. A new disc is reached by its own side's string, less the discs that string lifts off; if a disc of the other string is in the way, it is reached by that string instead; and if the new disc is in the way of the other string, that string goes by it from there on.
+2. *Taut round the far side of a disc is taut too.* Between points, a string that turns the wrong way at a vertex has lifted off it. Round a disc the string can turn by more than half a turn (a trace that makes a U-turn round a via), and a turn of 350 degrees looks like a turn of 10 the other way. What tells them apart is the route: the angles of the wire's triangles at the vertex add up to how far its route goes round it. A wire that passes a point straight has half a turn of triangles there; what they sweep beyond that is how far the trace can turn round the point (a quarter turn more is allowed round a disc). A string that would have to turn further has lifted off.
+
+A disc inside another on the same side is never touched and is dropped. Where discs of opposite sides overlap, the gate between them is over-full; the trace passes square to the line of centres and DRC reports it.
+
+**Drawing.** An arc is drawn as a polyline round the outside of its circle, in steps of 6 degrees or less, fine enough that its corners stand at most 0.4 µm out (the check allows a micron).
+
+**Terminals.** The wire's first and last points are the pad centres; it must pass through the window on its pad edge. The ring guarantees only that a point on it is clear of foreign copper. Where the rings of neighbouring pads have merged (fine-pitch parts), a stub from the part of the ring over the gap cuts across towards the neighbour. So each pad edge has a window, the part of it from which the stub keeps its clearance, found once per map by trying 17 points along the edge (`geom/exits.py`). An edge with no such part is made a wall, so the search never leaves a pad through it. A pad with no legal edge at all cannot be reached on that layer and is reported with the other unreachable pads. Within the window, pulling taut chooses the point. An end that presses against a corner of its pad edge is moved to the next edge round the pad (`terminals.straighten`, M8).
+
+**What a wire's own triangles do not tell it.** Two things are added before pulling, because they are common:
+- *Where a foreign wire leaves its pad.* A wire passing that pad keeps its distance from the point, a disc there. The wires near such points are pulled a second time once the points are known, and a third time with every such point held where it is.
+- *The next vertex along an obstacle.* If the bundle inside a wire goes on round the next vertex of the same pad and the wire does not, the bundle is as thick there and may reach into the wire's path. The wire gets that vertex as a disc too.
+
+Anything else of the kind is found by the check (13.2).
+
+**Cost.** RAM Selector Tree, 583 traces on two layers: 0.3 s per layer for relaxation, 0.1 s for the check.
 
 ### 13.2 DRC and repair
 
 - Check with `shapely`: buffer every trace by `t/2`, query an `STRtree` of foreign-net copper for distance `< s`; check against the outline; check wire-to-wire distances.
-- If violations remain after relaxation: increase spacing locally and re-relax; if still violating, mark the gates involved, add history cost, and send the affected wires back to Phase 3. Capacity is only an estimate, so this feedback loop is expected.
+- **Repair: a trace is given the discs it did not know of.** A disc can reach into a wire's path from a vertex that none of the wire's triangles touch: a via in the next triangle, a bundle going round a vertex two triangles away. Where the check finds two traces too close, each takes on the discs the other is pulled against at that spot (those on the far side of the other trace), a spacing wider; a trace too close to a via takes on the via's disc. The new disc goes into the wire's order between the two discs its trace touched either side of the spot. Then the layer is pulled again, up to four times, and the best result is kept. This is the same rule as 13.1 (keep clear of a vertex by what lies between), applied where the triangulation did not show it.
+- What is still wrong after that is a routing problem: mark the gates involved, add history cost, and send the affected wires back to Phase 3.
+- Tried: letting this repair do the work of the two additions at the end of 13.1 as well. It does on RAM Selector Tree (no violation left without them), but not where pad exits crowd each other: the fine-pitch test, clean at the first check with them, is left with violations without. They stay.
 - Via copper is checked as a pad of its net on every layer. Via to via and via to fixed copper are kept apart when the via is placed, not checked afterwards.
 - The stub from a pad centre to the ring used to be assumed clear (12.4, finding 3). Fixed in 13.1 step 4.
-- **Known limit (12.4, finding 4):** widening spacing only helps where the gate has room. The loop now stops as soon as a round is no better, and no longer gives up on a whole layer because one violation there is of another kind.
+- (Until M14e, repair widened the spacing of the wires involved. With traces drawn as in 13.1 that helped in 1 of 14 realisations that had a violation, and it is gone.)
 
 ### 13.3 Sliding vias (planned, M15)
 
@@ -666,9 +708,9 @@ Targets to validate with measurements (these are guesses, not results):
 - Phase 3 should converge in tens of rounds, not hundreds, on benchmark boards.
 
 **Status (M9, measured by `python -m bench.perf`, results in `bench/results.md`):** all three targets are met. What got it there, in order of effect:
-1. The search loop and the relaxation sweep are compiled with `numba` (`topo/kernel.py`, `realize/kernel.py`). `numba` is optional: without it the same loops run in Python and give the same routing, only slower. Profiling had shown more than 95 % of the time in these two loops.
-2. Each wire starts relaxation from its exact taut path (string pulling), so the sweep only settles the places where wires press on each other.
-3. The clearance solve along a wall is cached per map.
+1. The search loop and the string pulling of relaxation are compiled with `numba` (`topo/kernel.py`, `realize/kernel.py`). `numba` is optional: without it the same loops run in Python and give the same routing, only slower. Profiling had shown more than 95 % of the time in these two loops.
+2. Relaxation is exact in one pass per wire since M14e (13.1); there is no iteration to converge.
+3. (Until M14e: the clearance solve along a wall was cached per map. There is no such solve now.)
 
 Techniques: per-half-edge precomputed successor tuples; integer node ids; `dict` visited sets; a stamp-free design (clearing small dicts per search); inverted indexes for `cross_count`; parallel candidate generation; optional A* landmark heuristic. Re-profile after every milestone and record numbers in `bench/results.md`.
 
@@ -727,6 +769,7 @@ Keep a feature only if it improves completion or length ratio without disproport
 | M14b | Deleting a via site (12.5 step 2) | 10,000 random operations including deletions keep the invariant and the map's tables; a map with every site deleted equals the map before any was made, up to edge flips. **Done.** 10,000 operations with 220 deletions, none refused; with every site deleted the vertex, edge and triangle counts, the pad edges and the walls are those of the original map. 0.8 ms per deletion on the test grid. blinkSP1 routes as before (46 of 58, one variant) and no sleeping site is left in its maps |
 | M14c | One search across layers for every phase (12.5 step 3) | blinkSP1: at least 51 of 59 with no more than about 40 vias and zero violations; `complete` and the between-passes code deleted. **Partly met.** 52 of 58 with zero violations, and the old code is gone (the tree is about 740 lines shorter); but 63 vias, and the result swings with small changes (12.4). Other boards not re-measured except Word of RAM (85 of 85, now with 6 vias) |
 | M14d | The open questions of 12.5 step 4, on blinkSP1; then RAM Selector Tree, ALU, Word of RAM, ulx3s | blinkSP1 within reach of the file's own routing (51 or more connections, about 40 vias or fewer), steadily; the M14 criterion above; boards that need no via take none or nearly none |
+| M14e | Realisation as the rubber band with thickness (12.8, 13.1, 13.2) | The saved RAM Selector Tree routing realises with no violation; RAM Selector Tree end to end improves; other boards no worse. **Done.** Saved state: 82 violations to 0. End to end: 360 to 393 of 400 in 16 minutes instead of 18; blinkSP1, ALU, ulx3s and Word of RAM as before or slightly better, all clean (table in 12.8). `realize/` lost about 100 lines over it (relax, kernel and funnel: 800 lines; relax and kernel now: 700). Not done: the seven connections RAM Selector Tree still leaves open |
 | M15 | Sliding vias (13.3) | Total length on RAM Selector Tree and ALU drops against M14 with the check still clean; added geometry time recorded |
 | M16 | Via reduction in Phase 4; flips while sliding (the flip itself exists since M13) if M15 shows vias pinned | Fewer vias at equal or shorter length on the benchmark boards |
 
@@ -764,7 +807,8 @@ Keep a feature only if it improves completion or length ratio without disproport
 | Site hole radius | 2 µm | size of a site in the map (12.2). Internal: `sites.SITE_RADIUS`. Not the via's drill, which is a rule (0.3 mm unless the DSN or the settings say otherwise) |
 | Via slide rounds / tolerance | 8 / 1 µm | stop condition of 13.3 |
 | Slot cap per gate | 15 | search state limit |
-| Relaxation tolerance | 1e-4 mm | convergence |
+| Arc drawing | 6 degrees per segment at most, corners at most 0.4 µm outside the circle | `ARC_STEP`, `ARC_OUT` in `realize/relax.py` |
+| Repair rounds | 4 | times a layer is pulled again with added discs (13.2) |
 | Phase 3 iteration limit | 100 | stop condition |
 
 ---

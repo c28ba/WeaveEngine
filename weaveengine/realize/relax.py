@@ -242,7 +242,7 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
         """Pad-boundary vertices near a point where a wire leaves that pad:
         vertex -> (wire, the point, the pad's centre)."""
         near: dict[int, list[tuple]] = {}
-        reach = 2.0 * d  # generous: covers every DRC-repair spacing factor
+        reach = 2.0 * d  # the corners of the pad near enough for the point to matter there
         for w, (s0, s1) in where.items():
             for e, s, pad in ((state.wire_path[w][0][0], s0, ends[w][0]), (state.wire_path[w][-1][0], s1, ends[w][1])):
                 px, py = point(e, s)
