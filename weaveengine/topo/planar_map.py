@@ -6,6 +6,7 @@ import numpy as np
 
 from weaveengine.board import Board
 from weaveengine.geom.capacity import capacity_from_width, edge_width
+from weaveengine.geom.exits import exit_windows
 from weaveengine.geom.inflate import WALL, FreeSpace, preprocess
 from weaveengine.geom.triangulate import triangulate
 
@@ -77,6 +78,8 @@ class PlanarMap:
                 for v in self.edge_v_list[e]:
                     self.vertex_terminals.setdefault(v, []).append(e)
         self.sites: dict[int, object] = {}  # via sites by pad id (topo/sites.py)
+        # Pad edge -> the part of it (from, to; mm from its u end) a trace may leave through (geom/exits.py).
+        self.exit_window: dict[int, tuple[float, float]] = self.__dict__.get("exit_window", {})
         self._build_transitions()
 
     def _build_transitions(self) -> None:
@@ -173,8 +176,15 @@ def from_triangles(verts: np.ndarray, tris: np.ndarray, v_obs: np.ndarray, segs:
 def build(board: Board, layer: int = 0, force_fallback: bool = False) -> PlanarMap:
     fs = preprocess(board, layer)
     verts, tris, v_obs, segs, v_nbr = triangulate(fs, force_fallback=force_fallback)
-    return from_triangles(
+    pmap = from_triangles(
         verts, tris, v_obs, segs, board.rules.pitch, fs.obs_geom,
         pad_centre={p.pad_id: p.centre for p in board.pads_on(layer)},
         pad_net={p.pad_id: p.net_id for p in board.pads_on(layer)}, layer=layer,
         v_nbr=v_nbr, free_space=fs)
+    # A pad edge from which no trace can legally leave is a wall (13.1, step 4).
+    windows, dead = exit_windows(board, layer, pmap)
+    if dead:
+        pmap.edge_kind[dead], pmap.edge_owner[dead], pmap.edge_cap[dead] = WALL_EDGE, -1, 0
+        pmap.__post_init__()
+    pmap.exit_window = windows
+    return pmap
