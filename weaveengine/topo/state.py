@@ -34,29 +34,24 @@ class TopoState:
         self.hist = np.zeros(planar_map.num_edges)
 
     def resize(self) -> None:
-        """Brings every table to the map's present size: the map has gained via
-        sites (new gates and triangles start empty) or been rewound."""
+        """Brings every table up to the map's present size (the map has gained
+        room for via sites; it never shrinks) and takes the kinds of its edges
+        from the map again. New gates and triangles start empty."""
         m = self.map
         edges, tris = m.num_edges - len(self.gate_order), m.num_triangles - len(self.corner_cnt)
         if edges > 0:
             first = len(self.gate_order)
             self.gate_order += [[] for _ in range(edges)]
-            self._terminal += [k == 2 for k in m.edge_kind_list[first:]]
             cap = np.where(m.edge_kind[first:] == 1, 0.0, m.edge_width[first:] / m.pitch + 1.0)
             self.cap = np.concatenate([self.cap, cap])
             self.load = np.concatenate([self.load, np.zeros(edges)])
             self.hist = np.concatenate([self.hist, np.zeros(edges)])
             self.count = np.concatenate([self.count, np.zeros(edges, dtype=np.int32)])
-        elif edges < 0:
-            n = m.num_edges
-            del self.gate_order[n:], self._terminal[n:]
-            self.cap, self.load, self.hist, self.count = self.cap[:n].copy(), self.load[:n].copy(), self.hist[:n].copy(), self.count[:n].copy()
         if tris > 0:
             self.corner_cnt += [[0, 0, 0] for _ in range(tris)]
             self.corner = np.concatenate([self.corner, np.zeros((tris, 3), dtype=np.int32)])
-        elif tris < 0:
-            del self.corner_cnt[m.num_triangles:]
-            self.corner = self.corner[:m.num_triangles].copy()
+        if m.sites or edges > 0:
+            self._terminal = [k == 2 for k in m.edge_kind_list]
 
     def usage(self, edge_id: int) -> int:
         return len(self.gate_order[edge_id])

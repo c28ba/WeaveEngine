@@ -21,7 +21,11 @@ from weaveengine.topo.state import TopoState
 def map_errors(pmap) -> list[str]:
     """Checks the map's tables against each other after it has been changed."""
     errors = []
+    idle_edges = {e for slot in sites.free_slots(pmap) for e in slot[1]}
+    idle_tris = {t for slot in sites.free_slots(pmap) for t in slot[2]}
     for t in range(pmap.num_triangles):
+        if t in idle_tris:
+            continue
         verts, edges = pmap.tri_v_list[t], pmap.tri_e_list[t]
         (ax, ay), (bx, by), (cx, cy) = (pmap.vxy[v] for v in verts)
         if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) <= 0:
@@ -35,6 +39,10 @@ def map_errors(pmap) -> list[str]:
             if t not in pmap.edge_t_list[e] or n not in pmap.edge_t_list[e] or (n >= 0 and t not in pmap.tri_n[n]):
                 errors.append(f"triangle {t}: edge {e} and neighbour {n} disagree")
     for e in range(pmap.num_edges):
+        if e in idle_edges:
+            if pmap.edge_kind_list[e] == GATE or pmap.trans[2 * e] or pmap.trans[2 * e + 1]:
+                errors.append(f"edge {e} of an unused slot can be crossed")
+            continue
         u, v = pmap.edge_v_list[e]
         if abs(pmap.edge_len_list[e] - math.dist(pmap.vxy[u], pmap.vxy[v])) > 1e-9 or u >= v:
             errors.append(f"edge {e}: stale length or endpoints out of order")
@@ -108,6 +116,7 @@ def test_random_operations_keep_the_invariants():
     checked regularly, and no crossing in the realised geometry at the end."""
     board = grid_board(6, 10.0, seed=3)
     pmap = planar_map.build(board)
+    first_edges = pmap.num_edges
     state = TopoState(pmap)
     rng = random.Random(11)
     keep = sites.keep_off(board.rules)
@@ -115,7 +124,8 @@ def test_random_operations_keep_the_invariants():
     live: dict[int, tuple[int, int]] = {}
     made: list = []
     wire = ops = flips = carried = 0
-    count = {"insert": 0, "remove": 0, "site": 0, "wake": 0, "sleep": 0}
+    count = {"insert": 0, "remove": 0, "site": 0, "wake": 0, "sleep": 0, "delete": 0, "delete refused": 0}
+    peak_edges = 0
     while ops < 10_000:
         roll = rng.random()
         if roll < 0.40 or not live:
@@ -132,7 +142,22 @@ def test_random_operations_keep_the_invariants():
             state.remove(rng.choice(sorted(live)))
             live = {w: ends for w, ends in live.items() if w in state.wire_path}
             count["remove"] += 1
-        elif roll < 0.86 and len(made) < 120:
+        elif roll < 0.80 and made:
+            # Delete a sleeping site, whichever and whenever it was made (M14b).
+            asleep = [s for s in made if not s.active]
+            if not asleep:
+                continue
+            site = rng.choice(asleep)
+            before = (fingerprint(pmap), state.snapshot()) if count["delete refused"] < 3 else None
+            if sites.delete(pmap, state, site):
+                made.remove(site)
+                assert site.pad not in pmap.sites and site.pad not in pmap.pad_edges
+                count["delete"] += 1
+            else:
+                count["delete refused"] += 1
+                if before is not None:   # a refusal changes nothing
+                    assert fingerprint(pmap) == before[0] and state.snapshot()[2] == before[1][2]
+        elif roll < 0.88 and len(made) < 60:
             t = rng.randrange(pmap.num_triangles)
             (ax, ay), (bx, by), (cx, cy) = (pmap.vxy[v] for v in pmap.tri_v_list[t])
             u, v = sorted((rng.random(), rng.random()))
@@ -145,7 +170,8 @@ def test_random_operations_keep_the_invariants():
             made.append(site)
             flips += len(site.spokes) - 6
             carried += sum(len(state.gate_order[e]) for e in site.spokes)
-            assert pmap.num_edges == edges + 9
+            assert pmap.num_edges in (edges, edges + 9)      # a freed slot is used again before the tables grow
+            peak_edges = max(peak_edges, pmap.num_edges)
             count["site"] += 1
         elif made:
             site = rng.choice(made)
@@ -168,7 +194,10 @@ def test_random_operations_keep_the_invariants():
     for site in made:  # every gate at a hole vertex is listed as a spoke of its site, and nothing else is
         at_hole = {e for e in range(pmap.num_edges) if pmap.edge_kind_list[e] == GATE and set(pmap.edge_v_list[e]) & set(site.verts)}
         assert set(site.spokes) == at_hole and len(site.spokes) == len(at_hole)
-    assert min(count.values()) > 50 and flips > 100 and carried > 50, (count, flips, carried)
+    assert min(v for k, v in count.items() if k != "delete refused") > 50 and flips > 100 and carried > 50, (count, flips, carried)
+    assert count["delete refused"] <= count["delete"] // 20, count
+    assert pmap.num_edges == peak_edges <= first_edges + 9 * 62      # slots are reused: no growth without end
+    print("random operations:", count, "flips at creation", flips)
     # Independent crossing oracle (17.1) on a well-filled board.
     ends = pads + [s.pad for s in made if s.active]
     for _ in range(400):
@@ -239,11 +268,16 @@ def test_hand_placed_via_realises_clean(via_at):
 
 
 def fingerprint(pmap):
-    """Everything in the map a site changes, in a form that can be compared."""
-    return (pmap.num_vertices, pmap.num_edges, pmap.num_triangles, list(pmap.tri_v_list), list(pmap.tri_e_list),
-            pmap.tri_n.tolist(), list(pmap.edge_v_list), list(pmap.edge_t_list), list(pmap.edge_kind_list),
-            [round(x, 9) for x in pmap.edge_len_list], list(pmap.trans), sorted(pmap.pad_edges), sorted(pmap.sites),
-            {pad: sorted(site.spokes) for pad, site in pmap.sites.items()})
+    """Everything in the map a site changes, in a form that can be compared.
+    Slots that hold no site are left out (the tables never shrink)."""
+    idle_edges = {e for slot in sites.free_slots(pmap) for e in slot[1]}
+    idle_tris = {t for slot in sites.free_slots(pmap) for t in slot[2]}
+    tris = [t for t in range(pmap.num_triangles) if t not in idle_tris]
+    edges = [e for e in range(pmap.num_edges) if e not in idle_edges]
+    return ([(t, pmap.tri_v_list[t], pmap.tri_e_list[t], tuple(pmap.tri_n[t].tolist())) for t in tris],
+            [(e, pmap.edge_v_list[e], pmap.edge_t_list[e], pmap.edge_kind_list[e], round(pmap.edge_len_list[e], 9),
+              pmap.trans[2 * e], pmap.trans[2 * e + 1]) for e in edges],
+            sorted(pmap.pad_edges), sorted(pmap.sites), {pad: sorted(site.spokes) for pad, site in pmap.sites.items()})
 
 
 def busy_state(pmap, pairs):
@@ -285,8 +319,11 @@ def test_a_site_can_be_taken_out_again():
     moved = sites.undo(pmap, state, *mark)
     assert moved and fingerprint(pmap) == before_map and map_errors(pmap) == []
     after = state.snapshot()
-    assert after[0] == before_state[0] and after[1] == before_state[1] and after[2] == before_state[2]
-    assert np.allclose(after[3], before_state[3]) and np.allclose(state.cap, caps)
+    edges, tris = len(before_state[0]), len(before_state[1])     # the tables have kept the room they gained, empty
+    assert after[0][:edges] == before_state[0] and not any(after[0][edges:])
+    assert after[1][:tris] == before_state[1] and not any(any(c) for c in after[1][tris:])
+    assert after[2] == before_state[2]
+    assert np.allclose(after[3][:edges], before_state[3]) and np.allclose(state.cap[:edges], caps)
     assert state.invariant_errors() == []
     assert route(pmap, state, 3, 32) is not None                                       # and the search still works on it
 
@@ -333,3 +370,63 @@ def test_flood_agrees_with_the_search():
     x, y = pmap.tri_cen[t]
     back = flood(pmap, state, None, seeds=(np.array([t]), np.array([2.5]), np.array([x]), np.array([y])), dst_pad=7)[2]
     assert back[1] == 0 and back[0] == pytest.approx(best[t] + 2.5, abs=0.75 * max(pmap.edge_len_list))
+
+
+def test_deleting_every_site_gives_the_map_back():
+    """M14b: sites are deleted in an order that has nothing to do with the order
+    they were made in, with wires routed among them. What is left is the map
+    there was before any site, up to which diagonals its quadrilaterals have."""
+    board = grid_board(6, 10.0, seed=3)
+    pmap = planar_map.build(board)
+    before = (pmap.num_vertices, pmap.num_edges, pmap.num_triangles, sorted(pmap.pad_edges),
+              sorted(e for e, k in enumerate(pmap.edge_kind_list) if k != GATE))
+    state = busy_state(pmap, PAIRS)
+    made = []
+    for t in roomy_triangles(pmap, 14, seed=2):
+        if sites.room(pmap, t, sites.incentre(pmap, t)) > 0.3 and t not in {x for s in sites.free_slots(pmap) for x in s[2]}:
+            made.append(sites.create(pmap, state, t, sites.incentre(pmap, t)))
+    wire = 100
+    for a, b in [(7, 28), (3, 32), (10, 25), (14, 21), (9, 26), (4, 31)]:   # more wires, now passing the sites
+        r = route(pmap, state, a, b, hard_cap=True)
+        if r is not None:
+            wire += 1
+            state.insert(wire, r.steps)
+    assert any(state.gate_order[e] for s in made for e in s.spokes)
+    random.Random(5).shuffle(made)
+    refused = [s for s in made if not sites.delete(pmap, state, s)]
+    assert not refused
+    assert state.invariant_errors() == [] and map_errors(pmap) == []
+    idle = sites.free_slots(pmap)
+    assert len(idle) == len(made) and not pmap.sites
+    live = (pmap.num_vertices - 3 * len(idle), pmap.num_edges - 9 * len(idle), pmap.num_triangles - 5 * len(idle))
+    assert live == before[:3] and sorted(pmap.pad_edges) == before[3]
+    walls = sorted(e for e, k in enumerate(pmap.edge_kind_list) if k != GATE and e < before[1])
+    assert walls == before[4]                                     # no wall or pad edge was touched
+    # Every wire can be taken out and the board routed again on the map that is left.
+    for w in list(state.wire_path):
+        state.remove(w)
+    assert all(not o for o in state.gate_order) and all(c == [0, 0, 0] for c in state.corner_cnt)
+    again = busy_state(pmap, PAIRS)
+    assert len(again.wire_path) == len(PAIRS) and again.invariant_errors() == []
+
+
+def test_a_deletion_is_logged_like_everything_else():
+    """Deletions rewind and replay with the rest of the map's log (12.2), so snapshots and raced variants still work."""
+    board = grid_board(6, 10.0, seed=3)
+    theirs, mine = planar_map.build(board), planar_map.build(board)
+    state = busy_state(theirs, PAIRS)
+    made = [sites.create(theirs, state, t, sites.incentre(theirs, t)) for t in roomy_triangles(theirs, 6, seed=9)]
+    middle = (len(sites.log(theirs)), fingerprint(theirs), state.snapshot())
+    assert sites.delete(theirs, state, made[1]) and sites.delete(theirs, state, made[4])
+    t = next(t for t in roomy_triangles(theirs, 40, seed=1) if t not in {x for s in sites.free_slots(theirs) for x in s[2]})
+    reused = sites.create(theirs, state, t, sites.incentre(theirs, t))
+    assert set(reused.verts) in ({*made[1].verts}, {*made[4].verts})        # it took a freed slot
+    assert state.invariant_errors() == [] and map_errors(theirs) == []
+    sites.replay(mine, sites.log(theirs))
+    assert fingerprint(mine) == fingerprint(theirs) and map_errors(mine) == []
+    sites.rewind(theirs, middle[0])
+    assert fingerprint(theirs) == middle[1] and map_errors(theirs) == []
+    state.restore(middle[2])
+    state.resize()
+    sites.clear_free(theirs, state)
+    assert state.invariant_errors() == []

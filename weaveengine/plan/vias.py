@@ -139,13 +139,14 @@ def _triangles_of(pmap: PlanarMap, pts: np.ndarray) -> np.ndarray:
     """Triangle of the map containing each point (-1 = none)."""
     from weaveengine.topo import kernel
     out = np.zeros(len(pts), dtype=np.int64)
-    x0, x1, y0, y1 = pmap.vx.min(), pmap.vx.max(), pmap.vy.min(), pmap.vy.max()
     hint = pmap.__dict__.get("_locate_hint")
     if hint is None:
+        # The board's extent, not the tables': unused slots are parked far away.
+        x0, y0, x1, y1 = pmap.free_space.free.bounds
         cell = max(x1 - x0, y1 - y0, 1e-6) / 256.0
-        hint = pmap.__dict__["_locate_hint"] = (np.zeros((int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1), dtype=np.int64), cell)
+        hint = pmap.__dict__["_locate_hint"] = (np.zeros((int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1), dtype=np.int64), cell, x0, y0)
     kernel.locate(pmap.tri_v, pmap.tri_n, pmap.vx, pmap.vy, np.ascontiguousarray(pts[:, 0]), np.ascontiguousarray(pts[:, 1]), out,
-                  hint[0], x0, y0, hint[1])
+                  hint[0], hint[2], hint[3], hint[1])
     return out
 
 
@@ -376,7 +377,7 @@ def connect(ctx: Context, conn: Connection) -> bool:
         # A piece could not be routed after all (the search allows ways that
         # cross a gate twice; a route may not). Take everything out again.
         notes["piece not routable"] += 1
-        ctx.abandon(conn)
+        ctx.abandon(conn, delete=False)
         ctx.rollback(mark)
         ctx.next_pad, ctx.next_wire = first_pad, first_wire
         struck.update((round(x, 4), round(y, 4)) for x, y in chain)

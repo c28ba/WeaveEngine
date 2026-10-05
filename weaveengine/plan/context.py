@@ -178,18 +178,25 @@ class Context:
         conn.children, conn.site = (a.wire_id, b.wire_id), site_pad
         return a, b
 
-    def collapse(self, conn: Connection) -> None:
-        """Undoes a split whose children are all unrouted: the via goes back to
-        sleep and the connection is open again as a whole."""
+    def collapse(self, conn: Connection, delete: bool = True) -> None:
+        """Undoes a split whose children are all unrouted: the connection is open
+        again as a whole, and its via is taken out of the maps (``delete``
+        False: only put to sleep, for a caller that removes it another way)."""
         from weaveengine.topo import sites
         for w in conn.children:
             child = self.conns[w]
             if child.children:
-                self.collapse(child)
+                self.collapse(child, delete)
             self.unrouted.discard(w)
             del self.conns[w]
         for layer in self.layers:
-            sites.set_net(layer.pmap, layer.state, layer.pmap.sites[conn.site], -1)
+            site = layer.pmap.sites.get(conn.site)
+            if site is not None:
+                sites.set_net(layer.pmap, layer.state, site, -1)
+                if delete:
+                    sites.delete(layer.pmap, layer.state, site)
+        if delete:
+            self.maps_changed()
         conn.children, conn.site = (), None
         self.unrouted.add(conn.wire_id)
         self._demand(conn, +1.0)
@@ -229,7 +236,7 @@ class Context:
             sites.journal(layer.state).clear()
         self.maps_changed()
 
-    def abandon(self, conn: Connection) -> None:
+    def abandon(self, conn: Connection, delete: bool = True) -> None:
         """Takes a split connection's traces and vias out again, leaving it open as a whole."""
         def leaves(c: Connection):
             for w in c.children:
@@ -240,7 +247,7 @@ class Context:
             if leaf.layer is not None:
                 self.rip(leaf.wire_id)
         if conn.children:
-            self.collapse(conn)
+            self.collapse(conn, delete)
 
     def via_count(self, wire_id: int) -> int:
         """Vias the board connection this wire belongs to has."""
@@ -382,9 +389,10 @@ class Context:
             sites.rewind(layer.pmap, length)
             layer.pmap.__dict__.pop("_moved_wires", None)
             sites.journal(layer.state).clear()
-            layer.state.resize()
             layer.state.restore(s)
             layer.state.cap, layer.state.hist = (x.copy() for x in snap["caps"][i])
+            layer.state.resize()   # the map's tables may have grown since the snapshot (they never shrink)
+            sites.clear_free(layer.pmap, layer.state)
             for site in layer.pmap.sites.values():
                 net, keep = snap["vias"].get(site.pad, (-1, 0.0))
                 site.net, site.keep = net, keep
