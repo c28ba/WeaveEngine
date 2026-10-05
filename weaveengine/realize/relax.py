@@ -251,41 +251,9 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
                         near.setdefault(v, []).append((w, px, py, centre[pad]))
         return near
 
-    def name(vertex: int):
-        return hole[vertex].pad if vertex in hole else -1 - vertex  # a via under one name, whichever corner was met
-
-    def widened(w: int, at: dict) -> list[tuple]:
-        """The discs of wire w, and with each the next vertex either way along
-        the same obstacle, if the wires inside w go round that one too. A
-        wire's own triangles tell it of the vertices it passes; the bundle
-        inside it is as thick round the next one along, and may reach into
-        its path from there."""
-        mine = at[w]
-        out, seen = [], set()
-        for disc in plain[w]:
-            x, y, r, left, vertex, e, k, _ = disc
-            added = ([], [])
-            if vertex >= 0 and r > 0.0 and vertex not in hole:
-                row = order[e]
-                step = -1 if vertex == edge_v[e][0] else 1
-                for beyond in pmap.v_nbr.get(vertex, ()):
-                    if name(beyond) in mine or (beyond, left) in seen:
-                        continue
-                    for j in range(k + step, len(row) if step > 0 else -1, step):
-                        theirs, i, b = plain[row[j]], at[row[j]].get(name(vertex)), at[row[j]].get(name(beyond))
-                        if i is not None and b is not None and theirs[i][3] == theirs[b][3]:
-                            seen.add((beyond, left))
-                            # (a wire passing the other way round meets them in the other order)
-                            added[(b > i) == (theirs[i][3] == left)].append((*theirs[b][:2], theirs[b][2] + r - theirs[i][2], left, -1, e, k, theirs[b][7]))
-                            break
-            out += added[0] + [disc] + added[1]
-        return out
-
-    plain = {w: sleeve(w) for w in state.wire_path}
-    at = {w: {name(disc[4]): i for i, disc in reversed(list(enumerate(discs))) if disc[4] >= 0} for w, discs in plain.items()}
     sleeves = {}
-    for w in plain:
-        sleeves[w] = discs = [(*disc, i) for i, disc in enumerate(widened(w, at))]
+    for w in state.wire_path:
+        sleeves[w] = discs = [(*disc, i) for i, disc in enumerate(sleeve(w))]
         # Discs from the repair loop. Each goes between the two discs the trace touched
         # either side of the trouble: after the last one on its own side that the
         # trace passes before it (and never among the window ends, the first two and last two).

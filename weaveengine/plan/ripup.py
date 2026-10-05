@@ -104,6 +104,19 @@ def fill(ctx: Context) -> int:
         placed += before - len(ctx.unrouted)
 
 
+def settle(ctx: Context) -> None:
+    """From whatever negotiation left to a legal routing with nothing more to
+    add: no gate over capacity, routes shortened (Phase 4), and every open
+    connection that fits placed. Shorter routes leave room, so filling and
+    shortening alternate while filling places anything."""
+    legalise(ctx)
+    if ctx.options.refine:
+        ctx.report("refinement")
+        refine(ctx)
+        while fill(ctx):
+            refine(ctx)
+
+
 def refine(ctx: Context, passes: int = 2) -> int:
     """Phase 4 (topology refinement): take each wire out and put it back by the
     cheapest legal route, longest detours first. A wire only moves when that

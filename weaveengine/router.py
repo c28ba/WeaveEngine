@@ -11,7 +11,7 @@ from weaveengine.board import Board, Pad
 from weaveengine.plan import candidates as cand_mod
 from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
-from weaveengine.plan.ripup import fill, legalise, negotiate, refine
+from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.realize.relax import polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
@@ -223,13 +223,8 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
     # Phase 3: negotiated rip-up and reroute.
     if opts.ripup:
         negotiate(ctx)
-    legalise(ctx)
-    # Phase 4: topology refinement.
-    if opts.refine:
-        ctx.report("refinement")
-        refine(ctx)
-        while fill(ctx):  # shorter routes leave room: place what now fits, and shorten again
-            refine(ctx)
+    # Phase 4: topology refinement, and what still fits.
+    settle(ctx)
 
     # Realisation, with DRC feedback into Phase 3 (13.2).
     ctx.report("geometry")
