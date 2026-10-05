@@ -545,7 +545,31 @@ All measured clean from the written file.
 - `RAM Selector Tree` is worse than the prototype of 12.4 was (383 of 400, 206 vias, about 5 minutes). The main rip-up takes 9 minutes, and then each of the four repair rounds after the design-rule check takes over two minutes more. The geometry failures with vias on this board (12.4, finding 4) have never been diagnosed, and the repair for them is where half the time and probably the connections go.
 - Racing variants on a board no variant will finish runs all eight for nothing: the variants differ only in seed and search weighting, and the seed has no effect. `RAM Selector Tree` raced was stopped after 13 minutes with its first heat of four still running.
 
-### 12.8 Not in scope
+### 12.8 Why traces end up too close on RAM Selector Tree (diagnosis)
+
+Taken from the routing saved at its first geometry step: 32 of 400 connections open, 215 vias, 583 traces, 123 violations.
+
+- 121 of the 123 are spacing between two neighbouring traces, away from their ends (10 are within 1.5 mm of an end). 15 go away when corners are not rounded into arcs; without arcs at all there are 462, so the arcs are not the cause.
+- **They are predicted by how full the fullest gate the two traces share is**, by the capacity count of 6.3:
+
+| That gate is | Pairs of neighbouring traces too close |
+|---|---|
+| under 70 % full | 7 of 379 (2 %) |
+| 70 to 80 % | 10 of 91 (11 %) |
+| 80 to 90 % | 37 of 123 (30 %) |
+| 90 to 100 % | 66 of 121 (55 %) |
+
+- 100 of the 123 are at gates carrying four wires or more.
+
+So the count of how many wires fit through a gate is right as arithmetic and too tight as geometry, for bundles. Pulled taut, a bundle sits at exactly the spacing it owes, and wires that cross gates at a slant and arcs drawn as polygons cannot keep "exactly". It is not about vias: the same board had 25 violations in 311 traces before there were any. Vias add traces, and so bundles.
+
+**Tried: count a bundle less tightly** (from the fourth wire on, 1.25 pitches each). Not kept. `RAM Selector Tree`: 364 of 400 with 273 vias, against 360 with 216. `blinkSP1`, which has no geometry problem: 45 (38 to 49) routed against 48 (45 to 50). It takes room from every board to spare one, and by the table it would have to be nearer 1.5 to work.
+
+**Kept: the geometry uses the room that is there** (13.1). On each gate, whatever room is left over once every wire has its window is put between the wires, up to 0.15 of a pitch per pair of different nets, instead of leaving the bundle packed at the minimum. It costs no routing capacity. On the saved state: 123 violations to 82. More than about 0.2 of a pitch makes it worse again. `Word of RAM`, `ALU` and `ulx3s` route as before and their smallest trace-to-trace gaps go up (0.210 to 0.269, 0.213 and 0.230 mm against a rule of 0.2); `blinkSP1` 48 (45 to 52) routed, 42 vias.
+
+**Still open:** the other two thirds. Those traces are far enough apart where they cross each gate and too close in between. Not yet understood. `RAM Selector Tree` has not been run end to end since this change.
+
+### 12.9 Not in scope
 - Blind and buried vias: a site is on every layer.
 - Vias in pads (`via_at_smd`).
 
@@ -558,7 +582,7 @@ Input: per wire, the gate sequence and the per-gate ordering `gate_order`.
 ### 13.1 Relaxation (taut string with ordering)
 
 1. **Initial placement.** On each gate with `k` wires ordered `w_1..w_k`, place wire `w_i`'s crossing point at fraction `(i - 0.5) / k` along the gate (gate endpoints already include the clearance inflation).
-2. **Gauss-Seidel sweeps.** For each wire, for each interior crossing point, move it to the point on its gate that minimises path length (intersect the line between its two neighbours' points with the gate, clamp to the gate). Then clamp it between its ordered neighbours on the same gate: at least `(t + s)` away from the previous wire's point and from the next wire's point. Repeat until the largest movement in a sweep is below `1e-4 mm` or a sweep limit is hit.
+2. **Gauss-Seidel sweeps.** For each wire, for each interior crossing point, move it to the point on its gate that minimises path length (intersect the line between its two neighbours' points with the gate, clamp to the gate). Then clamp it between its ordered neighbours on the same gate: at least `(t + s)` away from the previous wire's point and from the next wire's point. Repeat until the largest movement in a sweep is below `1e-4 mm` or a sweep limit is hit. Room left over on a gate once every wire has its window is shared out between its wires (up to 0.15 of a pitch per pair of different nets), so that a bundle is not packed at exactly the spacing it owes (12.8).
 3. **Bends.** A point clamped to a gate endpoint means the wire bends around that obstacle vertex. Because obstacles are already inflated by `s + t/2`, a wire touching the inflated vertex is DRC-legal. Use a mitred/rounded inflation with enough resolution to avoid clearance loss at convex corners.
 4. **Terminals.** The wire's first and last points lie on the inflated pad boundary. A short straight stub joins that point to the pad centre. The ring guarantees only that the point itself is clear of foreign copper. Where the rings of neighbouring pads have merged (fine-pitch parts), a stub from the part of the ring over the gap cuts across towards the neighbour. So each pad edge has a window, the part of it from which the stub keeps its clearance, found once per map by trying 17 points along the edge (`geom/exits.py`). An edge with no such part is made a wall, so the search never leaves a pad through it; relaxation keeps a trace's end inside the window. A pad with no legal edge at all cannot be reached on that layer and is reported with the other unreachable pads.
 

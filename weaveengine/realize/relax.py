@@ -1,4 +1,5 @@
 """Geometry realisation (design section 13.1): taut string with ordering."""
+import itertools
 import math
 
 import numpy as np
@@ -12,6 +13,7 @@ from weaveengine.topo.planar_map import TERMINAL
 from weaveengine.topo.state import TopoState
 
 Polyline = list[tuple[float, float]]
+SPREAD = 0.15  # of a pitch: the most a gate's spare room adds between two of its wires
 ARC_STEP = math.pi / 12.0
 ARC_BULGE = 1.0 / math.cos(ARC_STEP / 2.0)  # how far the corners of a polygon arc stand out from its circle
 STRAIGHTEN = 5e-4  # mm
@@ -219,6 +221,7 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
 
     # Windows on the gates.
     window: dict[int, list[tuple[float, float]]] = {}
+    ease: dict[int, float] = {}  # per gate: spacing added between its wires out of the room it has to spare
     for e in frame:
         if kind[e] == TERMINAL:
             continue
@@ -250,8 +253,16 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
             if v in via_keep:
                 reach = max(reach, via_need(w, v))
             hi[k] = L - (need if v in own[w] else max(need, wall_need(e, v, False, reach)))
+        # Room to spare on the gate goes between its wires (up to SPREAD of a
+        # pitch each). Pulled taut, a bundle would sit at exactly the spacing it
+        # owes, and exactly is what slanted crossings and polygon arcs cannot keep.
+        # (Only between wires that owe each other spacing: wires of one net stay together.)
+        apart = [0] + list(itertools.accumulate(1 if spacing(p, q) > 0 else 0 for p, q in zip(row, row[1:])))
+        spare = min(b - a for a, b in zip(lo, hi))
+        ease[e] = extra = min(SPREAD * d, spare / apart[-1]) if apart[-1] and spare > 0 else 0.0
         win = []
-        for a, b in zip(lo, hi):
+        for k, (a, b) in enumerate(zip(lo, hi)):
+            a, b = a + apart[k] * extra, b - (apart[-1] - apart[k]) * extra
             if a > b:  # over-full gate: collapse the window; DRC will report it
                 a = b = min(max((a + b) / 2.0, 0.0), L)
             win.append((a, b))
@@ -334,7 +345,8 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
             whi[o:o + n] = [b for _, b in win]
             wires_e = order[e]
             for k in range(n - 1):
-                space[o + k] = spacing(wires_e[k], wires_e[k + 1])
+                owed = spacing(wires_e[k], wires_e[k + 1])
+                space[o + k] = owed + ease[e] if owed > 0 else 0.0
         else:
             is_term[o:o + n] = 1
             wlo[o:o + n], whi[o:o + n] = exits.get(e, (0.0, frame[e][4]))
