@@ -567,7 +567,18 @@ So the count of how many wires fit through a gate is right as arithmetic and too
 
 **Kept: the geometry uses the room that is there** (13.1). On each gate, whatever room is left over once every wire has its window is put between the wires, up to 0.15 of a pitch per pair of different nets, instead of leaving the bundle packed at the minimum. It costs no routing capacity. On the saved state: 123 violations to 82. More than about 0.2 of a pitch makes it worse again. `Word of RAM`, `ALU` and `ulx3s` route as before and their smallest trace-to-trace gaps go up (0.210 to 0.269, 0.213 and 0.230 mm against a rule of 0.2); `blinkSP1` 48 (45 to 52) routed, 42 vias.
 
-**Still open:** the other two thirds. Those traces are far enough apart where they cross each gate and too close in between. Not yet understood. `RAM Selector Tree` has not been run end to end since this change.
+**The other two thirds: the way the geometry is built cannot hold a bundle that crosses a gate at a slant.** Measured on the same saved state, after the change above (82 violations left):
+
+- 68 of 79 spacing violations are between two traces in the same triangle, both passing through it. (An earlier guess, traces either side of an edge neither crosses, with nothing to keep them apart, accounts for 1.)
+- For 51 of them, the two traces are as far apart *along* the nearest gate they share as they owe, but they cross it at a slant (median 40 degrees off square), so measured square to the traces they are closer than they owe.
+- Relaxation knows this and asks for the spacing divided by the sine of the angle along the gate. Of the 270 gates where a pair ends up too close square to the wires, 225 have no room along the gate for what it asks.
+- It is not the sweep stopping early (it never reaches its tolerance, with 120, 600 or 3000 sweeps, but the count is 82, 82 and 78), nor the slant below which it stops asking (0.2 to 0.7: 76 to 102), nor the fineness of the arcs (15, 7.5, 3.8 degrees: 82, 89, 85).
+
+Those wires do fit. Wire number k from one end of a gate has to stay k pitches from that end's vertex and the rest of the pitches from the other end's: two discs, which do not overlap whenever the capacity count says the wires fit. A bundle crossing at a slant bends round the one disc and then the other, as concentric arcs, and keeps its spacing. Relaxation as built (13.1) gives every wire one point on each gate and joins the points with straight chords, adding an arc afterwards round at most one vertex per triangle; it has no way to draw that double bend, so it asks for room along the gate instead, more than is there.
+
+So the capacity count of 6.3 is right, and the fix is in realisation: the taut path of a wire against *discs* at the vertices it passes (radius: what lies between it and the vertex), which is the rubber-band construction this design started from. Tangent lines between discs and arcs round them are spaced correctly by construction, for any number of wires at any slant. That is a rewrite of the core of `realize/relax.py`, not a change to it. **Not started.**
+
+`RAM Selector Tree` has not been run end to end since the change above.
 
 ### 12.9 Not in scope
 - Blind and buried vias: a site is on every layer.
