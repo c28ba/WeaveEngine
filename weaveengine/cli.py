@@ -20,7 +20,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--layers", nargs="+", metavar="LAYER", help="signal layers to route (default: all in the DSN)")
     ap.add_argument("--svg", help="also write an SVG picture of the result")
     ap.add_argument("--no-vias", action="store_true", help="never insert vias")
-    ap.add_argument("--max-via-rounds", type=int, default=4, help="how many times to add vias and route again")
+    ap.add_argument("--vias-between-passes", action="store_true",
+                    help="the older way: add vias only between passes and route everything again")
+    ap.add_argument("--max-via-rounds", type=int, default=4, help="with --vias-between-passes: how many times to add vias and route again")
     ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
     ap.add_argument("--no-ses-teardrops", action="store_true",
                     help="keep teardrops out of the SES (they are written as short widening traces; "
@@ -57,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
         rules.clearance = args.clearance
     if args.via:
         rules.via_diameter, rules.via_drill = args.via
+    given = {"trace_width": args.trace_width, "clearance": args.clearance, "via_diameter": args.via, "via_drill": args.via}
+    missing = [text for name, text in design.defaulted.items() if not given[name]]
+    if missing:
+        print("not in the DSN, defaults used: " + ", ".join(missing))
+    if design.dropped_wiring:
+        print(design.dropped_wiring)
     print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"
@@ -78,7 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
     rules.clearance = want_clearance + args.margin
     rules.edge_clearance = want_edge + args.margin
-    options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio)
+    options = Options(vias=not args.no_vias, live_vias=not args.vias_between_passes, teardrops=not args.no_teardrops,
+                      portfolio=args.portfolio)
     bar = None if args.quiet else ProgressBar()
     result = route_board(design.board, options=options, seed=args.seed, max_via_rounds=args.max_via_rounds,
                          workers=args.workers, progress=bar)

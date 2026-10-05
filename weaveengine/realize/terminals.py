@@ -56,10 +56,14 @@ def hop(state: TopoState, wire: int, at_start: bool, vertex: int) -> bool:
     # Walk the fan of triangles round the corner, away from the present route,
     # until the pad's other edge at this corner.
     fan: list[tuple[int, int]] = []  # (gate, triangle beyond it)
+    # Round a via's hole, foreign wires usually wrap the same corner further
+    # out (they go round the via). The wire takes the innermost place on every
+    # gate, between them and the corner, which changes no other wire either.
+    at_via = pad in pmap.sites
     here, came = tri, entry
     while True:
         edges = pmap.tri_e_list[here]
-        if here != tri and state.corner_cnt[here][pmap.tri_v_list[here].index(vertex)] != 0:
+        if here != tri and not at_via and state.corner_cnt[here][pmap.tri_v_list[here].index(vertex)] != 0:
             return False
         nxt = [x for x in edges if x != came and vertex in edge_v[x] and (here != tri or x != exit_gate)]
         if len(nxt) != 1:

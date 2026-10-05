@@ -1,9 +1,13 @@
 """Phase 3: negotiated rip-up and reroute, and Phase 4 refinement (section 10)."""
+import math
+
+from weaveengine.plan import vias
 from weaveengine.plan.candidates import best_route, plain_route, route_batch
 from weaveengine.plan.context import Context
 from weaveengine.topo.search import Route
 
 STALL_LIMIT = 8
+VIA_STALL_LIMIT = 3
 
 
 def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
@@ -22,7 +26,9 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
             stall += 1
         over = [(layer, e) for layer in ctx.layers for e in layer.state.overflowed_gates()]
         open_conns = [w for w in ctx.unrouted if not ctx.conns[w].dead]
-        if (not over and not open_conns) or stall >= STALL_LIMIT or ctx.rounds >= max_rounds:
+        # With vias to follow (``complete``), a negotiation that has stopped
+        # improving is not worth continuing: what is open now needs a via.
+        if (not over and not open_conns) or stall >= (VIA_STALL_LIMIT if ctx.live_vias else STALL_LIMIT) or ctx.rounds >= max_rounds:
             break
         ctx.rounds += 1
         ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
@@ -83,6 +89,83 @@ def legalise(ctx: Context) -> None:
         r = plain_route(ctx, conn, hard_cap=True)
         if r is not None:
             ctx.commit(conn, r)
+
+
+MAX_BLOCKERS = 8   # wires one connection may displace to get through
+
+
+def complete(ctx: Context) -> int:
+    """Connects what legal routing on single layers has left open, with vias
+    (design 12.4). The state is legal on entry (``legalise``) and stays legal:
+    nothing here over-fills a gate, so there is nothing to negotiate.
+
+    Each open connection is given, in turn: a legal route; failing that, the
+    cheapest legal way through vias; failing that, room, by displacing the
+    wires that block it, which are then placed again the same way. A
+    displacement is kept only if it leaves fewer board connections open, so
+    the loop ends. A connection gets its vias all at once or not at all.
+    Returns the number of board connections still open.
+    """
+    if not ctx.live_vias:
+        return len(ctx.open_roots())
+    ctx.collapse_idle()
+    start = max(1, len(ctx.open_roots()))
+
+    def place(w: int) -> None:
+        conn = ctx.conns.get(w)
+        if conn is None or w not in ctx.unrouted:
+            return
+        r = plain_route(ctx, conn, ctx.params.spare, hard_cap=True)
+        if r is not None:
+            ctx.commit(conn, r)
+        else:
+            vias.connect(ctx, conn)
+
+    def in_order() -> list[int]:
+        return sorted(ctx.unrouted, key=lambda w: (ctx.conns[w].air_len, w))
+
+    tried: set = set()
+    progress = True
+    while progress and ctx.unrouted:
+        progress = False
+        for w in in_order():
+            before = len(ctx.open_roots())
+            place(w)
+            progress |= len(ctx.open_roots()) < before
+            ctx.report("vias", start - len(ctx.open_roots()), start)
+        # What is still open is walled in on every layer: displace the wires in its way.
+        for w in in_order():
+            conn = ctx.conns.get(w)
+            if conn is None or w not in ctx.unrouted:
+                continue
+            r = plain_route(ctx, conn, mode="relaxed", hard_cap=True)
+            if r is None or not r.blocking or len(r.blocking) > MAX_BLOCKERS:
+                continue
+            key = (w, frozenset(r.blocking))
+            if key in tried:
+                continue
+            tried.add(key)
+            before, snap = len(ctx.open_roots()), ctx.snapshot()
+            moved = sorted(r.blocking)
+            for b in moved:
+                ctx.rip(b)
+            place(w)
+            if w in ctx.unrouted:
+                ctx.restore(snap)
+                continue
+            for b in sorted(moved, key=lambda b: (ctx.conns[b].air_len, b)):
+                place(b)
+            if len(ctx.open_roots()) < before:
+                progress = True
+            else:
+                ctx.restore(snap)
+            ctx.report("vias", start - len(ctx.open_roots()), start)
+    # No half-connected leftovers: a board connection that is still open gives its vias back.
+    for w in ctx.open_roots():
+        if ctx.conns[w].children:
+            ctx.abandon(ctx.conns[w])
+    ctx.rebuild_barrier()
+    return len(ctx.open_roots())
 
 
 def refine(ctx: Context, passes: int = 2) -> int:

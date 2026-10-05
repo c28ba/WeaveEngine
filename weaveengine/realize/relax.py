@@ -7,11 +7,13 @@ from shapely.geometry import LineString
 from weaveengine.board import Board
 from weaveengine.realize import drc, kernel
 from weaveengine.realize.funnel import string_pull
+from weaveengine.topo import sites
 from weaveengine.topo.planar_map import TERMINAL
 from weaveengine.topo.state import TopoState
 
 Polyline = list[tuple[float, float]]
 ARC_STEP = math.pi / 12.0
+ARC_BULGE = 1.0 / math.cos(ARC_STEP / 2.0)  # how far the corners of a polygon arc stand out from its circle
 STRAIGHTEN = 5e-4  # mm
 MIN_SIN = 1.0 / 3.0  # caps the oblique-gate spacing at 3 pitches
 MAX_SLANT = 6.0  # cap on how far a slanted gate is searched for wall clearance
@@ -85,15 +87,30 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
         ring[pad] = {v for e in edges for v in edge_v[e]}
     own = {w: ring[a] | ring[b] for w, (a, b) in ends.items()}
 
+    # Vertices of active via sites (12.2): a wire of another net keeps the
+    # via's keep-off from them, whatever lies in between.
+    via_keep = sites.keep_at(pmap)
+
+    def via_need(w: int, vertex: int) -> float:
+        keep, net = via_keep[vertex]
+        return 0.0 if wire_net[w] == net else keep + half[w]
+
     def radial(e: int, vertex: int, w: int) -> float:
         """Distance wire w must keep from ``vertex``, an end of gate e: its own
         extra half-width plus a spacing for every wire in between."""
         row = order[e] if vertex == edge_v[e][0] else order[e][::-1]
         total = 0.0 if vertex in own[row[0]] else half[row[0]]
+        if vertex in via_keep:
+            total = max(total, via_need(row[0], vertex))
         for a, b in zip(row, row[1:]):
             if a == w:
                 break
-            total += spacing(a, b)
+            if vertex in via_keep:
+                # The wire inside is drawn round the via as a polygon whose
+                # corners stand out from the circle: allow for them.
+                total = max(total * ARC_BULGE + spacing(a, b), via_need(b, vertex))
+            else:
+                total += spacing(a, b)
         return total
 
     # Foreign wires must also keep a pitch away from where a wire leaves its
@@ -164,6 +181,37 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
                 lo = mid
         return hi
 
+    def via_shadow(e: int, row: list[int]):
+        """Limits a via opposite gate e puts on the gate's wires. In a triangle
+        whose third vertex is a via, the gate's wires pass the via on one side
+        or the other: those cutting the u corner must cross the gate before the
+        via's keep-off disc, the others after it. Returns (lowest, highest)
+        position per wire, or None if no via is opposite."""
+        found = None
+        ux, uy, dx, dy, L = frame[e]
+        for t in pmap.edge_t_list[e]:
+            if t < 0:
+                continue
+            verts = pmap.tri_v_list[t]
+            top = next(x for x in verts if x not in edge_v[e])
+            if top not in via_keep:
+                continue
+            if found is None:
+                found = ([0.0] * len(row), [L] * len(row))
+            qx, qy = vxy[top][0] - ux, vxy[top][1] - uy
+            foot, height = qx * dx + qy * dy, abs(qx * dy - qy * dx)
+            near_u = state.corner_cnt[t][verts.index(edge_v[e][0])]  # this many wires, from u, cut the u corner
+            for k, w in enumerate(row):
+                need = via_need(w, top)
+                if need <= height:
+                    continue
+                reach = math.sqrt(need * need - height * height)
+                if k < near_u:
+                    found[1][k] = min(found[1][k], foot - reach)
+                else:
+                    found[0][k] = max(found[0][k], foot + reach)
+        return found
+
     wall_cache = pmap.__dict__.setdefault("_wall_need_cache", {})  # geometry only: valid for the map's lifetime
 
     # Windows on the gates.
@@ -175,20 +223,29 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
         u, v = edge_v[e]
         n = len(row)
         lo, hi = [0.0] * n, [0.0] * n
+        apex = via_shadow(e, row) if via_keep else None
         reach = 0.0 if u in own[row[0]] else half[row[0]]  # required distance from the obstacle at this end
         for k, w in enumerate(row):
             need = keep_away(w, e, u, True) if u in near_terms else 0.0
+            if apex:
+                need = max(need, apex[0][k])
             if k:
                 reach += spacing(row[k - 1], w)
-                need = max(need, lo[k - 1] + spacing(row[k - 1], w))
+                need = max(need, lo[k - 1] * (ARC_BULGE if u in via_keep else 1.0) + spacing(row[k - 1], w))
+            if u in via_keep:
+                reach = max(reach, via_need(w, u))
             lo[k] = need if u in own[w] else max(need, wall_need(e, u, True, reach))
         reach = 0.0 if v in own[row[-1]] else half[row[-1]]
         for k in range(n - 1, -1, -1):
             w = row[k]
             need = keep_away(w, e, v, False) if v in near_terms else 0.0
+            if apex:
+                need = max(need, L - apex[1][k])
             if k < n - 1:
                 reach += spacing(row[k + 1], w)
-                need = max(need, L - hi[k + 1] + spacing(row[k + 1], w))
+                need = max(need, (L - hi[k + 1]) * (ARC_BULGE if v in via_keep else 1.0) + spacing(row[k + 1], w))
+            if v in via_keep:
+                reach = max(reach, via_need(w, v))
             hi[k] = L - (need if v in own[w] else max(need, wall_need(e, v, False, reach)))
         win = []
         for a, b in zip(lo, hi):
@@ -325,15 +382,22 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
                     px, py = point(e, S[e][k])
                     cx, cy = pmap.pad_centre[ends[w][0 if first else 1]]
                     far = pmap.pad_centre[ends[w][1 if first else 0]]
+                    # A via site's edge is microns long: look a trace width away at least.
+                    ahead = max(0.5 * L, d) if owner[e] in pmap.sites else 0.5 * L
                     for qe, qk in seq[1:]:
                         q = point(qe, S[qe][qk])
-                        if math.hypot(q[0] - px, q[1] - py) > 0.5 * L:
+                        if math.hypot(q[0] - px, q[1] - py) > ahead:
                             far = q
                             break
                     rx, ry = far[0] - cx, far[1] - cy
                     den = dx * ry - dy * rx
                     if abs(den) > 1e-12:
                         s = ((cx - ux) * ry - (cy - uy) * rx) / den
+                        if owner[e] in pmap.sites and ((ux - cx) * dy - (uy - cy) * dx) / -den < 0.0:
+                            # The wire heads away from this edge of the via's hole (any
+                            # of the three may have been the search's start): the line
+                            # test above would name either end. Go round the nearer way.
+                            s = -1.0 if (ux - cx) * rx + (uy - cy) * ry > (ux + L * dx - cx) * rx + (uy + L * dy - cy) * ry else 2.0 * L
                         if s < -0.02 * L or s > 1.02 * L:
                             clamped[(w, first)] = edge_v[e][0] if s < 0 else edge_v[e][1]
             report["clamped"] = [(w, first, v) for (w, first), v in clamped.items()]
@@ -528,11 +592,15 @@ def realize(state: TopoState, board: Board, repair_rounds: int = 4, **kwargs):  
         lines = relax(state, board, spacing_scale=scale, **kwargs)
         violations = drc.check(board, lines, wire_net, pmap.layer)
         key = (len(violations), sum(v.required - v.distance for v in violations))
-        if best is None or key < best[2]:
-            best = (lines, violations, key)
-        if not violations or any(v.kind != "spacing" for v in violations):
+        if best is not None and key >= best[2]:
+            break  # wider spacing made it no better (gates with nothing to spare): stop
+        best = (lines, violations, key)
+        # Wider spacing can only mend spacing; but one violation of another
+        # kind somewhere on the layer is no reason to leave those unmended.
+        spaced = [v for v in violations if v.kind == "spacing"]
+        if not spaced:
             break
-        for v in violations:
+        for v in spaced:
             factor = min(1.5, 1.05 * v.required / max(v.distance, 1e-6))
             for w in v.wires:
                 scale[w] = min(2.0, scale.get(w, 1.0) * factor)

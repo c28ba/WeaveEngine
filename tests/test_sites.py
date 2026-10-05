@@ -1,0 +1,335 @@
+"""Via sites created inside the map (design section 12.2; milestone M13)."""
+import copy
+import math
+import random
+
+import numpy as np
+import pytest
+from shapely.geometry import LineString, Point
+
+from tests.conftest import grid_board
+from weaveengine.board import Board, Pad, Rules
+from weaveengine.plan.vias import locate
+from weaveengine.realize.relax import realize
+from weaveengine.realize.terminals import straighten
+from weaveengine.topo import kernel, planar_map, sites
+from weaveengine.topo.planar_map import GATE, TERMINAL
+from weaveengine.topo.search import route
+from weaveengine.topo.state import TopoState
+
+
+def map_errors(pmap) -> list[str]:
+    """Checks the map's tables against each other after it has been changed."""
+    errors = []
+    for t in range(pmap.num_triangles):
+        verts, edges = pmap.tri_v_list[t], pmap.tri_e_list[t]
+        (ax, ay), (bx, by), (cx, cy) = (pmap.vxy[v] for v in verts)
+        if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) <= 0:
+            errors.append(f"triangle {t} is not counter-clockwise")
+        if tuple(pmap.tri_v[t]) != verts or tuple(pmap.tri_e[t]) != edges:
+            errors.append(f"triangle {t}: array and list differ")
+        for k in range(3):
+            e, n = edges[k], int(pmap.tri_n[t][k])
+            if set(pmap.edge_v_list[e]) != {verts[(k + 1) % 3], verts[(k + 2) % 3]}:
+                errors.append(f"triangle {t}: edge {e} is not opposite its vertex {k}")
+            if t not in pmap.edge_t_list[e] or n not in pmap.edge_t_list[e] or (n >= 0 and t not in pmap.tri_n[n]):
+                errors.append(f"triangle {t}: edge {e} and neighbour {n} disagree")
+    for e in range(pmap.num_edges):
+        u, v = pmap.edge_v_list[e]
+        if abs(pmap.edge_len_list[e] - math.dist(pmap.vxy[u], pmap.vxy[v])) > 1e-9 or u >= v:
+            errors.append(f"edge {e}: stale length or endpoints out of order")
+        if (pmap.edge_t_list[e][1] < 0) == (pmap.edge_kind_list[e] == GATE):
+            errors.append(f"edge {e}: a gate has two triangles, anything else one")
+    if pmap.trans != [pmap.transitions(h) for h in range(2 * pmap.num_edges)]:
+        errors.append("stale transitions")
+    tables = pmap.__dict__.get("_kernel_tables")
+    if tables is not None:
+        fresh = kernel.Tables(pmap)
+        size = 2 * pmap.num_edges
+        for name in ("b", "nxt", "t", "k", "cue", "cub", "length"):
+            mine, theirs = getattr(tables, name)[:size], getattr(fresh, name)[:size]
+            used = np.arange(2)[None, :] < fresh.n[:size, None]
+            if not np.array_equal(tables.n[:size], fresh.n[:size]) or not np.array_equal(mine[used], theirs[used]):
+                errors.append(f"stale kernel table {name}")
+    return errors
+
+
+def test_site_carries_the_wires_of_its_triangle(grid):
+    board, pmap = grid
+    state = TopoState(pmap)
+    for wire, (a, b) in enumerate([(0, 24), (4, 20), (2, 22), (10, 14)], 1):
+        state.insert(wire, route(pmap, state, a, b).steps)
+    before = {w: [s[0] for s in steps] for w, steps in state.wire_path.items()}
+    old_edges = pmap.num_edges
+    t = max(range(pmap.num_triangles), key=lambda t: sum(state.corner_cnt[t]))  # the busiest triangle
+    site = sites.create(pmap, state, t, sites.incentre(pmap, t), pad=99)
+    assert state.invariant_errors() == [] and map_errors(pmap) == []
+    assert not site.active and pmap.pad_net[99] == -1 and len(pmap.pad_edges[99]) == 3
+    assert len(site.spokes) >= 6 and pmap.num_edges == old_edges + 9
+    # Every wire still crosses the gates it crossed, in the same order, apart
+    # from gates that were turned round the site; and it now crosses spokes.
+    turned = {e for e in site.spokes if e < old_edges}
+    for w, gates in before.items():
+        now = [s[0] for s in state.wire_path[w]]
+        assert [g for g in now if g < old_edges and g not in turned] == [g for g in gates if g not in turned]
+    assert any(state.gate_order[e] for e in site.spokes)
+    # The hole's edges are terminal edges of the site's own pad id, so they are
+    # walls to every search that is not asked for that pad; asked for it, the search gets there.
+    assert all(pmap.edge_owner_list[e] == 99 and pmap.edge_kind_list[e] == TERMINAL for e in site.hole)
+    assert route(pmap, state, 0, 99) is not None
+    with pytest.raises(ValueError):
+        sites.create(pmap, state, site.tris[3], pmap.tri_cen[site.tris[3]])  # a sliver beside the hole has no room
+
+
+def test_waking_a_site_takes_its_keep_off_from_the_spokes(grid):
+    board, pmap = grid
+    state = TopoState(pmap)
+    t = max(range(pmap.num_triangles), key=lambda t: sites.room(pmap, t, sites.incentre(pmap, t)))
+    site = sites.create(pmap, state, t, sites.incentre(pmap, t))
+    asleep = [state.cap[e] for e in site.spokes]
+    keep = sites.keep_off(board.rules)
+    sites.set_net(pmap, state, site, 3, keep)
+    assert site.active and pmap.pad_net[site.pad] == 3
+    # Asleep it already keeps half a pitch (wires pass it on both sides); awake, the via's keep-off.
+    assert all(abs(a - state.cap[e] - (keep - sites.asleep_keep(pmap)) / pmap.pitch) < 1e-9 for a, e in zip(asleep, site.spokes))
+    assert sites.fits(pmap, state, site, keep) and not sites.fits(pmap, state, site, 1e3)
+    r = route(pmap, state, 0, site.pad)
+    state.insert(1, r.steps)
+    with pytest.raises(ValueError):
+        sites.set_net(pmap, state, site, -1)           # a via with a trace on it stays
+    state.remove(1)
+    sites.set_net(pmap, state, site, -1)
+    assert [state.cap[e] for e in site.spokes] == asleep and sites.via_pads(pmap, board.rules) == []
+
+
+def test_random_operations_keep_the_invariants():
+    """M13 acceptance: 10,000 random inserts, removes, new sites, and sites woken
+    and put to sleep; the invariant of 7.2 after every one, the map's own tables
+    checked regularly, and no crossing in the realised geometry at the end."""
+    board = grid_board(6, 10.0, seed=3)
+    pmap = planar_map.build(board)
+    state = TopoState(pmap)
+    rng = random.Random(11)
+    keep = sites.keep_off(board.rules)
+    pads = sorted(pmap.pad_edges)
+    live: dict[int, tuple[int, int]] = {}
+    made: list = []
+    wire = ops = flips = carried = 0
+    count = {"insert": 0, "remove": 0, "site": 0, "wake": 0, "sleep": 0}
+    while ops < 10_000:
+        roll = rng.random()
+        if roll < 0.40 or not live:
+            ends = pads + [s.pad for s in made if s.active]
+            a, b = rng.sample(ends, 2)
+            r = route(pmap, state, a, b, hard_cap=True)
+            if r is None:
+                continue
+            wire += 1
+            state.insert(wire, r.steps)
+            live[wire] = (a, b)
+            count["insert"] += 1
+        elif roll < 0.78:
+            state.remove(rng.choice(sorted(live)))
+            live = {w: ends for w, ends in live.items() if w in state.wire_path}
+            count["remove"] += 1
+        elif roll < 0.86 and len(made) < 120:
+            t = rng.randrange(pmap.num_triangles)
+            (ax, ay), (bx, by), (cx, cy) = (pmap.vxy[v] for v in pmap.tri_v_list[t])
+            u, v = sorted((rng.random(), rng.random()))
+            point = (u * ax + (v - u) * bx + (1 - v) * cx, u * ay + (v - u) * by + (1 - v) * cy)
+            edges = pmap.num_edges
+            try:
+                site = sites.create(pmap, state, t, point)
+            except ValueError:
+                continue
+            made.append(site)
+            flips += len(site.spokes) - 6
+            carried += sum(len(state.gate_order[e]) for e in site.spokes)
+            assert pmap.num_edges == edges + 9
+            count["site"] += 1
+        elif made:
+            site = rng.choice(made)
+            used = {pad for ends in live.values() for pad in ends}
+            if site.active and site.pad not in used:
+                sites.set_net(pmap, state, site, -1)
+                count["sleep"] += 1
+            elif not site.active and sites.fits(pmap, state, site, keep):
+                sites.set_net(pmap, state, site, 1000 + site.pad, keep)
+                count["wake"] += 1
+            else:
+                continue
+        else:
+            continue
+        ops += 1
+        assert state.invariant_errors() == [], f"after {ops} operations"
+        if ops % 250 == 0:
+            assert map_errors(pmap) == [], f"after {ops} operations"
+    assert map_errors(pmap) == [] and not state.overflowed_gates()
+    for site in made:  # every gate at a hole vertex is listed as a spoke of its site, and nothing else is
+        at_hole = {e for e in range(pmap.num_edges) if pmap.edge_kind_list[e] == GATE and set(pmap.edge_v_list[e]) & set(site.verts)}
+        assert set(site.spokes) == at_hole and len(site.spokes) == len(at_hole)
+    assert min(count.values()) > 50 and flips > 100 and carried > 50, (count, flips, carried)
+    # Independent crossing oracle (17.1) on a well-filled board.
+    ends = pads + [s.pad for s in made if s.active]
+    for _ in range(400):
+        if len(state.wire_path) >= 30:
+            break
+        a, b = rng.sample(ends, 2)
+        r = route(pmap, state, a, b, hard_cap=True)
+        if r is not None:
+            wire += 1
+            state.insert(wire, r.steps)
+    assert state.invariant_errors() == []
+    with_vias = copy.copy(board)
+    with_vias.pads = board.pads + sites.via_pads(pmap, board.rules)
+    lines, violations, _ = realize(state, with_vias)
+    assert len(lines) >= 20 and not [v for v in violations if v.kind == "crossing"]
+
+
+def two_layer_case(via_at: tuple[float, float], wraps: int = 2):
+    """A net that must change layers at ``via_at``, and on each layer ``wraps``
+    foreign traces whose straight path the via's own trace cuts, so they have
+    to go round the via."""
+    board = Board.rectangle(40.0, 30.0, Rules(), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.rect(0, 5, 15, 1.5, 1.5, 1, layers=frozenset({0})), Pad.rect(1, 35, 15, 1.5, 1.5, 1, layers=frozenset({1}))]
+    pad_id, plan = 2, []
+    for i in range(wraps):
+        for layer, x in ((0, 19.0 - 1.5 * i), (1, 21.0 + 1.5 * i)):
+            board.pads += [Pad.circle(pad_id, x, 4, 0.6, pad_id), Pad.circle(pad_id + 1, x, 26, 0.6, pad_id)]
+            plan.append((layer, pad_id, pad_id + 1))
+            pad_id += 2
+    maps = [planar_map.build(board, i) for i in range(2)]
+    states = [TopoState(m) for m in maps]
+    via = 1000
+    for pmap, state in zip(maps, states):
+        t = int(locate(pmap, np.array([via_at]))[0])
+        site = sites.create(pmap, state, t, via_at, pad=via)
+        sites.set_net(pmap, state, site, 1, sites.keep_off(board.rules))
+    for wire, (layer, a, b) in enumerate([(0, 0, via), (1, via, 1)] + plan, 1):
+        r = route(maps[layer], states[layer], a, b, hard_cap=True)
+        assert r is not None
+        states[layer].insert(wire, r.steps)
+    return board, maps, states
+
+
+@pytest.mark.parametrize("via_at", [(20.3, 15.2), (20.1, 9.0), (19.3, 20.4), (18.2, 12.6), (21.7, 17.3)])
+def test_hand_placed_via_realises_clean(via_at):
+    """M13 acceptance: a via put in by hand realises with no design-rule
+    violation and no crossing, on both layers, with foreign traces going round it."""
+    board, maps, states = two_layer_case(via_at)
+    rules = board.rules
+    copper = Point(via_at).buffer(rules.via_diameter / 2.0, quad_segs=64)   # the true circle, not the checker's polygon
+    for pmap, state in zip(maps, states):
+        with_via = copy.copy(board)
+        with_via.pads = board.pads + sites.via_pads(pmap, rules)
+        assert [p.centre for p in with_via.pads if p.is_via] == [pytest.approx(via_at)]
+        straighten(state, with_via)
+        assert state.invariant_errors() == [] and map_errors(pmap) == []
+        lines, violations, wire_net = realize(state, with_via)
+        assert violations == []
+        site = pmap.sites[1000]
+        own = [w for w in lines if wire_net[w] == 1]
+        foreign = [w for w in lines if wire_net[w] != 1]
+        assert len(own) == 1 and min(math.dist(lines[own[0]][0], via_at), math.dist(lines[own[0]][-1], via_at)) < 1e-9
+        # Foreign traces do pass the via's spokes, and keep their clearance from its copper.
+        assert any(wire_net[w] != 1 for e in site.spokes for w in state.gate_order[e])
+        gap = min(LineString(lines[w]).distance(copper) for w in foreign)
+        assert gap >= rules.clearance + rules.trace_width / 2.0 - 1e-3
+        assert gap < rules.clearance + rules.trace_width / 2.0 + 0.05   # and it is the via they are bending round
+
+
+def fingerprint(pmap):
+    """Everything in the map a site changes, in a form that can be compared."""
+    return (pmap.num_vertices, pmap.num_edges, pmap.num_triangles, list(pmap.tri_v_list), list(pmap.tri_e_list),
+            pmap.tri_n.tolist(), list(pmap.edge_v_list), list(pmap.edge_t_list), list(pmap.edge_kind_list),
+            [round(x, 9) for x in pmap.edge_len_list], list(pmap.trans), sorted(pmap.pad_edges), sorted(pmap.sites),
+            {pad: sorted(site.spokes) for pad, site in pmap.sites.items()})
+
+
+def busy_state(pmap, pairs):
+    state = TopoState(pmap)
+    for wire, (a, b) in enumerate(pairs, 1):
+        r = route(pmap, state, a, b, hard_cap=True)
+        if r is not None:
+            state.insert(wire, r.steps)
+    return state
+
+
+PAIRS = [(0, 35), (5, 30), (2, 33), (12, 17), (6, 29), (1, 34), (18, 23), (8, 27)]
+
+
+def roomy_triangles(pmap, count, seed=0):
+    rng = random.Random(seed)
+    order = list(range(pmap.num_triangles))
+    rng.shuffle(order)
+    return [t for t in order if sites.room(pmap, t, sites.incentre(pmap, t)) > 0.3][:count]
+
+
+def test_a_site_can_be_taken_out_again():
+    """A site that turns out not to fit is undone: the map and every wire exactly as before (12.4)."""
+    board = grid_board(6, 10.0, seed=3)
+    pmap = planar_map.build(board)
+    state = busy_state(pmap, PAIRS)
+    route(pmap, state, 0, 1)   # the compiled search's tables exist and must follow
+    before_map, before_state = fingerprint(pmap), state.snapshot()
+    caps = state.cap.copy()
+    mark = (len(sites.log(pmap)), len(sites.journal(state)))
+    made = []
+    for t in roomy_triangles(pmap, 12):
+        if t < pmap.num_triangles and sites.room(pmap, t, sites.incentre(pmap, t)) > 0.3:
+            made.append(sites.create(pmap, state, t, sites.incentre(pmap, t)))
+            sites.set_net(pmap, state, made[-1], 500 + len(made), sites.keep_off(board.rules) if sites.fits(pmap, state, made[-1], 0.5) else 0.0)
+    assert len(made) >= 8 and sum(len(s.spokes) for s in made) > 6 * len(made)        # flips happened
+    assert any(state.gate_order[e] for s in made for e in s.spokes)                    # and wires were carried
+    assert fingerprint(pmap) != before_map
+    moved = sites.undo(pmap, state, *mark)
+    assert moved and fingerprint(pmap) == before_map and map_errors(pmap) == []
+    after = state.snapshot()
+    assert after[0] == before_state[0] and after[1] == before_state[1] and after[2] == before_state[2]
+    assert np.allclose(after[3], before_state[3]) and np.allclose(state.cap, caps)
+    assert state.invariant_errors() == []
+    assert route(pmap, state, 3, 32) is not None                                       # and the search still works on it
+
+
+def test_the_log_rebuilds_the_same_map_elsewhere():
+    """A raced variant's sites are made again on the parent's maps from its log (12.5)."""
+    board = grid_board(6, 10.0, seed=3)
+    theirs, mine = planar_map.build(board), planar_map.build(board)
+    state = busy_state(theirs, PAIRS)
+    for t in roomy_triangles(theirs, 10, seed=4):
+        if t < theirs.num_triangles and sites.room(theirs, t, sites.incentre(theirs, t)) > 0.3:
+            sites.create(theirs, state, t, sites.incentre(theirs, t))
+    snap = state.snapshot()
+    log = sites.log(theirs)
+    assert sum(1 for entry in log if entry["kind"] == "flip") > 10
+    sites.replay(mine, log)
+    assert fingerprint(mine) == fingerprint(theirs) and map_errors(mine) == []
+    copy_state = TopoState(mine)
+    copy_state.restore(snap)
+    assert copy_state.invariant_errors() == []
+    # Rewinding part of the way leaves the map as it was after that many entries.
+    half = len(log) // 2
+    third = planar_map.build(board)
+    sites.replay(third, log[:half])
+    sites.rewind(mine, half)
+    assert fingerprint(mine) == fingerprint(third)
+
+
+def test_flood_agrees_with_the_search():
+    """The flood that places vias finds the legal route the search finds, at the same length (12.4)."""
+    from weaveengine.topo.search import flood
+    board = grid_board(6, 10.0, seed=3)
+    pmap = planar_map.build(board)
+    state = busy_state(pmap, PAIRS)
+    for a, b in [(7, 28), (3, 32), (10, 25), (14, 21)]:
+        r = route(pmap, state, a, b, hard_cap=True)
+        best, origin, (cost, came_from) = flood(pmap, state, a, dst_pad=b)
+        assert (r is None) == math.isinf(cost)
+        if r is not None:
+            assert cost == pytest.approx(r.length) and came_from == -1
+    # From a seed in the middle of a triangle, the way back to the pad costs what the way there did.
+    best, _, _ = flood(pmap, state, 7)
+    t = int(np.argmax(np.where(np.isfinite(best), best, -1.0)))
+    x, y = pmap.tri_cen[t]
+    back = flood(pmap, state, None, seeds=(np.array([t]), np.array([2.5]), np.array([x]), np.array([y])), dst_pad=7)[2]
+    assert back[1] == 0 and back[0] == pytest.approx(best[t] + 2.5, abs=0.75 * max(pmap.edge_len_list))

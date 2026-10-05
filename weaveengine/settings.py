@@ -9,6 +9,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, fields
 
+from weaveengine.board import Rules
 from weaveengine.plan.context import Options
 from weaveengine.topo.costs import CostParams
 
@@ -20,6 +21,7 @@ DESCRIPTIONS = {
     "max_via_rounds": ("Via passes", "How many times vias may be added and the board routed again", "Routing"),
     "drc_rounds": ("Design-rule repair rounds", "Reroute attempts for traces that fail the final check", "Routing"),
     "use_vias": ("Insert vias", "Allow vias for connections no single layer can complete", "Routing"),
+    "live_vias": ("Vias during routing", "Place vias while the board is being routed; off = only between passes, routing everything again", "Routing"),
     "global_selection": ("Global candidate selection", "Phase 1: choose routes for all nets together", "Routing"),
     "regret_order": ("Commit in regret order", "Phase 2: most-constrained nets first", "Routing"),
     "lookahead": ("Look-ahead costs", "Airwire-crossing and barrier costs", "Routing"),
@@ -54,10 +56,10 @@ DESCRIPTIONS = {
 AUTOMATIC = {
     "workers": ("Use every core", 4),
     "portfolio": ("One per worker, up to 8", 4),
-    "trace_width": ("Use the value in the DSN", 0.2),
-    "clearance": ("Use the value in the DSN", 0.2),
-    "via_diameter": ("Use the value in the DSN", 0.6),
-    "via_drill": ("Use the value in the DSN", 0.3),
+    "trace_width": ("Use the value in the DSN", Rules.trace_width),
+    "clearance": ("Use the value in the DSN", Rules.clearance),
+    "via_diameter": ("Use the value in the DSN", Rules.via_diameter),
+    "via_drill": ("Use the value in the DSN", Rules.via_drill),
     "edge_clearance": ("From the KiCad project beside the DSN, else the clearance", 0.5),
 }
 
@@ -70,6 +72,7 @@ class Settings:
     max_via_rounds: int = 4
     drc_rounds: int = 4
     use_vias: bool = True
+    live_vias: bool = True
     global_selection: bool = True
     regret_order: bool = True
     lookahead: bool = True
@@ -126,7 +129,7 @@ class Settings:
     # -- what the router takes ----------------------------------------------
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
-                       demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
+                       demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias, live_vias=self.live_vias,
                        smooth=self.smooth_corners, teardrops=self.teardrops, teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        portfolio=self.portfolio)
@@ -153,6 +156,12 @@ class Settings:
             rules.via_diameter = self.via_diameter
         if self.via_drill > 0:
             rules.via_drill = self.via_drill
+        # Rules the DSN left out and the settings do not set either: say what is used.
+        missing = [text for name, text in design.defaulted.items() if getattr(self, name) <= 0]
+        if missing:
+            notes.append("not in the DSN, defaults used: " + ", ".join(missing))
+        if design.dropped_wiring:
+            notes.append(design.dropped_wiring)
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
         else:

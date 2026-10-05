@@ -598,3 +598,48 @@ def test_corner_is_left_alone_where_an_arc_would_break_a_rule():
     board.pads[2] = Pad.circle(2, 17.55, 2.45, 0.1, net_id=1)
     stuck, rounded, kept = smooth(board, {1: corner}, {1: 0})
     assert (rounded, kept) == (0, 1) and stuck[1] == corner
+
+
+def crossing_board(pairs: int = 4) -> Board:
+    """Through-hole pads against the top and bottom edges of the board, each
+    top pad joined to the bottom pad at the mirrored position. Every connection
+    crosses every other and there is no way round a pad that sits against the
+    edge, so each layer holds one of them and the rest need vias."""
+    board = Board.rectangle(30, 24, Rules(0.2, 0.2), layers=["F.Cu", "B.Cu"])
+    for i in range(pairs):
+        x = 1.1 + i * 27.8 / (pairs - 1)
+        board.pads.append(Pad.circle(i, x, 22.9, 0.8, net_id=i))
+        board.pads.append(Pad.circle(pairs + i, 30 - x, 1.1, 0.8, net_id=i))
+    return board
+
+
+def test_vias_are_placed_during_the_pass():
+    """M14: connections no single layer can hold are completed with vias in the
+    same pass, legally, and the result is the same whether or not variants are raced."""
+    board = crossing_board()
+    assert route_board(board, options=Options(vias=False, portfolio=1), workers=1).stats["routed"] == 2
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert_clean(board, result)
+    stats = result.stats
+    assert stats["routed"] == 4 and stats["via_rounds"] == 0 and 2 <= stats["vias"] <= 8
+    assert len(board.pads) == 8 and all(not p.is_via for p in board.pads)   # the input board is not modified
+    assert len([p for p in result.board.pads if p.is_via]) >= stats["vias"]
+    # Every via joins traces on both layers, and is drawn from its centre.
+    for via in result.vias:
+        ends = [w for w, c in result.connections.items() if via.pad_id in (c.src, c.dst) and w in result.polylines]
+        assert {result.wire_layer[w] for w in ends} == {0, 1}
+    assert all(net_is_connected(result, net) for net in range(4))
+    # The older way, between passes, still works when asked for.
+    old = route_board(board, options=Options(portfolio=1, live_vias=False), workers=1)
+    assert old.stats["routed"] == 4 and old.stats["via_rounds"] >= 1
+
+
+def test_raced_variants_hand_their_vias_back():
+    """Section 12.5: the kept variant's via sites are made again on the parent's maps."""
+    board = crossing_board()
+    result = route_board(board, options=Options(portfolio=3), workers=3, seed=2)
+    assert_clean(board, result)
+    assert result.stats["routed"] == 4 and result.stats["vias"] >= 2
+    for layer in result.layers:
+        assert layer.state.check_invariants()
+        assert len(layer.pmap.sites) == result.stats["via_sites"]

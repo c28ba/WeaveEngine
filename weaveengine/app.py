@@ -82,6 +82,7 @@ class BoardView(QGraphicsView):
         self.outline_items: list = []
         self.name_items: list = []
         self.selection_items: list = []
+        self.selection: dict | None = None
         self.last = None      # what is on screen, so it can be redrawn when a layer is toggled
         self.wire_info: dict = {}  # extra facts per wire for the selection panel: index in ``wires`` -> dict
         self._pan_from = None
@@ -93,7 +94,7 @@ class BoardView(QGraphicsView):
         self.static_items, self.live_items, self.last = [], [], None
         self.outline_items, self.name_items, self.selection_items = [], [], []
         self.trace_items, self.detail_items, self._thin = [], [], None
-        self.pad_items = []
+        self.pad_items, self.selection = [], None
         self.board = board
         self.visible = {i: True for i in range(len(board.layers))}
         scene = self.scene()
@@ -136,6 +137,8 @@ class BoardView(QGraphicsView):
     def set_outlines_visible(self, on: bool) -> None:
         self.show_outlines = on
         self._level_of_detail(force=True)
+        if not on:
+            self._drop_selection("part")
 
     def set_names_visible(self, on: bool) -> None:
         self.show_names = on
@@ -182,6 +185,9 @@ class BoardView(QGraphicsView):
         item = self.scene().addPolygon(poly, QPen(Qt.NoPen), QBrush(QColor(fill)))
         item.setZValue(50)
         (self.live_items if live else self.static_items).append(item)
+        if not live:
+            item.setVisible(self._pad_shown(pad))
+            self.pad_items.append((item, pad))
         if pad.is_via:
             r = self.board.rules.via_drill / 2.0
             x, y = pad.centre
@@ -268,12 +274,32 @@ class BoardView(QGraphicsView):
     # -- selection ----------------------------------------------------------------
     def select_at(self, scene_pos) -> dict | None:
         """What is at this scene point: a pad, else a trace, else a part's outline. Highlights it and emits ``selected``."""
-        info = self.pick(scene_pos.x(), -scene_pos.y())
+        info = self.selection = self.pick(scene_pos.x(), -scene_pos.y())
         self.highlight(info)
         self.selected.emit(info)
         return info
 
+    def _pad_shown(self, pad) -> bool:
+        """A pad is drawn while any layer it is on is shown (a through-hole pad is on all of them)."""
+        layers = range(len(self.board.layers)) if pad.layers is None else pad.layers
+        return any(self.visible.get(layer, True) for layer in layers)
+
+    def _drop_selection(self, *kinds: str) -> None:
+        """Clears the selection if it is one of ``kinds`` and has just been hidden."""
+        info = self.selection
+        if info is None or info["kind"] not in kinds:
+            return
+        if info["kind"] == "trace" and self.visible.get(info["layer index"], True):
+            return
+        if info["kind"] in ("pad", "via") and self._pad_shown(info["pad"]):
+            return
+        self.selection = None
+        self.highlight(None)
+        self.selected.emit(None)
+
     def pick(self, x: float, y: float) -> dict | None:
+        """Only what is switched on can be picked (design section 23). Detail
+        that is merely too small to draw at this zoom still can."""
         board = self.board
         if board is None:
             return None
@@ -281,7 +307,7 @@ class BoardView(QGraphicsView):
         point = Point(x, y)
         names = board.net_names
         for pad in board.pads:
-            if pad.shape.contains(point):
+            if self._pad_shown(pad) and pad.shape.contains(point):
                 owner = next((c for c in board.components if pad.pad_id in c.pads), None)
                 bx0, by0, bx1, by1 = pad.shape.bounds
                 return {"kind": "via" if pad.is_via else "pad", "name": pad.name or str(pad.pad_id),
@@ -289,7 +315,7 @@ class BoardView(QGraphicsView):
                         "layers": "all" if pad.layers is None else ", ".join(board.layers[i] for i in sorted(pad.layers)),
                         "size": f"{bx1 - bx0:.2f} × {by1 - by0:.2f} mm",
                         "part": f"{owner.reference} ({owner.value})" if owner and owner.value else (owner.reference if owner else ""),
-                        "outline": [list(pad.shape.exterior.coords)]}
+                        "outline": [list(pad.shape.exterior.coords)], "pad": pad}
         wires = self.last[0] if self.last else []
         best = None
         for index, (layer, net, pts) in enumerate(wires):
@@ -313,11 +339,11 @@ class BoardView(QGraphicsView):
                     "length": f"{length:.2f} mm" + (" (rough, still routing)" if self.last[5] else ""),
                     "width": f"{board.rules.width(net):g} mm",
                     "net total": f"{sum(math.dist(a, b) for w in same for a, b in zip(w[2], w[2][1:])):.2f} mm in {len(same)} trace(s)",
-                    "outline": [pts], "trace": True}
+                    "outline": [pts], "trace": True, "layer index": layer}
             info.update(self.wire_info.get(best[1], {}))
             return info
         found = None
-        for comp in board.components:
+        for comp in board.components if self.show_outlines else ():
             box = comp.bounds()
             if box and box[0] <= x <= box[2] and box[1] <= y <= box[3]:
                 area = (box[2] - box[0]) * (box[3] - box[1])
@@ -426,8 +452,12 @@ class BoardView(QGraphicsView):
 
     def set_layer_visible(self, layer: int, on: bool) -> None:
         self.visible[layer] = on
+        for item, pad in self.pad_items:
+            item.setVisible(self._pad_shown(pad))
         if self.last is not None:
             self.show_routing(*self.last)
+        if not on:
+            self._drop_selection("trace", "pad", "via")
 
 
 class SettingsDialog(QDialog):
@@ -1074,7 +1104,7 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
                      if view.pick(x, y) and view.pick(x, y)["kind"] == "part"), None)
         picked.append(view.select_at(QPointF(spot[0], -spot[1])) if spot else None)
     for info in picked:
-        print("self-test: selected", {k: v for k, v in (info or {}).items() if k not in ("outline", "trace")})
+        print("self-test: selected", {k: v for k, v in (info or {}).items() if k not in ("outline", "trace", "pad", "layer index")})
     app.processEvents()
     if screenshot:
         window.grab().save(screenshot)

@@ -26,10 +26,14 @@ def generate(ctx: Context, conn: Connection, k: int | None = None) -> list[Candi
     search workspace, and the compiled kernel does not hold the interpreter lock.
     """
     k = ctx.params.K if k is None else k
-    if _use_threads(ctx, conn):
-        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k), conn.layers))
-    else:
-        found = [_layer_routes(ctx, conn, li, k) for li in conn.layers]
+    ctx.lift(conn, True)
+    try:
+        if _use_threads(ctx, conn):
+            found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k), conn.layers))
+        else:
+            found = [_layer_routes(ctx, conn, li, k) for li in conn.layers]
+    finally:
+        ctx.lift(conn, False)
     cands: list[Candidate] = []
     for li, routes in zip(conn.layers, found):
         pmap = ctx.layers[li].pmap
@@ -162,16 +166,21 @@ def severed(ctx: Context, layer: Layer, conn: Connection, path: GatePath) -> set
     return cut
 
 
-def plain_route(ctx: Context, conn: Connection, **kwargs) -> Route | None:
-    """Cheapest in-search route over the usable layers (searched at the same time)."""
+def plain_route(ctx: Context, conn: Connection, spare: float = 0.0, **kwargs) -> Route | None:
+    """Cheapest in-search route over the usable layers (searched at the same time).
+    ``spare``: room, in pitches, the route must leave on every gate it uses."""
     def one(li: int) -> Route | None:
         layer = ctx.layers[li]
-        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, **kwargs)
+        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight + spare, **kwargs)
 
-    if _use_threads(ctx, conn):
-        found = list(_threads().map(one, conn.layers))
-    else:
-        found = [one(li) for li in conn.layers]
+    ctx.lift(conn, True)
+    try:
+        if _use_threads(ctx, conn):
+            found = list(_threads().map(one, conn.layers))
+        else:
+            found = [one(li) for li in conn.layers]
+    finally:
+        ctx.lift(conn, False)
     best = None
     for li, r in zip(conn.layers, found):
         if r is not None and (best is None or r.cost < best.cost):

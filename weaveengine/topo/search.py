@@ -300,42 +300,47 @@ def _reconstruct(pmap: PlanarMap, state: TopoState, goal: int, parent: dict, cos
     return Route(steps, cost, length, blocking)
 
 
-def flood(pmap: PlanarMap, state: TopoState, src_pad: int, weight: float = 1.0) -> dict[int, float]:
-    """Cheapest legal cost from ``src_pad`` to every triangle it can reach
-    without crossing a wire or over-filling a gate. Used to place via sites."""
-    trans, kind, load, cap = pmap.trans, pmap.edge_kind_list, state.load, state.cap
-    order, cnt, tris = state.gate_order, state.corner_cnt, pmap.edge_t_list
-    best: dict[int, float] = {}
-    g: dict[int, float] = {}
-    heap: list[tuple[float, int]] = []
-    for e in pmap.pad_edges.get(src_pad, ()):
-        n = len(order[e])
-        if n >= SLOT_CAP or (n and load[e] + weight - cap[e] > 1e-9):
-            continue
-        for p in range(n + 1):
-            node = (2 * e) << 4 | p
-            g[node] = 0.0
-            heapq.heappush(heap, (0.0, node))
-    while heap:
-        gn, node = heapq.heappop(heap)
-        if gn > g[node]:
-            continue
-        he, p = node >> 4, node & 15
-        e = he >> 1
-        t = tris[e][he & 1]
-        if gn < best.get(t, math.inf):
-            best[t] = gn
-        ne = len(order[e])
-        for b, nxt, t, k, cu_e, cu_b, length in trans[he]:
-            nb = len(order[b])
-            if nxt < 0 or kind[b] == TERMINAL or nb >= SLOT_CAP or load[b] + weight - cap[b] > 1e-9:
-                continue
-            r = p if cu_e else ne - p
-            if r > cnt[t][k]:
-                continue
-            nn = nxt << 4 | (r if cu_b else nb - r)
-            c = gn + length
-            if c < g.get(nn, math.inf):
-                g[nn] = c
-                heapq.heappush(heap, (c, nn))
-    return best
+_NONE_I = np.zeros(0, dtype=np.int64)
+_NONE_F = np.zeros(0)
+
+
+def flood(pmap: PlanarMap, state: TopoState, src_pad: int | None = None, weight: float = 1.0, seeds=None, dst_pad: int = -1):
+    """Legal reach on one layer, for placing vias (design 12.4).
+
+    Starts from the edges of ``src_pad`` and/or from ``seeds`` = (triangles,
+    costs, x, y): points in the middle cells of those triangles, each at its
+    cost so far. Returns (best, origin, goal): per triangle the cheapest legal
+    length to its middle cell (inf = not reachable) and the index of the seed
+    that way came from (-1 = the pad); and (cost, origin) of the cheapest
+    arrival at ``dst_pad`` (cost inf = not reached). Nothing crosses a wire or
+    over-fills a gate.
+    """
+    best = np.full(pmap.num_triangles, np.inf)
+    origin = np.full(pmap.num_triangles, -1, dtype=np.int64)
+    goal = np.array([np.inf, -1.0])
+    starts = np.array(pmap.pad_edges.get(src_pad, ()) if src_pad is not None else (), dtype=np.int32)
+    tris, costs, xs, ys = seeds if seeds is not None else (_NONE_I, _NONE_F, _NONE_F, _NONE_F)
+    if not len(starts) and not len(tris):
+        return best, origin, (math.inf, -1)
+    for _ in range(2):
+        tb = pmap.__dict__.get("_kernel_tables")
+        if tb is None:
+            tb = pmap.__dict__["_kernel_tables"] = kernel.Tables(pmap)
+        touched = kernel.flood(starts, np.ascontiguousarray(tris, dtype=np.int64), np.ascontiguousarray(costs, dtype=np.float64),
+                               np.ascontiguousarray(xs, dtype=np.float64), np.ascontiguousarray(ys, dtype=np.float64), dst_pad,
+                               pmap.tri_e, pmap.tri_v, pmap.edge_v, pmap.edge_t,
+                               tb.b, tb.nxt, tb.t, tb.k, tb.cue, tb.cub, tb.length, tb.n, tb.kind, tb.owner, tb.mid,
+                               state.count, state.corner, state.load, state.cap, weight,
+                               tb.g, tb.parent, tb.touched, tb.heap_f, tb.heap_n, best, origin, goal)
+        if touched >= 0:
+            idx = tb.touched[:touched]
+            tb.g[idx] = np.inf
+            tb.parent[idx] = -1
+            return best, origin, (float(goal[0]), int(goal[1]))
+        # The workspace was too small (many seeds): make a larger one and go again.
+        tb.g[:] = np.inf
+        tb.parent[:] = -1
+        size = 4 * len(tb.heap_f)
+        tb.heap_f, tb.heap_g, tb.heap_n = np.zeros(size), np.zeros(size), np.zeros(size, dtype=np.int32)
+        best[:], origin[:], goal[:] = np.inf, -1, (np.inf, -1.0)
+    return best, origin, (math.inf, -1)

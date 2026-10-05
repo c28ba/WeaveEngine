@@ -14,7 +14,8 @@ GATE, WALL_EDGE, TERMINAL = 0, 1, 2
 
 @dataclass
 class PlanarMap:
-    """Immutable after build."""
+    """Built once. The only thing that changes it afterwards is the creation of
+    via sites (``topo/sites.py``, design section 12.2), which appends to it."""
     tri_v: np.ndarray      # [T,3] vertex ids, CCW
     tri_n: np.ndarray      # [T,3] neighbour across the edge opposite local vertex i (-1 = wall)
     tri_e: np.ndarray      # [T,3] edge id of the edge opposite local vertex i
@@ -75,6 +76,7 @@ class PlanarMap:
             for e in edges:
                 for v in self.edge_v_list[e]:
                     self.vertex_terminals.setdefault(v, []).append(e)
+        self.sites: dict[int, object] = {}  # via sites by pad id (topo/sites.py)
         self._build_transitions()
 
     def _build_transitions(self) -> None:
@@ -85,31 +87,32 @@ class PlanarMap:
           (b, next half-edge or -1 at a boundary, triangle, corner local index,
            corner is u-end of e, corner is u-end of b, midpoint-to-midpoint length)
         """
-        trans: list[tuple] = [()] * (2 * self.num_edges)
+        self.trans = [self.transitions(h) for h in range(2 * self.num_edges)]
+
+    def transitions(self, h: int) -> tuple:
+        """The successor tuples of one half-edge, from the tables as they stand."""
+        e, side = h >> 1, h & 1
+        t = self.edge_t_list[e][side]
+        if t < 0:
+            return ()
         kind, mids = self.edge_kind_list, self.edge_mid_list
-        for e in range(self.num_edges):
-            for side in (0, 1):
-                t = self.edge_t_list[e][side]
-                if t < 0:
-                    continue
-                verts, edges = self.tri_v_list[t], self.tri_e_list[t]
-                entry_local = edges.index(e)
-                out = []
-                for out_local in range(3):
-                    b = edges[out_local]
-                    if out_local == entry_local or kind[b] == WALL_EDGE:
-                        continue
-                    k = 3 - entry_local - out_local
-                    c = verts[k]
-                    tb = self.edge_t_list[b]
-                    if tb[1] < 0:
-                        nxt = -1
-                    else:
-                        nxt = 2 * b + (1 if tb[0] == t else 0)
-                    length = math.hypot(mids[b][0] - mids[e][0], mids[b][1] - mids[e][1])
-                    out.append((b, nxt, t, k, c == self.edge_v_list[e][0], c == self.edge_v_list[b][0], length))
-                trans[2 * e + side] = tuple(out)
-        self.trans = trans
+        verts, edges = self.tri_v_list[t], self.tri_e_list[t]
+        entry_local = edges.index(e)
+        out = []
+        for out_local in range(3):
+            b = edges[out_local]
+            if out_local == entry_local or kind[b] == WALL_EDGE:
+                continue
+            k = 3 - entry_local - out_local
+            c = verts[k]
+            tb = self.edge_t_list[b]
+            if tb[1] < 0:
+                nxt = -1
+            else:
+                nxt = 2 * b + (1 if tb[0] == t else 0)
+            length = math.hypot(mids[b][0] - mids[e][0], mids[b][1] - mids[e][1])
+            out.append((b, nxt, t, k, c == self.edge_v_list[e][0], c == self.edge_v_list[b][0], length))
+        return tuple(out)
 
     def shared_vertex(self, e1: int, e2: int) -> int:
         a, b = self.edge_v_list[e1]

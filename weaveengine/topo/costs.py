@@ -24,12 +24,16 @@ class CostParams:
     restarts: int = 3            # ICM random restarts
     h_weight: float = 1.0        # A* heuristic weight; above 1 trades optimality of the estimate for speed
     batch: int = 1               # connections rerouted against one snapshot of the state, in parallel (section 22)
+    via_cost: float = 8.0        # per via (12.4): the detour, in mm, a via is worth
+    max_vias: int = 4            # vias one connection may take
+    spare: float = 0.25          # pitches left free on every gate by wires placed after negotiation (12.4)
 
     @classmethod
     def for_map(cls, pmap: PlanarMap, **overrides) -> "CostParams":
         """Section 20 defaults, scaled by the median pad pitch."""
         pitch = median_pad_pitch(pmap)
-        params = cls(lambda_x=2 * pitch, lambda_sever=50 * pitch, lambda_conf=5 * pitch, cross_penalty=10 * pitch)
+        params = cls(lambda_x=2 * pitch, lambda_sever=50 * pitch, lambda_conf=5 * pitch, cross_penalty=10 * pitch,
+                     via_cost=4 * pitch)
         for k, v in overrides.items():
             if not hasattr(params, k):
                 raise TypeError(f"unknown cost parameter {k!r}")

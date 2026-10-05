@@ -9,7 +9,7 @@
 - This is a design, not a tested result. Anything marked **[HYPOTHESIS]** is a design bet that must be validated by the experiments in section 17 before it is relied on.
 - TopoR's internal algorithms are not public in anything I could verify. This design is built from general topological-routing ideas (homotopic routing, rubber-band sketches, negotiated congestion), not from TopoR's source. Do not describe it as a reimplementation.
 - The riskiest piece is the slot-aware topological search (section 8). Milestone M2 is a deliberate spike to prove or kill it early.
-- Multi-layer routing with vias is the largest unsolved design question (section 12). The plan is to prove the core on a single layer first.
+- Multi-layer routing with vias was the largest open design question. What is built places vias only between passes, which does not scale to boards that need many of them. Section 12 now holds the plan for vias placed during a pass and moved during realisation; it is planned, not built (milestones M12 to M16).
 - Library API details (`triangle`, `shapely`) are from memory. Check them when implementing.
 
 ---
@@ -73,6 +73,17 @@
 - A DSN parser is a small s-expression reader. Needed sections: `boundary`, `structure` (layers, rules), `placement`, `library` (images and padstacks), `network` (nets, classes), and optionally `wiring` for fixed existing copper.
 - **Open item:** confirm which CAD versions you use can export DSN and import SES (KiCad has historically supported both; check your version).
 - Pre-existing wires and vias in `wiring` are treated as fixed obstacles in v1.
+- **Missing rules fall back to defaults (M12, done).** A DSN with no `rule`, or with only a width or only a clearance, is valid and is routed, not rejected. Each value is resolved separately, in this order: the user's override in the settings, the DSN (default class, then the `structure` rule, then the other classes), the built-in default.
+
+  | Value | Built-in default |
+  |---|---|
+  | Trace width | 0.2 mm |
+  | Clearance | 0.2 mm |
+  | Via diameter / drill | 0.6 / 0.3 mm (also used when the `via` padstack is missing or has no circle) |
+  | Edge clearance | the clearance (as now) |
+  | Unit / resolution | um / 10 (as now) |
+
+  The built-in defaults live in one place (`board.Rules`), which the settings editor's starting values also read. The reader records what it defaulted in `Design.defaulted`; whatever the user's settings do not then set is reported, as a line on the command line and a note in the app's log. A `via` that names a padstack the library does not define counts as missing. The only things still refused are a file that is not a DSN, one with no signal layer, and one with no boundary, because nothing sensible can be assumed for those.
 - A DSN does not carry the copper-to-board-edge clearance or drill sizes. The edge clearance is taken from `--edge-clearance`, or from the KiCad project file (`--kicad-pro`, or a `.kicad_pro` next to the DSN); otherwise it defaults to the trace clearance. Hole clearance cannot be checked from a DSN.
 - Routing uses a small extra margin (`--margin`, default 0.01 mm) so that nothing sits exactly on a limit; the written SES is read back and measured against the unpadded rules.
 - SES writer emits each wire as a polyline `path` with width. Arcs are approximated by polylines until M8.
@@ -204,7 +215,7 @@ All costs are in millimetre-equivalents so they add up. Defaults are starting gu
 | Demand | Phase 1/2 candidate scoring | `w_d * max(0, (usage[e] + demand[e]) - cap[e])` (9.2) |
 | Airwire crossing | candidate scoring | `lambda_x` per crossing (9.4) |
 | Barrier closure | candidate scoring | `lambda_sever` per severed net (9.5) |
-| Via | multi-layer only | `via_cost` |
+| Via | via-aware search (12.4) | `via_cost` per layer change, plus the overflow the via's keep-off causes on the gates around it |
 
 ### 9.1 Why costs are split between "in-search" and "candidate scoring"
 
@@ -270,6 +281,13 @@ Loop until zero overflow and zero unrouted, or the iteration limit:
 ### Phase 4 (optional, M8+): topology refinement
 For each net, try alternative homotopy classes and accept a change if the **realised** length (section 13) of the whole board improves. Optionally simulated annealing over such moves.
 
+### Where vias enter (planned, section 12)
+- **Phase 2:** a connection whose single-layer search fails is tried with the via-aware search at once, instead of being left open for a later pass.
+- **Phase 3:** before an open connection's relaxed search is allowed to rip other wires up, the via-aware search is tried. A legal route with a via is taken when it costs less than the crossings the relaxed path would need. The unit of rip-up is the connection: all its segments come out together and its vias go dormant.
+- **Phase 4:** each connection with vias is also tried with fewer; the change is kept when length plus `via_cost` per via goes down.
+- **Realisation:** vias slide to shorten the traces on and around them (13.3).
+- The outer loop that rebuilt the maps and repeated Phases 1 to 4 after adding vias is kept only as a fallback.
+
 ---
 
 ## 11. Multi-pin nets
@@ -278,15 +296,99 @@ v1: decompose each net into 2-pin connections by a minimum spanning tree over pa
 
 ---
 
-## 12. Layers and vias (open design question)
+## 12. Layers and vias
 
-**The difficulty:** a via is a new obstacle inside a triangle, which changes the planar map. Three options, in order of ambition:
+**The difficulty:** a via is a new obstacle inside a triangle, which changes the planar map.
 
-1. **v1: single layer only.** Through-hole pads and fixed vias are obstacles or terminals. Proves everything above.
-2. **v2: per-layer maps with fixed via sites.** Each layer has its own triangulation and `TopoState`. Candidate via sites are generated before triangulation as small pseudo-pad holes in *every* layer's map, placed sparsely in free space and near pad rows. A via is a wire ending at a site on one layer and a new wire starting at the same site on the other. Unused sites remain wasted obstacles; a pruning pass that deletes unused sites and re-embeds routes is possible but unspecified. **[HYPOTHESIS]** Sparse sites are good enough for 2-layer boards.
-3. **v3: dynamic via insertion** by splitting a triangle (1 to 3 split) and updating the ordered gate lists of the new edges from the region the via sits in. Correct in principle but intricate; do only if v2 proves inadequate.
+### 12.1 What is built, and why it is not enough
 
-Layer assignment for v2: assign nets to layers by a cheap pre-pass (airwire crossing minimisation between layers), then route layer by layer, using sites for the nets that need to switch.
+Each layer has its own triangulation and `TopoState`. A pass routes on a fixed set of pads. Connections still open at the end of a pass are each split at one via (`plan/vias.py`), the via is added to the board as a pad, every map is rebuilt, and Phases 1 to 4 run again from nothing, up to `max_via_rounds` times.
+
+That works when a handful of vias are needed (ALU: 0 to 18). It fails on `boards/RAM Selector Tree.dsn` (2 layers, 670 through-hole pads, 400 connections, three nets of 73, 35 and 19 pins), where the crossings cannot be removed without many vias. Measured with one variant on one worker, cut off after 400 s:
+
+| Step of pass 1 | Time |
+|---|---|
+| Candidates, selection, commit | 23 s |
+| Rip-up | 259 s |
+| Refinement, geometry, repair | 6 s |
+| Placing vias | over 110 s, not finished |
+
+78 of the 400 connections were open after pass 1. The causes:
+1. **Rip-up negotiates for something it cannot get.** It spends 259 s trading wires between connections that no planar arrangement on two layers can all satisfy. Only a via helps them, and vias are not on offer until the pass ends.
+2. **Every via round starts again.** Maps are rebuilt and all 400 connections are routed again, including the 322 that were fine. With four rounds and up to eight raced variants this is where the hours go.
+3. **One via per connection per round.** A connection that needs two takes two rounds.
+4. **Proposing a via is slow.** Each proposal shrinks the whole free space of every layer again.
+5. **A via never moves.** Its position is a guess made before the traces around it exist, and the traces are then routed around the guess.
+
+### 12.2 Plan: via sites created inside the map, during the pass
+
+A **site** is a point that exists at the same place on every layer. On each layer it is a tiny triangular hole in the map (radius 2 µm, inside the routing margin of section 4), whose three edges are terminal edges owned by the site. A site is either:
+- **dormant:** owned by no net, keep-off zero. It takes no room; wires pass it on either side.
+- **active:** a via of net N. Its three vertices carry a keep-off radius `rho = via_diameter / 2 + s + t / 2`. Wires of net N may start and end on its edges.
+
+**Creating a site in triangle `T`** (done separately on each layer, in the triangle that contains the point). `T` is replaced by the six triangles between `T` and the small hole. Each corner of `T` gets two new gates ("spokes") to the hole. The site is declared to lie in the middle cell of `T`: the region left over after every wire through `T` has cut off its corner. Then:
+- Every wire that cuts corner `k` of `T` crosses the two spokes at corner `k`, in its existing nesting order, and nothing else changes.
+- Corner counts at the three outer corners are copied; all others are zero.
+- No wire's relation to any other wire or obstacle changes, so the invariant of 7.2 holds by construction and no search is needed.
+
+This is option 3 of the earlier draft of this section. It was called intricate there; restricting the site to the middle cell is what makes it simple.
+
+**Then the edges round the site are flipped until they are Delaunay** (`legalise`, about six flips per site). This was planned for later and turned out to be required. The triangle a site lands in is usually long and thin, so its first spokes run to far corners and the via's keep-off disc sticks out through the triangle's sides, where no gate knows about it: in the first trial, traces in the neighbouring triangles ran straight through the via. After the flips the site has a spoke to every vertex that is really its neighbour, and each spoke is a gate with a capacity and a wire order. A flip turns the diagonal of a quadrilateral; every wire keeps the four outer edges it used, and the order on the new diagonal follows from the corner counts of the two triangles, so again no search is needed. A flip is refused if the quadrilateral is not convex or a wire would cross the new gate twice.
+
+**Where a site may go.** A spoke of width `w` has capacity `(w - rho) / (t + s) + 1`, the rule of 6.3 with the keep-off of the via at either end taken off the width. The point is legal when no spoke is over capacity on any layer (`sites.fits`) and the via copper keeps its clearance from fixed copper on every layer. As everywhere, DRC after realisation is the final judge.
+
+A site must also really lie in the middle cell it is declared to be in: if five wires cut a corner and the point is two pitches from that corner, the spokes there are over capacity even while the site is dormant. Choosing the point is the caller's job (M14). On the ALU and RAM Selector Tree maps, with about a hundred wires routed, sites put blindly at the incentre of random triangles left 5 and 1 gates over capacity out of 300 sites each.
+
+**The map is mutable (M13, `topo/sites.py`).** A site appends 3 vertices, 9 edges and 5 triangles (the split triangle keeps its id); a flip reuses the edge and triangle ids it turns. The map's arrays grow by appending, the list mirrors and the per-half-edge transition rows are updated for the edges touched, `TopoState.grow` extends the state, and the compiled search's tables are built with spare room and updated in place. Still to do in M14: things cached per gate that pass through a changed triangle (airwire paths, the candidate corridors of Phase 2, the barrier), and snapshots taken before a site existed. Both are handled the same way, by replaying the site's creation on the stored paths, which is possible because the carry-over rules above depend on nothing but the path itself.
+
+**Removing a via.** The site goes dormant: its keep-off returns to zero and the capacities are restored. The hole stays in the map, where it costs nothing, and can be made active again.
+
+**The 2 µm hole realises as a correct via: go (M13).** This was the hypothesis the spike was for. What it took in `realize/`:
+- the keep-off is one more term where relaxation sums the distance a wire keeps from a gate's end vertex (windows, and `radial` for the arcs);
+- a wire crossing the gate *opposite* a via vertex is kept out of the keep-off disc on its own side of the via (`via_shadow`), for the edges that could not be flipped;
+- the via's own trace: which of the three hole edges it leaves through is the search's accident, so its heading is judged a trace width away from the hole, a trace heading away from its edge goes round the nearer way, and it may take the innermost place inside foreign traces that wrap the via (`terminals.hop`). All three apply to via sites only; ordinary pads behave as before.
+
+Results (details in the M13 row of section 18): 10,000 random operations with the invariant intact; hand-placed vias clean at 55 of 55 random positions, the smallest gap from a foreign trace to the via copper 0.307 mm against a rule of 0.300.
+
+Known limits, for M14 to respect:
+- A point within 20 µm of a triangle's edge cannot hold a site (5 of 60 random positions). The caller nudges the point.
+- A via's own trace counts as load on the spokes it crosses, although it needs no keep-off from its own via. On a spoke shorter than the keep-off this under-states capacity.
+- Capacity lowered by DRC feedback (`_penalise`) is overwritten when a site at that gate changes state or the gate is flipped.
+- `free_space` does not know about vias; only the end-straightening shortcut in relaxation reads it, and DRC checks its result.
+
+### 12.3 Connections with more than one segment
+
+Today a wire id is a connection id, and a split connection becomes two unrelated connections tied together by an `origins` list. Planned:
+- A `Connection` holds a chain of segments, `(layer, wire id)`, and the sites between them. Wire ids are `8 * connection id + segment index`.
+- Commit and rip-up act on the whole connection. Code that reads wire ids from `gate_order` maps them back with one helper.
+- Completion is counted in connections. The `origins` list goes away.
+
+### 12.4 Via-aware search
+
+A route with at most `max_vias_per_connection` layer changes (default 2: two surface-mount pads on the same layer need two) is found by alternating floods. `flood` (`topo/search.py`) already gives the cheapest legal cost from a pad to every triangle it can reach.
+1. Flood from the source pad on each layer it is on.
+2. For each triangle reached, take candidate points (centroid, nudged to the roomiest legal point), keep those legal on the other layer, and start a flood there from all of them at once, each starting at its cost so far plus `via_cost` plus the congestion its keep-off would cause.
+3. Stop when the target pad is reached. Walk back to get the segments and the points.
+4. Create (or wake) the sites, then commit the segments in order.
+
+The legal region per layer (free space shrunk by the via radius) is computed once per map, not once per proposal. `flood` moves into the compiled kernel.
+
+**When it is used.** Not for every connection, because most need no via:
+- when the single-layer search finds nothing (Phases 2 and 3);
+- in Phase 3, before a relaxed search rips other wires (section 10);
+- when a single-layer route is longer than `via_try_ratio` times the airwire (default 2), to see whether a via is cheaper.
+
+**[HYPOTHESIS]** Two or three floods per difficult connection are cheap enough once compiled. To be measured in M14.
+
+### 12.5 Racing variants
+
+Each raced variant changes its own copy of the maps. A variant's result therefore carries its **site log**: the ordered list of points created, with their final positions. Replaying the log on the parent's maps gives the same ids, so the kept variant's snapshot restores exactly. The rule of section 22 still holds: the result does not depend on the number of workers.
+
+### 12.6 What stays and what goes
+
+- `max_via_rounds` stays as a fallback for a pass that still ends with open connections. Its default drops to 1.
+- `plan/vias.py` `propose` and `add_via` are replaced by the site code. A via becomes a `Pad` only in the result, for DRC, teardrops, the SES writer and the app.
+- Blind and buried vias remain a non-goal: a site is on every layer.
 
 ---
 
@@ -307,6 +409,23 @@ Vectorise the sweep with NumPy (all wires processed per gate-index class), or us
 
 - Check with `shapely`: buffer every trace by `t/2`, query an `STRtree` of foreign-net copper for distance `< s`; check against the outline; check wire-to-wire distances.
 - If violations remain after relaxation: increase spacing locally and re-relax; if still violating, mark the gates involved, add history cost, and send the affected wires back to Phase 3. Capacity is only an estimate, so this feedback loop is expected.
+- Planned with section 12: via copper against foreign copper on every layer, and via to via.
+
+### 13.3 Sliding vias (planned, M15)
+
+A via's position is part of the geometry, not of the topology: moving a site inside the ring of triangles around it changes no gate order. So the position is optimised here, after relaxation, against every trace it affects.
+
+1. **Force on a via.** Total trace length changes with the via's position at a rate given by unit vectors read off the relaxed polylines:
+   - each trace that ends on the via pulls it along the trace's first segment (on both layers);
+   - each foreign trace bent around the via pushes it away, along the sum of the two directions in which the trace leaves the bend.
+
+   The sum is the direction that shortens the board fastest. A via in the way of five traces is pushed by all five, which is the point: the traces going round it get shorter, not only its own.
+2. **Step.** Move along the force with backtracking, keeping: every triangle around the site right way up on every layer; the via's clearance to fixed copper on every layer; no spoke over capacity; via-to-via spacing.
+3. **Update** only what moved: vertex coordinates, lengths and midpoints of the edges at the site, spoke capacities.
+4. **Relax again** only the wires that cross the triangles around moved sites. Relaxation windows depend only on the topology, so the other wires are unaffected.
+5. Repeat until the largest move is below 1 µm or a round limit is reached. Keep the result only if total realised length went down and the check is clean, as corner smoothing does.
+
+**Travelling further (M16).** A via pressed against the edge of its ring with force left over needs that edge flipped. The flip exists (`sites.flip`, 12.2); what remains is to use it while sliding. Decide from how often vias end pinned in M15.
 
 ---
 
@@ -404,6 +523,11 @@ Keep a feature only if it improves completion or length ratio without disproport
 | M9 | Performance pass | Meets the section 16 targets or targets are revised with data (done: see section 16) |
 | M10 | Parallel execution (section 22) | Wall-clock time on the ALU board drops substantially on a multi-core machine; results independent of the worker count (done: see section 22) |
 | M11 | Desktop application (section 23) | `python main.py` opens the app; a DSN can be imported, routed with live progress, and exported as SES; a single PyInstaller command produces a working standalone build (done on macOS: see section 23) |
+| M12 | Two fixes: rule defaults for a DSN without them (section 4); nothing hidden can be selected (section 23) | Each of the rule-less variants of a real board (no `rule`, width only, clearance only, no `via`) loads, reports what was defaulted, and routes; with outlines or a layer switched off, clicking where they were selects nothing; tests for both (done; the rule-less variants of RAM Selector Tree load, and a small rule-less board routes clean in the tests) |
+| M13 | **Spike:** mutable map and site creation (12.2), one layer pair, no search changes | Invariant test passes on 10,000 random insert, remove, create-site and wake/sleep operations; a hand-placed via realises with zero DRC violations and zero crossings; **go/no-go decision** on the 2 µm hole. **Done: go.** 10,000 operations (120 sites, about 800 flips) keep the invariant and the map's tables consistent, with no crossing in the realised result; a hand-placed via is clean on both layers at 55 of 55 random positions with 2 or 3 foreign traces going round it per layer. On ALU and RAM Selector Tree a site costs 0.8 to 0.9 ms to create, flips included; 300 dormant sites (11 % more triangles) slow a search by 9 to 14 %, and the search finds the same pairs in 400/400 and 396/400 cases. Edge flips, planned for M16, were needed here and are in |
+| M14 | Vias during the pass: multi-segment connections (12.3), via-aware search (12.4), use in Phases 2 to 4, site log for raced variants (12.5), DRC, SES and live view | RAM Selector Tree connects everything in one pass with zero violations; ALU, Word of RAM and ulx3s lose no completion and take no longer than now; via count on ALU no higher than now |
+| M15 | Sliding vias (13.3) | Total length on RAM Selector Tree and ALU drops against M14 with the check still clean; added geometry time recorded |
+| M16 | Via reduction in Phase 4; flips while sliding (the flip itself exists since M13) if M15 shows vias pinned | Fewer vias at equal or shorter length on the benchmark boards |
 
 ---
 
@@ -412,7 +536,7 @@ Keep a feature only if it improves completion or length ratio without disproport
 1. **Slot-aware search complexity.** The state space grows with wires per gate. If M2 shows it is too slow or too fragile, fallbacks are: plain capacity-only search plus a separate planarisation step (compute pairwise orders with `cross_count`, resolve conflicts by rip-up), or dynamic triangulation where wires become constrained edges.
 2. **Capacity is an estimate.** Slanted and skinny gates can mislead. The realisation and DRC feedback loop (13.2) is the safety net.
 3. **Length estimate in search is crude** (midpoint to midpoint). It overestimates taut length. Phase 4 compares realised lengths for this reason; consider a funnel-based correction if the gap is large.
-4. **Vias** (section 12) are unsolved in the general case.
+4. **Vias** (section 12). M13 settled two of the three open points: the 2 µm hole realises as a correct via, and the map can change under the compiled search (the search slows only in proportion to the triangles added). Still unproven: alternating floods are cheap enough (M14). Placing a site only in the middle cell of a triangle can miss a legal spot off to one side; sliding (13.3) is what is meant to recover that. Dormant sites are not free: each adds triangles, so sites should be created where a via is wanted, not scattered in advance.
 5. **Closure and airwire costs are unproven** (E3). Their weights are hard to set; expect tuning per board family.
 6. **Net classes** (different widths and clearances) will need per-class inflation and either per-class maps or conservative merging.
 7. **Python speed.** If targets are missed after algorithmic fixes, move the search kernel to `numba`, keeping the code layout.
@@ -434,7 +558,12 @@ Keep a feature only if it improves completion or length ratio without disproport
 | `pres_fac` | 0.5, x1.5 per round | present congestion weight |
 | `hist` increment | 1.0 per overflow unit | history growth |
 | `cross_penalty` (relaxed search) | 10 x median pad pitch | per violated crossing |
-| `via_cost` | 10 x (t + s) | per via (v2) |
+| `via_cost` | 10 x (t + s) | per via |
+| `max_vias_per_connection` | 2 | layer changes one connection may make (12.4) |
+| `via_try_ratio` | 2.0 | a single-layer route longer than this times its airwire is also tried with a via |
+| Site hole radius | 2 µm | size of a site in the map (12.2). Internal: `sites.SITE_RADIUS`. Not the via's drill, which is a rule (0.3 mm unless the DSN or the settings say otherwise) |
+| Via slide rounds / tolerance | 8 / 1 µm | stop condition of 13.3 |
+| `max_via_rounds` | 1 (was 4) | fallback passes that rebuild the maps |
 | Slot cap per gate | 15 | search state limit |
 | Relaxation tolerance | 1e-4 mm | convergence |
 | Phase 3 iteration limit | 100 | stop condition |
@@ -472,6 +601,8 @@ Workers are forked, so they inherit the maps and the state without copying; only
 - The portfolio size itself does change the result (more variants, better chance of a clean pass), so it is a setting, not an implementation detail.
 - Everything must still work in a frozen (PyInstaller) build: use `multiprocessing.freeze_support()`; where fork is unavailable the single-process path is used.
 
+**Planned with section 12:** a variant's result also carries its site log (12.5), so the maps of the kept variant can be reproduced in the parent.
+
 **Still open:** Phase 3 is sequential inside a variant; progress is reported only by the plain variant; a persistent worker pool with the state in shared memory would let single searches be spread across cores.
 
 ## 23. Desktop application (M11)
@@ -488,6 +619,13 @@ A simple GUI started from `main.py` at the repository root (`weaveengine/app.py`
 - A progress bar with elapsed time and time left in the pass. Stop cancels the run and its worker processes.
 - A settings editor over `settings.json` (`weaveengine/settings.py`): speed, routing phases and costs, rule overrides, teardrops. Beside `main.py` when run from source; in the user's configuration folder in a packaged app.
 - **Compiled-kernel status** is checked at start-up, off the GUI thread, and shown as a banner; if the kernels are unavailable the reason is shown and confirmed before routing starts. Routing then uses the Python fallback; it never crashes on this (`weaveengine/accel.py`).
+
+**Selection follows what is drawn (M12, done).** Clicking selects a pad, else a trace, else a part. A thing can be selected only if its switch is on (`BoardView.pick`).
+- A part: only while footprint outlines are switched on.
+- A trace or teardrop: only while its layer is shown (as now).
+- A pad that is on hidden layers only: neither drawn nor selectable. Through-hole pads and vias stay while any layer is shown.
+- Switching something off clears the selection if it was the thing selected.
+- Detail that is merely too small to draw at the current zoom stays selectable; that is a drawing shortcut, not the user hiding it.
 
 **How it is put together**
 - The window never routes. `weaveengine/session.py` runs the router in its own (spawned) process and passes events back through a pipe: status, progress, snapshots of the routing from every variant, pass results, the final result. The router forks its workers inside that process, away from the GUI.
