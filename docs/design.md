@@ -523,6 +523,13 @@ A price somewhat above the cap keeps the same number of connections, with a thir
 2. Then the price of a via as a principle: more than any detour on the board, so that single-layer routes are kept (the plateau above suggests it).
 3. Then: a net changes layer once and branches (a connection may start from any via or through-hole pad its net already has), which is where the file's routing gets 1.65 vias per connection instead of 2.
 
+**Stopping the cycling.** Once nothing is over-full, rip-up stops after three rounds without improvement instead of eight. Same spread of results on `blinkSP1` (48, 45 to 50; 37 vias), 15 s a run instead of 18.
+
+**Still open.**
+1. A net changes layer once and branches: a connection may start from any via or through-hole pad its net already has. This is where the file's routing gets 1.65 vias per connection through vias; this router pays 2.
+2. Run-to-run spread is still 45 to 50 connections and 32 to 48 vias.
+3. None of this has been measured on a second board that needs vias. `RAM Selector Tree`, `ALU`, `Word of RAM` and `ulx3s` have not been run since M14b.
+
 ### 12.8 Not in scope
 - Blind and buried vias: a site is on every layer.
 - Vias in pads (`via_at_smd`).

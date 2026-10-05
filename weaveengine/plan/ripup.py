@@ -5,6 +5,7 @@ from weaveengine.plan.path import find, place
 from weaveengine.topo.search import Route
 
 STALL_LIMIT = 8
+QUIET_STALL_LIMIT = 3
 
 
 def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
@@ -23,7 +24,9 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
             stall += 1
         over = [(layer, e) for layer in ctx.layers for e in layer.state.overflowed_gates()]
         open_conns = [w for w in ctx.unrouted if not ctx.conns[w].dead]
-        if (not over and not open_conns) or stall >= STALL_LIMIT or ctx.rounds >= max_rounds:
+        # Once nothing is over-full, a round only changes which connections
+        # are the open ones: if that has stopped helping, it will not start again.
+        if (not over and not open_conns) or stall >= (STALL_LIMIT if over else QUIET_STALL_LIMIT) or ctx.rounds >= max_rounds:
             break
         ctx.rounds += 1
         ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
