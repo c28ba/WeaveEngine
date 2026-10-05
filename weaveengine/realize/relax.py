@@ -1,5 +1,4 @@
-"""Geometry realisation (design section 13.1): taut string with ordering."""
-import itertools
+"""Geometry realisation (design section 13.1): the rubber band with thickness."""
 import math
 
 import numpy as np
@@ -7,72 +6,45 @@ from shapely.geometry import LineString
 
 from weaveengine.board import Board
 from weaveengine.realize import drc, kernel
-from weaveengine.realize.funnel import string_pull
 from weaveengine.topo import sites
 from weaveengine.topo.planar_map import TERMINAL
 from weaveengine.topo.state import TopoState
 
 Polyline = list[tuple[float, float]]
-SPREAD = 0.15  # of a pitch: the most a gate's spare room adds between two of its wires
-ARC_STEP = math.pi / 12.0
-ARC_BULGE = 1.0 / math.cos(ARC_STEP / 2.0)  # how far the corners of a polygon arc stand out from its circle
-STRAIGHTEN = 5e-4  # mm
-MIN_SIN = 1.0 / 3.0  # caps the oblique-gate spacing at 3 pitches
-MAX_SLANT = 6.0  # cap on how far a slanted gate is searched for wall clearance
+ARC_STEP = math.radians(6.0)  # an arc turns at most this much per segment (as in smooth.py)
+ARC_OUT = 4e-4  # mm: the most the corners of a drawn arc stand out from its circle (DRC allows a micron)
 
 
-def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 120, arcs: bool = True,
-          spacing_scale: dict[int, float] | None = None, terminals: dict[int, list[float]] | None = None,
-          slide: int = 3, report: dict | None = None) -> dict[int, Polyline]:
-    """Returns wire id -> polyline (pad centre, gate crossings, pad centre).
+def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None = None,
+          report: dict | None = None) -> dict[int, Polyline]:
+    """Returns wire id -> polyline, from pad centre to pad centre.
 
-    Every wire gets a window on each gate it crosses and is then pulled taut
-    through its windows. A wire with r wires between it and a gate endpoint
-    must stay r pitches from that endpoint, so the window on gate (u, v) is
-    [rank_u * pitch, L - rank_v * pitch]. Windows depend only on the topology,
-    which makes the wires independent of each other during relaxation.
+    A wire with some wires between it and a vertex must stay their combined
+    spacing away from that vertex: a disc round the vertex, whose radius depends
+    only on the topology. Each wire is pulled taut against the discs of the
+    vertices it passes (``kernel.pull``), independently of every other wire.
+    Wires pulled against the same vertices then run side by side at exactly the
+    spacing they owe, as parallel lines and concentric arcs.
 
     ``spacing_scale`` maps a wire id to a factor on the spacing it keeps from
     its neighbours; DRC repair (13.2) uses it to widen spacing locally.
 
-    In the first ``slide`` passes each end of a wire also moves along its pad
-    edge, pulled towards the straight line from the pad centre to the wire's
-    next point; the last pass settles everything with the ends fixed
-    (``terminals``). Several passes are needed because the windows that keep
-    foreign wires away from a pad exit depend on where that exit is. That removes the kink between the short pad stub and the
-    taut part. If ``report`` is given, ``report["clamped"]`` lists the ends
-    that press against a corner of their pad edge as (wire, is its start, corner).
+    A wire leaves its pad anywhere in the window of its pad edge. Foreign wires
+    passing that pad keep their distance from the point it leaves through, so
+    the wires near such points are pulled again once the points are known, and
+    a last time with every such point held where it is. If ``report`` is given,
+    ``report["clamped"]`` lists the ends that press against a corner of their
+    pad edge as (wire, is its start, corner).
     """
     scale = spacing_scale or {}
     pmap = state.map
     d = board.rules.pitch
     order, vxy, edge_v, lens = state.gate_order, pmap.vxy, pmap.edge_v_list, pmap.edge_len_list
     owner, pad_net, kind = pmap.edge_owner_list, pmap.pad_net, pmap.edge_kind_list
+    mids, cen, centre, exits = pmap.edge_mid_list, pmap.tri_cen, pmap.pad_centre, pmap.exit_window
 
     ends = {w: (owner[steps[0][0]], owner[steps[-1][0]]) for w, steps in state.wire_path.items()}
     wire_net = {w: pad_net.get(a, -1) for w, (a, _) in ends.items()}
-
-    # Gate frames: origin at the u end, unit direction towards v.
-    frame: dict[int, tuple[float, float, float, float, float]] = {}
-    for e, row in enumerate(order):
-        if row:
-            (ux, uy), (wx, wy) = vxy[edge_v[e][0]], vxy[edge_v[e][1]]
-            L = lens[e]
-            frame[e] = (ux, uy, (wx - ux) / L, (wy - uy) / L, L)
-
-    def point(e: int, s: float) -> tuple[float, float]:
-        ux, uy, dx, dy, _ = frame[e]
-        return (ux + s * dx, uy + s * dy)
-
-    # Terminal points are fixed during a pass: wires sharing a pad edge are
-    # spread along it in order, within the part a trace may leave through.
-    S: dict[int, list[float]] = {}
-    exits = pmap.exit_window
-    for e in frame:
-        if kind[e] == TERMINAL:
-            k = len(order[e])
-            a, b = exits.get(e, (0.0, frame[e][4]))
-            S[e] = list(terminals[e]) if terminals and e in terminals else [a + (i + 0.5) / k * (b - a) for i in range(k)]
 
     # Half of each wire's width beyond the base width the map was inflated for.
     half = {w: board.rules.extra(net) for w, net in wire_net.items()}
@@ -87,364 +59,304 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
 
     # Corners of each wire's own two pads. A wire owes its own pad no clearance,
     # so it is not held away from them (that would bend it right after the pad).
-    ring: dict[int, set[int]] = {}
-    for pad, edges in pmap.pad_edges.items():
-        ring[pad] = {v for e in edges for v in edge_v[e]}
+    ring = {pad: {v for e in edges for v in edge_v[e]} for pad, edges in pmap.pad_edges.items()}
     own = {w: ring[a] | ring[b] for w, (a, b) in ends.items()}
 
     # Vertices of active via sites (12.2): a wire of another net keeps the
     # via's keep-off from them, whatever lies in between.
     via_keep = sites.keep_at(pmap)
+    hole = {v: site for site in pmap.sites.values() for v in site.verts}
+    kept: dict[tuple[int, int], list[float]] = {}
 
-    def via_need(w: int, vertex: int) -> float:
-        keep, net = via_keep[vertex]
-        return 0.0 if wire_net[w] == net else keep + half[w]
+    def keep(e: int, vertex: int) -> list[float]:
+        """Distance each wire of gate e must keep from ``vertex``, one of the
+        gate's ends: a spacing for every wire in between, on top of what the
+        innermost one keeps. Listed in the order of the gate."""
+        if (e, vertex) not in kept:
+            row = order[e] if vertex == edge_v[e][0] else order[e][::-1]
+            via, net = via_keep.get(vertex, (0.0, -1))
+            total, out = 0.0 if vertex in own[row[0]] else half[row[0]], []
+            for i, w in enumerate(row):
+                if i:
+                    total += spacing(row[i - 1], w)
+                if via and wire_net[w] != net and vertex not in own[w]:
+                    total = max(total, via + half[w])
+                out.append(total)
+            kept[e, vertex] = out if row is order[e] else out[::-1]
+        return kept[e, vertex]
 
-    def radial(e: int, vertex: int, w: int) -> float:
-        """Distance wire w must keep from ``vertex``, an end of gate e: its own
-        extra half-width plus a spacing for every wire in between."""
-        row = order[e] if vertex == edge_v[e][0] else order[e][::-1]
-        total = 0.0 if vertex in own[row[0]] else half[row[0]]
-        if vertex in via_keep:
-            total = max(total, via_need(row[0], vertex))
-        for a, b in zip(row, row[1:]):
-            if a == w:
-                break
-            if vertex in via_keep:
-                # The wire inside is drawn round the via as a polygon whose
-                # corners stand out from the circle: allow for them.
-                total = max(total * ARC_BULGE + spacing(a, b), via_need(b, vertex))
-            else:
-                total += spacing(a, b)
-        return total
+    def point(e: int, s: float) -> tuple[float, float]:
+        (ux, uy), (wx, wy) = vxy[edge_v[e][0]], vxy[edge_v[e][1]]
+        return (ux + s * (wx - ux) / lens[e], uy + s * (wy - uy) / lens[e])
 
-    # Foreign wires must also keep a pitch away from where a wire leaves its
-    # pad. Index the terminal points by the pad-boundary vertices near them.
-    near_terms: dict[int, list[tuple[int, float, float]]] = {}
-    reach = 2.0 * d  # generous: covers every DRC-repair spacing factor
-    for te, row in S.items():
-        pad_vertices = {v for pe in pmap.pad_edges[owner[te]] for v in edge_v[pe]}
-        for w2, s2 in zip(order[te], row):
-            px, py = point(te, s2)
-            for v in pad_vertices:
-                if math.hypot(vxy[v][0] - px, vxy[v][1] - py) < reach:
-                    near_terms.setdefault(v, []).append((w2, px, py))
+    def angle(p, a, b) -> float:
+        """Angle at p between a and b."""
+        ax, ay, bx, by = a[0] - p[0], a[1] - p[1], b[0] - p[0], b[1] - p[1]
+        return abs(math.atan2(ax * by - ay * bx, ax * bx + ay * by))
 
-    def keep_away(w: int, e: int, vertex: int, from_u: bool) -> float:
-        """Distance from ``vertex`` along gate e needed to stay one pitch away
-        from foreign wires that terminate on a pad edge touching that vertex."""
-        best = 0.0
-        ux, uy, dx, dy, L = frame[e]
-        ox, oy = (ux, uy) if from_u else (ux + L * dx, uy + L * dy)
-        sx, sy = (dx, dy) if from_u else (-dx, -dy)
-        for w2, px, py in near_terms[vertex]:
-            if w2 == w or (wire_net[w2] >= 0 and wire_net[w2] == wire_net[w]):
-                continue
-            qx, qy = px - ox, py - oy
-            proj = qx * sx + qy * sy
-            perp2 = qx * qx + qy * qy - proj * proj
-            dd = spacing(w, w2)
-            # Only when the gate starts inside the keep-away disc: the wire
-            # then has to leave it on the far side.
-            if qx * qx + qy * qy < dd * dd:
-                best = max(best, proj + math.sqrt(dd * dd - perp2))
-        return best
+    def corner(t: int, vertex: int, round_via: bool) -> float:
+        """Angle of triangle t at ``vertex``; for a via gone round as one
+        disc, the angle the triangle takes up as seen from the via."""
+        a, b = (q for q in pmap.tri_v_list[t] if q != vertex)
+        if not round_via:
+            return angle(vxy[vertex], vxy[a], vxy[b])
+        site = hole[vertex]
+        return 0.0 if hole.get(a) is site or hole.get(b) is site else angle(site.centre, vxy[a], vxy[b])
 
-    def wall_need(e: int, vertex: int, from_u: bool, target: float) -> float:
-        """Distance from ``vertex`` along gate e at which the gate is ``target``
-        away from the obstacle boundary on either side of the vertex. A gate
-        that leaves a wall at a slant needs more than ``target`` along itself."""
-        nbrs = pmap.v_nbr.get(vertex)
-        if not nbrs or target <= 0.0:
-            return target
-        key = (e, from_u, round(target, 7))
-        if key in wall_cache:
-            return wall_cache[key]
-        wall_cache[key] = found = _wall_need(e, vertex, from_u, target, nbrs)
-        return found
-
-    def _wall_need(e: int, vertex: int, from_u: bool, target: float, nbrs) -> float:
-        ux, uy, dx, dy, L = frame[e]
-        ox, oy = (ux, uy) if from_u else (ux + L * dx, uy + L * dy)
-        sx, sy = (dx, dy) if from_u else (-dx, -dy)
-        segs = [(ox, oy, *vxy[n]) for n in nbrs if n != vertex]
-
-        def clear(s: float) -> bool:
-            px, py = ox + s * sx, oy + s * sy
-            return all(_dist_point_segment(px, py, *seg) >= target - 1e-9 for seg in segs)
-
-        if clear(target):
-            return target
-        lo, hi = target, min(L, target * MAX_SLANT)
-        if not clear(hi):
-            return hi
-        for _ in range(30):
-            mid = (lo + hi) / 2.0
-            if clear(mid):
-                hi = mid
-            else:
-                lo = mid
-        return hi
-
-    def via_shadow(e: int, row: list[int]):
-        """Limits a via opposite gate e puts on the gate's wires. In a triangle
-        whose third vertex is a via, the gate's wires pass the via on one side
-        or the other: those cutting the u corner must cross the gate before the
-        via's keep-off disc, the others after it. Returns (lowest, highest)
-        position per wire, or None if no via is opposite."""
-        found = None
-        ux, uy, dx, dy, L = frame[e]
-        for t in pmap.edge_t_list[e]:
-            if t < 0:
-                continue
-            verts = pmap.tri_v_list[t]
-            top = next(x for x in verts if x not in edge_v[e])
-            if top not in via_keep:
-                continue
-            if found is None:
-                found = ([0.0] * len(row), [L] * len(row))
-            qx, qy = vxy[top][0] - ux, vxy[top][1] - uy
-            foot, height = qx * dx + qy * dy, abs(qx * dy - qy * dx)
-            near_u = state.corner_cnt[t][verts.index(edge_v[e][0])]  # this many wires, from u, cut the u corner
-            for k, w in enumerate(row):
-                need = via_need(w, top)
-                if need <= height:
-                    continue
-                reach = math.sqrt(need * need - height * height)
-                if k < near_u:
-                    found[1][k] = min(found[1][k], foot - reach)
-                else:
-                    found[0][k] = max(found[0][k], foot + reach)
-        return found
-
-    wall_cache = pmap.__dict__.setdefault("_wall_need_cache", {})  # geometry only: valid for the map's lifetime
-
-    # Windows on the gates.
-    window: dict[int, list[tuple[float, float]]] = {}
-    ease: dict[int, float] = {}  # per gate: spacing added between its wires out of the room it has to spare
-    for e in frame:
-        if kind[e] == TERMINAL:
-            continue
-        row, L = order[e], frame[e][4]
-        u, v = edge_v[e]
-        n = len(row)
-        lo, hi = [0.0] * n, [0.0] * n
-        apex = via_shadow(e, row) if via_keep else None
-        reach = 0.0 if u in own[row[0]] else half[row[0]]  # required distance from the obstacle at this end
-        for k, w in enumerate(row):
-            need = keep_away(w, e, u, True) if u in near_terms else 0.0
-            if apex:
-                need = max(need, apex[0][k])
-            if k:
-                reach += spacing(row[k - 1], w)
-                need = max(need, lo[k - 1] * (ARC_BULGE if u in via_keep else 1.0) + spacing(row[k - 1], w))
-            if u in via_keep:
-                reach = max(reach, via_need(w, u))
-            lo[k] = need if u in own[w] else max(need, wall_need(e, u, True, reach))
-        reach = 0.0 if v in own[row[-1]] else half[row[-1]]
-        for k in range(n - 1, -1, -1):
-            w = row[k]
-            need = keep_away(w, e, v, False) if v in near_terms else 0.0
-            if apex:
-                need = max(need, L - apex[1][k])
-            if k < n - 1:
-                reach += spacing(row[k + 1], w)
-                need = max(need, (L - hi[k + 1]) * (ARC_BULGE if v in via_keep else 1.0) + spacing(row[k + 1], w))
-            if v in via_keep:
-                reach = max(reach, via_need(w, v))
-            hi[k] = L - (need if v in own[w] else max(need, wall_need(e, v, False, reach)))
-        # Room to spare on the gate goes between its wires (up to SPREAD of a
-        # pitch each). Pulled taut, a bundle would sit at exactly the spacing it
-        # owes, and exactly is what slanted crossings and polygon arcs cannot keep.
-        # (Only between wires that owe each other spacing: wires of one net stay together.)
-        apart = [0] + list(itertools.accumulate(1 if spacing(p, q) > 0 else 0 for p, q in zip(row, row[1:])))
-        spare = min(b - a for a, b in zip(lo, hi))
-        ease[e] = extra = min(SPREAD * d, spare / apart[-1]) if apart[-1] and spare > 0 else 0.0
-        win = []
-        for k, (a, b) in enumerate(zip(lo, hi)):
-            a, b = a + apart[k] * extra, b - (apart[-1] - apart[k]) * extra
-            if a > b:  # over-full gate: collapse the window; DRC will report it
-                a = b = min(max((a + b) / 2.0, 0.0), L)
-            win.append((a, b))
-        window[e] = win
-        S[e] = [(a + b) / 2.0 for a, b in win]
-
-    wires = {w: [(s[0], order[s[0]].index(w)) for s in steps] for w, steps in state.wire_path.items()}
-
-    # Start from each wire's exact taut path through its own windows (string
-    # pulling). Point-by-point sweeps alone converge far too slowly on a wire
-    # that crosses many gates; from here they only have to settle the places
-    # where neighbouring wires press on each other.
-    mids, cen = pmap.edge_mid_list, pmap.tri_cen
-    for w, pts in wires.items():
+    def sleeve(w: int) -> list[tuple]:
+        """The discs wire w passes, in order: (x, y, radius, on its left, vertex,
+        gate, place on the gate, angle its route sweeps there). The first two
+        and the last two are the ends of the windows on its pad edges."""
         steps = state.wire_path[w]
-        portals, spans = [], []
-        for i, (e, k) in enumerate(pts):
-            ux, uy, dx, dy, L = frame[e]
-            if e in window:
-                lo, hi = window[e][k]
-            elif slide:
-                lo, hi = exits.get(e, (0.0, L))
-            else:
-                lo = hi = S[e][k]
-            mx, my = mids[e]
+        out, was, at = [], (-1, -1), [None, None]
+        for i, (e, t, _, _) in enumerate(steps):
+            u, v = edge_v[e]
+            (mx, my), (ux, uy) = mids[e], vxy[u]
             if i == 0:
                 cx, cy = cen[steps[1][1]]
                 hx, hy = cx - mx, cy - my      # heading into the first triangle
             else:
-                cx, cy = cen[steps[i][1]]
+                cx, cy = cen[t]
                 hx, hy = mx - cx, my - cy      # heading out of the triangle just crossed
-            a, b = (ux + lo * dx, uy + lo * dy), (ux + hi * dx, uy + hi * dy)
-            portals.append((a, b) if hx * (uy - my) - hy * (ux - mx) > 0 else (b, a))
-            spans.append((lo, hi))
-        corners = string_pull(pmap.pad_centre[ends[w][0]], portals, pmap.pad_centre[ends[w][1]])
-        j = 0
-        for i, (e, k) in enumerate(pts):
-            while corners[j + 1][0] < i:
-                j += 1
-            (_, (ax, ay)), (ib, (bx, by)) = corners[j], corners[j + 1]
-            ux, uy, dx, dy, L = frame[e]
-            if ib == i:
-                s = (bx - ux) * dx + (by - uy) * dy
-            else:
-                rx, ry = bx - ax, by - ay
-                den = dx * ry - dy * rx
-                s = S[e][k] if abs(den) < 1e-12 else ((ax - ux) * ry - (ay - uy) * rx) / den
-            lo, hi = spans[i]
-            S[e][k] = min(max(s, lo), hi)
-    for e, row in S.items():  # wires were pulled independently: restore their order on each gate
-        for k in range(1, len(row)):
-            if row[k] < row[k - 1]:
-                row[k] = row[k - 1]
+                for side in (0, 1):
+                    if at[side] is not None:
+                        out[at[side]][7] += corner(t, was[side], out[at[side]][8])
+            u_left = hx * (uy - my) - hy * (ux - mx) > 0
+            if kind[e] == TERMINAL:
+                a, b = exits.get(e, (0.0, lens[e]))
+                out.append([*point(e, a if u_left else b), 0.0, True, -1, e, 0, 0.0])
+                out.append([*point(e, b if u_left else a), 0.0, False, -1, e, 0, 0.0])
+                for side in (0, 1):  # round a corner of the pad it ends on, the wire can turn on into the pad
+                    if at[side] is not None and was[side] in (u, v):
+                        out[at[side]][7] += angle(vxy[was[side]], vxy[u + v - was[side]], centre[ends[w][1]])
+                continue
+            now = (u, v) if u_left else (v, u)
+            k = order[e].index(w)
+            for side in (0, 1):
+                vertex, r = now[side], keep(e, now[side])[k]
+                if vertex == was[side]:
+                    continue
+                round_via = r > 0.0 and vertex in hole
+                if round_via and hole.get(was[side]) is hole[vertex] and at[side] is not None and out[at[side]][8]:
+                    out[at[side]][7] += corner(t, vertex, True)  # the next corner of the same via's hole
+                    continue
+                # A via is one round thing to go round, not the three corners of its hole.
+                out.append([*(hole[vertex].centre if round_via else vxy[vertex]), r, side == 0, vertex, e, k, corner(t, vertex, round_via), round_via])
+                at[side] = len(out) - 1
+                if i == 1 and vertex in edge_v[steps[0][0]]:  # a corner of the pad it starts on: it can come out of the pad round it
+                    a, b = edge_v[steps[0][0]]
+                    out[-1][7] += angle(vxy[vertex], vxy[a + b - vertex], centre[ends[w][0]])
+            was = now
+        return [tuple(disc[:8]) for disc in out]
 
-    # Windows keep every wire clear of the obstacles. Neighbouring wires can
-    # still be pulled against each other inside overlapping windows, so the
-    # sweep also keeps each wire a pitch from its neighbours on the same gate
-    # (13.1 step 2), measured perpendicular to the wires rather than along the gate.
-    # Flatten to arrays for the compiled sweep: one slot per (gate, wire).
-    base: dict[int, int] = {}
-    total = 0
-    for e, row in S.items():
-        base[e] = total
-        total += len(row)
-    pos = np.zeros(total)
-    fr = np.zeros((total, 5))
-    wlo, whi = np.zeros(total), np.zeros(total)
-    is_term = np.zeros(total, dtype=np.uint8)
-    has_prev, has_next = np.zeros(total, dtype=np.uint8), np.zeros(total, dtype=np.uint8)
-    space, share = np.zeros(total), np.zeros(total)
-    for e, row in S.items():
-        o, n = base[e], len(row)
-        pos[o:o + n] = row
-        fr[o:o + n] = frame[e]
-        has_prev[o + 1:o + n] = 1
-        has_next[o:o + n - 1] = 1
-        if e in window:
-            win = window[e]
-            wlo[o:o + n] = [a for a, _ in win]
-            whi[o:o + n] = [b for _, b in win]
-            wires_e = order[e]
-            for k in range(n - 1):
-                owed = spacing(wires_e[k], wires_e[k + 1])
-                space[o + k] = owed + ease[e] if owed > 0 else 0.0
-        else:
-            is_term[o:o + n] = 1
-            wlo[o:o + n], whi[o:o + n] = exits.get(e, (0.0, frame[e][4]))
-            share[o:o + n] = min(d, (whi[o] - wlo[o]) / n)
-    wire_ids = list(wires)
-    wire_ptr = np.zeros(len(wire_ids) + 1, dtype=np.int64)
-    wire_slot = np.zeros(sum(len(wires[w]) for w in wire_ids), dtype=np.int64)
-    centre = np.zeros((len(wire_ids), 4))
-    along_prev, along_next = np.full(total, -1, dtype=np.int64), np.full(total, -1, dtype=np.int64)
-    at = 0
-    for wi, w in enumerate(wire_ids):
-        slots = [base[e] + k for e, k in wires[w]]
-        wire_slot[at:at + len(slots)] = slots
-        along_prev[slots[1:]] = slots[:-1]
-        along_next[slots[:-1]] = slots[1:]
-        at += len(slots)
-        wire_ptr[wi + 1] = at
-        centre[wi, 0:2] = pmap.pad_centre[ends[w][0]]
-        centre[wi, 2:4] = pmap.pad_centre[ends[w][1]]
-    if total:
-        args = (pos, fr, wlo, whi, is_term, has_prev, has_next, space, share, wire_ptr, wire_slot, centre,
-                along_prev, along_next, bool(slide), max_sweeps, tol, MIN_SIN)
+    def beside(e: int, vertex: int, k: int, other: int) -> float:
+        """Distance the wire at place k of gate e keeps from where ``other``
+        leaves its pad at ``vertex``: a spacing for every wire in between."""
+        row = order[e][:k + 1] if vertex == edge_v[e][0] else order[e][:k - 1 if k else None:-1]
+        row = row[row.index(other):] if other in row else [other] + row
+        return sum(spacing(a, b) for a, b in zip(row, row[1:]))
+
+    def guarded(w: int, discs: list[tuple], near: dict) -> list[tuple] | None:
+        """``discs`` with one more for every point near them where a foreign
+        wire leaves its pad, or None if there is no such point."""
+        out, found = [], False
+        done: tuple[set, set] = (set(), set())  # per side: the points guarded since the wire came by them
+        for disc in discs:
+            x, y, r, left, vertex, e, k, swept = disc
+            before, after = [], []
+            if vertex not in near:
+                done[left].clear()
+            for other, px, py, (cx, cy) in near.get(vertex, ()):
+                if other == w or (wire_net[other] >= 0 and wire_net[other] == wire_net[w]) or (other, px, py) in done[left]:
+                    continue
+                done[left].add((other, px, py))
+                room = beside(e, vertex, k, other)
+                if math.hypot(px - x, py - y) + room <= r + 1e-9:
+                    continue  # the vertex keeps the wire further away already
+                # Round its pad, the point lies before the vertex or after it.
+                turn = (x - cx) * (py - cy) - (y - cy) * (px - cx)
+                (after if (turn > 0) == left else before).append((abs(turn), (px, py, room, left, -1, e, k, swept)))
+            found = found or bool(before or after)
+            out += [g for _, g in sorted(before, reverse=True)] + [disc] + [g for _, g in sorted(after)]
+        return out if found else None
+
+    lines: dict[int, Polyline] = {}
+    where: dict[int, list[float]] = {}  # per wire: where on its two pad edges it leaves
+
+    def pull(todo: dict[int, list[tuple]], held: bool) -> None:
+        """Pulls the wires of ``todo`` taut against their discs: fills ``lines``,
+        and ``where`` unless the ends are held where they are."""
+        rows, ptr = [], [0]
+        for w, discs in todo.items():
+            src, dst = state.wire_path[w][0][0], state.wire_path[w][-1][0]
+            if held:
+                a, b, discs = point(src, where[w][0]), point(dst, where[w][1]), discs[2:-2]
+            else:
+                a, b = centre[ends[w][0]], centre[ends[w][1]]
+            rows.append((*a, 0.0, False, math.pi))
+            # A wire that passes a point straight has half a turn of its
+            # triangles there: what they sweep beyond that is how far its trace
+            # can turn round the point. Round a disc, allow a quarter turn more.
+            rows += [(x, y, r if left else -r, left, max(0.0, swept - math.pi) + math.pi / 2.0) for x, y, r, left, _, _, _, swept in discs]
+            rows.append((*b, 0.0, False, math.pi))
+            ptr.append(len(rows))
+        if not rows:
+            return
+        table = np.array(rows, dtype=np.float64)
+        x, y, r, _, most = (np.ascontiguousarray(table[:, i]) for i in range(5))
+        out_ptr, out = np.zeros(len(ptr), dtype=np.int64), np.zeros(len(rows), dtype=np.int64)
+        come, go = np.zeros((len(rows), 2)), np.zeros((len(rows), 2))
+        args = (np.array(ptr, dtype=np.int64), x, y, r, table[:, 3] > 0, most, out_ptr, out, come, go)
         try:
-            kernel.sweep(*args)
+            kernel.pull(*args)
         except Exception as error:  # the compiled kernel failed: never crash, fall back for good
             from weaveengine import accel
             accel.failed("relaxation", error)
-            for e, row in S.items():
-                pos[base[e]:base[e] + len(row)] = row
-            kernel.sweep(*args)
-    for e, row in S.items():
-        o = base[e]
-        row[:] = pos[o:o + len(row)].tolist()
-    clamped: dict[tuple[int, bool], int] = {}
+            kernel.pull(*args)
+        come, go, out_ptr, touched = come.tolist(), go.tolist(), out_ptr.tolist(), out.tolist()
+        for i, w in enumerate(todo):
+            line: Polyline = []
+            for j in range(out_ptr[i], out_ptr[i + 1]):
+                line += _arc(rows[touched[j]], come[j], go[j])
+            if held:
+                lines[w] = [centre[ends[w][0]]] + line + [centre[ends[w][1]]]
+                continue
+            lines[w] = line
+            where[w] = []
+            for e, (ax, ay), (bx, by) in ((state.wire_path[w][0][0], line[0], line[1]), (state.wire_path[w][-1][0], line[-1], line[-2])):
+                # Where the first (last) run crosses the pad edge.
+                (ux, uy), (wx, wy) = vxy[edge_v[e][0]], vxy[edge_v[e][1]]
+                dx, dy, rx, ry = (wx - ux) / lens[e], (wy - uy) / lens[e], bx - ax, by - ay
+                den = dx * ry - dy * rx
+                lo, hi = exits.get(e, (0.0, lens[e]))
+                where[w].append((lo + hi) / 2.0 if abs(den) < 1e-12 else min(max(((ax - ux) * ry - (ay - uy) * rx) / den, lo), hi))
 
-    if slide:
-        # The windows that keep foreign wires away from pad exits were built for
-        # the old end positions: rebuild them and settle with the ends fixed.
-        if report is not None:
-            # Judge each end by where the wire is heading once it has left the
-            # pad's surroundings, not by its first crossing (which may sit on
-            # the very corner the end is pressed against).
-            clamped.clear()
-            for w, pts in wires.items():
-                for first in (True, False):
-                    seq = pts if first else pts[::-1]
-                    e, k = seq[0]
-                    ux, uy, dx, dy, L = frame[e]
-                    px, py = point(e, S[e][k])
-                    cx, cy = pmap.pad_centre[ends[w][0 if first else 1]]
-                    far = pmap.pad_centre[ends[w][1 if first else 0]]
-                    # A via site's edge is microns long: look a trace width away at least.
-                    ahead = max(0.5 * L, d) if owner[e] in pmap.sites else 0.5 * L
-                    for qe, qk in seq[1:]:
-                        q = point(qe, S[qe][qk])
-                        if math.hypot(q[0] - px, q[1] - py) > ahead:
-                            far = q
+    def leaving() -> dict[int, list[tuple]]:
+        """Pad-boundary vertices near a point where a wire leaves that pad:
+        vertex -> (wire, the point, the pad's centre)."""
+        near: dict[int, list[tuple]] = {}
+        reach = 2.0 * d  # generous: covers every DRC-repair spacing factor
+        for w, (s0, s1) in where.items():
+            for e, s, pad in ((state.wire_path[w][0][0], s0, ends[w][0]), (state.wire_path[w][-1][0], s1, ends[w][1])):
+                px, py = point(e, s)
+                for v in ring[pad]:
+                    if math.hypot(vxy[v][0] - px, vxy[v][1] - py) < reach:
+                        near.setdefault(v, []).append((w, px, py, centre[pad]))
+        return near
+
+    def name(vertex: int):
+        return hole[vertex].pad if vertex in hole else -1 - vertex  # a via under one name, whichever corner was met
+
+    def widened(w: int, at: dict) -> list[tuple]:
+        """The discs of wire w, and with each the next vertex either way along
+        the same obstacle, if the wires inside w go round that one too. A
+        wire's own triangles tell it of the vertices it passes; the bundle
+        inside it is as thick round the next one along, and may reach into
+        its path from there."""
+        mine = at[w]
+        out, seen = [], set()
+        for disc in plain[w]:
+            x, y, r, left, vertex, e, k, _ = disc
+            added = ([], [])
+            if vertex >= 0 and r > 0.0 and vertex not in hole:
+                row = order[e]
+                step = -1 if vertex == edge_v[e][0] else 1
+                for beyond in pmap.v_nbr.get(vertex, ()):
+                    if name(beyond) in mine or (beyond, left) in seen:
+                        continue
+                    for j in range(k + step, len(row) if step > 0 else -1, step):
+                        theirs, i, b = plain[row[j]], at[row[j]].get(name(vertex)), at[row[j]].get(name(beyond))
+                        if i is not None and b is not None and theirs[i][3] == theirs[b][3]:
+                            seen.add((beyond, left))
+                            # (a wire passing the other way round meets them in the other order)
+                            added[(b > i) == (theirs[i][3] == left)].append((*theirs[b][:2], theirs[b][2] + r - theirs[i][2], left, -1, e, k, theirs[b][7]))
                             break
-                    rx, ry = far[0] - cx, far[1] - cy
-                    den = dx * ry - dy * rx
-                    if abs(den) > 1e-12:
-                        s = ((cx - ux) * ry - (cy - uy) * rx) / den
-                        if owner[e] in pmap.sites and ((ux - cx) * dy - (uy - cy) * dx) / -den < 0.0:
-                            # The wire heads away from this edge of the via's hole (any
-                            # of the three may have been the search's start): the line
-                            # test above would name either end. Go round the nearer way.
-                            s = -1.0 if (ux - cx) * rx + (uy - cy) * ry > (ux + L * dx - cx) * rx + (uy + L * dy - cy) * ry else 2.0 * L
-                        if s < -0.02 * L or s > 1.02 * L:
-                            clamped[(w, first)] = edge_v[e][0] if s < 0 else edge_v[e][1]
-            report["clamped"] = [(w, first, v) for (w, first), v in clamped.items()]
-        if report is not None and report.get("detect_only"):
+            out += added[0] + [disc] + added[1]
+        return out
+
+    plain = {w: sleeve(w) for w in state.wire_path}
+    at = {w: {name(disc[4]): i for i, disc in reversed(list(enumerate(discs))) if disc[4] >= 0} for w, discs in plain.items()}
+    sleeves = {w: widened(w, at) for w in plain}
+    pull(sleeves, False)
+    if report is not None:
+        report["clamped"] = _clamped(state, lines, where, ends, d)
+        if report.get("detect_only"):
             return {}
-        ends_now = {e: list(row) for e, row in S.items() if kind[e] == TERMINAL}
-        return relax(state, board, tol, max_sweeps, arcs, spacing_scale, ends_now, slide - 1, report)
+    near = leaving()
+    again = {w: g for w, discs in sleeves.items() if (g := guarded(w, discs, near)) is not None}
+    if again:
+        pull(again, False)
+        near = leaving()
+        pull({w: guarded(w, sleeves[w], near) or sleeves[w] for w in again}, True)
 
     result: dict[int, Polyline] = {}
     pressed: list[tuple[int, bool, tuple[float, float]]] = []
-    for w, pts in wires.items():
-        body = [point(e, S[e][k]) for e, k in pts]
-        line = [body[0]]
-        steps = state.wire_path[w]
-        for i in range(1, len(body)):
-            if arcs:
-                line.extend(_corner_arc(state, w, steps[i - 1][0], steps[i], body[i - 1], body[i], radial))
-            line.append(body[i])
-        src, dst = ends[w]
-        line = [pmap.pad_centre[src]] + line + [pmap.pad_centre[dst]]
+    for w, line in lines.items():
         result[w] = _simplify(line)
         # Ends pressed against a corner of their pad edge (they could not move
         # round the pad because another wire of the same pad is in the way).
         for first in (True, False):
-            e, k = pts[0] if first else pts[-1]
-            L = frame[e][4]
-            if (S[e][k] < 1e-6 or S[e][k] > L - 1e-6) and len(line) > 3:
-                pressed.append((w, first, point(e, S[e][k])))
+            e = state.wire_path[w][0 if first else -1][0]
+            s = where[w][0 if first else 1]
+            if (s < 1e-6 or s > lens[e] - 1e-6) and len(result[w]) > 3:
+                pressed.append((w, first, point(e, s)))
     if pressed:
         _merge_pressed_ends(result, pressed, pmap, wire_net, half, board)
     return result
+
+
+def _arc(disc, come, go) -> Polyline:
+    """The part of a trace on one disc: from where it comes on to where it goes
+    off, as a polyline round the outside of the circle."""
+    cx, cy, r = disc[0], disc[1], disc[2]
+    if abs(r) < 1e-9:
+        return [(cx, cy)]
+    turn = 1.0 if r > 0 else -1.0  # a disc on the left is passed counter-clockwise
+    r = abs(r)
+    start = math.atan2(come[1] - cy, come[0] - cx)
+    span = (turn * (math.atan2(go[1] - cy, go[0] - cx) - start)) % (2.0 * math.pi)
+    if span > disc[4]:
+        span = 0.0  # barely touched: a hair's turn the other way
+    n = max(1, math.ceil(span / min(ARC_STEP, 2.0 * math.acos(r / (r + ARC_OUT)))))
+    out = r / math.cos(span / (2 * n))
+    mid = [(cx + out * math.cos(a), cy + out * math.sin(a)) for a in (start + turn * (j + 0.5) * span / n for j in range(n))]
+    return [tuple(come)] + mid + [tuple(go)]
+
+
+def _clamped(state: TopoState, lines, where, ends, pitch: float) -> list[tuple[int, bool, int]]:
+    """Ends pressed against a corner of their pad edge: the line from the pad
+    centre to where the wire is heading, once it has left the pad's
+    surroundings, misses the edge."""
+    pmap = state.map
+    found = []
+    for w, line in lines.items():
+        for first in (True, False):
+            e = state.wire_path[w][0 if first else -1][0]
+            u, v = pmap.edge_v_list[e]
+            (ux, uy), (wx, wy), L = pmap.vxy[u], pmap.vxy[v], pmap.edge_len_list[e]
+            dx, dy = (wx - ux) / L, (wy - uy) / L
+            s = where[w][0 if first else 1]
+            px, py = ux + s * dx, uy + s * dy
+            cx, cy = line[0 if first else -1]
+            at_via = pmap.edge_owner_list[e] in pmap.sites
+            # A via site's edge is microns long: look a trace width away at least.
+            ahead = max(0.5 * L, pitch) if at_via else 0.5 * L
+            far = next((q for q in (line[1:] if first else line[-2::-1]) if math.hypot(q[0] - px, q[1] - py) > ahead), None)
+            if far is None:
+                continue
+            rx, ry = far[0] - cx, far[1] - cy
+            den = dx * ry - dy * rx
+            if abs(den) < 1e-12:
+                continue
+            s = ((cx - ux) * ry - (cy - uy) * rx) / den
+            if at_via and ((ux - cx) * dy - (uy - cy) * dx) / -den < 0.0:
+                # The wire heads away from this edge of the via's hole (any
+                # of the three may have been the search's start): the line
+                # test above would name either end. Go round the nearer way.
+                s = -1.0 if (ux - cx) * rx + (uy - cy) * ry > (wx - cx) * rx + (wy - cy) * ry else 2.0 * L
+            if s < -0.02 * L or s > 1.02 * L:
+                found.append((w, first, u if s < 0 else v))
+    return found
 
 
 def _merge_pressed_ends(result, pressed, pmap, wire_net, half, board) -> None:
@@ -460,6 +372,7 @@ def _merge_pressed_ends(result, pressed, pmap, wire_net, half, board) -> None:
     lines = [LineString(result[w]) for w in ids]
     tree = shapely.STRtree(lines)
     rules = board.rules
+    vias = [p for p in board.pads_on(pmap.layer) if p.is_via]
     for w, first, corner in pressed:
         line = result[w]
         i = next((j for j, p in enumerate(line) if math.hypot(p[0] - corner[0], p[1] - corner[1]) < 1e-6), None)
@@ -477,7 +390,9 @@ def _merge_pressed_ends(result, pressed, pmap, wire_net, half, board) -> None:
         outside = seg if own is None else seg.difference(own)
         if not outside.is_empty and not free.contains(outside):
             continue
-        ok = True
+        # ... and clear of the vias, which are not part of the free space.
+        need = rules.clearance + rules.width(wire_net[w]) / 2.0
+        ok = all(p.net_id == wire_net[w] or seg.distance(p.shape) >= need for p in vias)
         for j in tree.query(seg, predicate="dwithin", distance=rules.pitch + 2 * max(half.values(), default=0.0) + 1e-3).tolist():
             other = ids[j]
             if other != w and wire_net[other] != wire_net[w]:
@@ -497,78 +412,6 @@ def _end_pad(pmap, line, first: bool):
     return None
 
 
-def _corner_arc(state: TopoState, w: int, prev_edge: int, step, a, b, radial) -> Polyline:
-    """A wire with r wires between it and a vertex of the triangle it crosses
-    must stay r pitches from that vertex. The chord between its two gate points
-    can dip inside that circle; replace the dip by a circumscribed polyline arc.
-
-    The vertex is the corner the wire cuts off, or the far end of its entry or
-    exit gate; the ranks come from the gate orders.
-    """
-    pmap = state.map
-    e, t, k, _ = step
-    c = pmap.tri_v_list[t][k]
-
-    def other(edge: int) -> int:
-        u, v = pmap.edge_v_list[edge]
-        return v if u == c else u
-
-    worst, worst_depth = None, 1e-9
-    for vertex, edge in ((c, e), (other(prev_edge), prev_edge), (other(e), e)):
-        rho = radial(edge, vertex, w)
-        if rho <= 1e-9:
-            continue
-        cx, cy = pmap.vxy[vertex]
-        depth = rho - _dist_point_segment(cx, cy, a[0], a[1], b[0], b[1])
-        if depth > worst_depth:
-            worst, worst_depth = (cx, cy, rho), depth
-    if worst is None:
-        return []
-    cx, cy, rho = worst
-    ax, ay, bx, by = a[0] - cx, a[1] - cy, b[0] - cx, b[1] - cy
-    da, db = math.hypot(ax, ay), math.hypot(bx, by)
-    if da < 1e-9 or db < 1e-9:
-        return []
-    ta, tb = math.atan2(ay, ax), math.atan2(by, bx)
-    delta = (tb - ta + math.pi) % (2 * math.pi) - math.pi
-    sign = 1.0 if delta >= 0 else -1.0
-    span = abs(delta) - math.acos(min(1.0, rho / da)) - math.acos(min(1.0, rho / db))
-    if span <= 1e-9:
-        return []  # the chord already clears the circle
-    n = max(1, math.ceil(span / ARC_STEP))
-    step_ang = span / n
-    radius = rho / math.cos(step_ang / 2.0)
-    start = ta + sign * math.acos(min(1.0, rho / da))
-    pts = []
-    for j in range(n):
-        ang = start + sign * (j + 0.5) * step_ang
-        pts.append((cx + radius * math.cos(ang), cy + radius * math.sin(ang)))
-    tri = [pmap.vxy[v] for v in pmap.tri_v_list[t]]
-    if not all(_in_triangle(p, tri) for p in pts):
-        return []  # would leave the triangle; leave the chord for DRC to judge
-    return pts
-
-
-def _at(S, slot):
-    e, k = slot
-    return e, S[e][k]
-
-
-def _dist_point_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
-    dx, dy = bx - ax, by - ay
-    n2 = dx * dx + dy * dy
-    t = 0.0 if n2 == 0.0 else min(1.0, max(0.0, ((px - ax) * dx + (py - ay) * dy) / n2))
-    return math.hypot(px - ax - t * dx, py - ay - t * dy)
-
-
-def _in_triangle(p, tri, eps: float = 1e-9) -> bool:
-    (x1, y1), (x2, y2), (x3, y3) = tri
-    d1 = (x2 - x1) * (p[1] - y1) - (y2 - y1) * (p[0] - x1)
-    d2 = (x3 - x2) * (p[1] - y2) - (y3 - y2) * (p[0] - x2)
-    d3 = (x1 - x3) * (p[1] - y3) - (y1 - y3) * (p[0] - x3)
-    return d1 >= -eps and d2 >= -eps and d3 >= -eps
-
-
 def _simplify(line: Polyline, eps: float = 1e-9) -> Polyline:
     """Drop duplicate and collinear points."""
     out: Polyline = []
@@ -584,10 +427,6 @@ def _simplify(line: Polyline, eps: float = 1e-9) -> Polyline:
             else:
                 break
         out.append(p)
-    if len(out) > 2:
-        # Gate crossings along a straight run are collinear only to within the
-        # relaxation tolerance: drop the ones within half a micron of the line.
-        out = [(x, y) for x, y in LineString(out).simplify(STRAIGHTEN, preserve_topology=False).coords]
     return out
 
 

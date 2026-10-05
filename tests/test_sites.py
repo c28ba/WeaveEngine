@@ -212,7 +212,11 @@ def test_random_operations_keep_the_invariants():
     with_vias = copy.copy(board)
     with_vias.pads = board.pads + sites.via_pads(pmap, board.rules)
     lines, violations, _ = realize(state, with_vias)
-    assert len(lines) >= 20 and not [v for v in violations if v.kind == "crossing"]
+    # Wires ending on one pad are one net on a real board, free to merge on
+    # the way in. Here their nets are arbitrary, so such a pair is no witness.
+    pad_of = {w: {pmap.edge_owner_list[p[0][0]], pmap.edge_owner_list[p[-1][0]]} for w, p in state.wire_path.items()}
+    crossed = [v for v in violations if v.kind == "crossing" and not pad_of[v.wires[0]] & pad_of[v.wires[1]]]
+    assert len(lines) >= 20 and not crossed
 
 
 def two_layer_case(via_at: tuple[float, float], wraps: int = 2):

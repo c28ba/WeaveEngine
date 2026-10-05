@@ -40,9 +40,10 @@ def disable(reason: str, detail: str = "") -> Status:
     global _status
     search_kernel.AVAILABLE = False
     search_kernel.WHY_NOT = reason
-    plain = getattr(relax_kernel.sweep, "py_func", None)
-    if plain is not None:
-        relax_kernel.sweep = plain
+    for name in ("pull", "reach", "lifts", "inside", "blocked", "heading"):
+        plain = getattr(getattr(relax_kernel, name), "py_func", None)
+        if plain is not None:
+            setattr(relax_kernel, name, plain)
     _status = Status(False, reason, detail)
     return _status
 
