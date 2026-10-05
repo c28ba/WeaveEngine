@@ -422,7 +422,37 @@ In this order. Each step is to be measured on `blinkSP1` before the next.
    - capacity with a margin, from what is measured then.
 
 
-### 12.6 Not in scope
+### 12.6 Which layer is a question about the whole board (experiment, to be built as M14d)
+
+**The thought.** A board's topology has two levels, and the router has been solving both with the tools of the second.
+- *Level 1, between connections:* which of them would cross, and so which must be on different layers. This is a property of the whole set at once, a colouring of a graph of crossings. Nothing about it is local.
+- *Level 2, within a layer:* which way each wire passes each obstacle and each other wire. This is what the triangulation, the gate orders and the search are for, and they do it well.
+
+Today level 1 is never posed. A crossing is not something the state can hold (7.2), so the search meets other wires only as walls. Which connection yields is decided by the order they happen to be routed in, one at a time, and rip-up revisits those decisions one at a time. Its currency is over-full gates, which is not what the conflict is about (12.4, finding 2). That is why it does not settle, and why the price of a via has no steady effect: the price is paid inside a process that is not choosing.
+
+Phase 1 already has the right shape for level 1: several ways per connection on the empty board, a table of which ways cross (`cross_count`), and one choice per connection made for all of them together. It works for through-hole boards, where a connection has ways on every layer (ALU: 236 and 173 wires on its two layers, no vias). It has nothing to choose on a surface-mount board, because every way it is given is on the one layer the pads are on.
+
+**The experiment** (`blinkSP1`, 2 seconds, nothing committed to the maps). For every connection: its single-layer ways as Phase 1 makes them (4 on average), plus one way "underneath" per other layer, found by the same search with that layer's gates favoured: down a via near one end, along the other layer, up a via near the other end. Then one way chosen per connection to minimise crossings, with a price per via.
+
+| | Crossing pairs | Vias |
+|---|---|---|
+| Every connection by its shortest single-layer way | 238 | 0 |
+| Best choice among single-layer ways only | 152 | 3 |
+| Best choice with the ways underneath as well | 5 | 53 |
+
+With the ways underneath, 31 connections go underneath, 9 connections are still in a crossing, and the total length is 787 mm (the file's own routing: 831 mm, 33 vias). Raising the price of a via from 20 to 60 against 100 per crossing gives 9 crossings and 45 vias: here the price does act, because it is paid where the choice is made.
+
+So 233 of the 238 crossings can be taken out before any wire is laid, by a choice that sees all connections. What is left for rip-up is a handful.
+
+The via count (53) is still above the file's routing (33). That routing puts more connections on the top layer at the cost of longer traces. The single-layer ways tried here are all within 50 % of the shortest (`alpha`), so the choice could not make that trade. A via beside a pad shared by all connections of its net was also tried as an explanation and is not one: it would save about 5 vias.
+
+**Plan (M14d).**
+1. Phase 1 makes ways underneath as well as single-layer ways, with the one search; the selection chooses among them as it does now, with `via_cost` in the score.
+2. Phase 2 commits the chosen ways (a way through vias is planned again on the current state with the same layer favoured, since its slots were found on the empty board).
+3. Measure: crossings left after selection, vias, and whether rip-up settles on what remains.
+4. Then the trade between vias and length: single-layer ways with longer detours among the candidates.
+
+### 12.7 Not in scope
 - Blind and buried vias: a site is on every layer.
 - Vias in pads (`via_at_smd`).
 
