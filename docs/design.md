@@ -202,6 +202,15 @@ From node `(h, p)` in triangle `t`, for each of the two other edges `b` of `t`:
 
 When no feasible path exists, run the same search with the feasibility check relaxed: if `r` exceeds `corner_cnt`, clamp `r` to the limit and add `cross_penalty * (r - limit)` to the cost, recording the wires of `a` lying in the violated range as the *blocking set*. The cheapest relaxed path tells you which wires to rip up (Phase 3, section 10).
 
+### 8.6 Seeds, reach and bound (for routes across layers, 12.3)
+
+There is one search (`topo/kernel.py` `astar`, read by `topo/search.py` `route`). It always runs on one layer. Three additions let a chain of them route across layers:
+- **Seeds.** Besides a pad's edges, it may start from points: (triangle, cost so far, x, y). A seed stands in the *middle cell* of its triangle, the part no wire has cut off, which is where a via site would be put. Its start nodes cross each edge of the triangle outwards at the slot between the wires cutting the two corners.
+- **Reach.** On the way it records, per triangle, the cheapest cost at which the middle cell was reached, and how. Because the search is A* with an admissible heuristic, every triangle through which a via could lead to a cheaper route has been reached by the time the goal is.
+- **Bound.** It gives up on anything that cannot cost less than a bound the caller already has.
+
+Without numba the same function runs as plain Python (there is no second implementation).
+
 ---
 
 ## 9. Cost model
@@ -283,9 +292,9 @@ Loop until zero overflow and zero unrouted, or the iteration limit:
 For each net, try alternative homotopy classes and accept a change if the **realised** length (section 13) of the whole board improves. Optionally simulated annealing over such moves.
 
 ### Where vias enter
-Today (prototype, 12.3): Phases 1 to 3 route every connection on a single layer. Vias come afterwards, in a separate step (`complete`), and the repair after DRC goes through that step again. This ordering is the prototype's main fault (12.4, finding 1).
+Nowhere in particular. Wherever a phase routes a connection it may get a route that changes layer (12.3): the fallback in Phase 2, every reroute in Phase 3 (also the relaxed search that names the wires to rip), the legal placement after it. A via is a cost in the search like length or congestion. Rip-up removes a connection whole, with its vias.
 
-Planned (12.5): there is no separate step. The search itself may change layer, at a cost per via, and Phases 1 to 4 all use it.
+Not yet: Phase 1 candidates are single-layer (on an empty map a via never pays), and Phase 4 leaves connections through vias as they are.
 
 ---
 
@@ -355,29 +364,23 @@ Known limits:
 - Capacity lowered by DRC feedback (`_penalise`) is overwritten when a site at that gate changes state or the gate is flipped.
 - `free_space` does not know about vias; only the end-straightening shortcut in relaxation reads it, and DRC checks its result.
 
-### 12.3 The prototype that decides where vias go (M14, built, to be reworked)
+### 12.3 Routes across layers (M14c, built)
 
-What is in the code today, on top of 12.2:
-- **Split connections** (`plan/context.py`). A connection that takes vias is replaced by children, each an ordinary connection ending on a via site. `Context.snapshot` and `restore` carry the splits and take the maps back with them.
-- **A search across layers** (`plan/vias.py` `_search`, `topo/kernel.py` `flood`). One flood per layer per via: each starts from every legal point the flood before could reach, at its cost so far plus `via_cost`. It returns the cheapest legal way through up to `max_vias` vias. On a test case its length equals the single-layer search's exactly. This part is sound.
-- **All or nothing** (`vias.connect`). The sites are made, the pieces routed; if anything does not fit, everything is taken out again (journal and log, 12.2).
-- **A separate step after rip-up** (`plan/ripup.py` `complete`). Rip-up runs without vias and stops early. `legalise` removes whatever over-fills a gate. Then each open connection gets a legal route, or vias, or room made by displacing the wires in its way; a displacement is kept only if fewer connections are open afterwards.
-- **Racing variants** hand their sites back through the map log (12.2); the parent replays it.
+**The route** (`plan/path.py` `find`). A chain of searches, one per layer the route runs on. The first starts at the connection's pad, on each layer the pad is on. Each later one starts from seeds (8.6): every point the search before reached on another layer where a via may legally be and has room among the wires, at its cost so far plus `via_cost`. The cheapest arrival over all chains of up to `max_vias` vias wins; more vias are tried even after a way is found, because the way with fewest vias is often a long way round. The pieces are read back from the searches' own records, so the plan is exact: there is no second search to turn it into wires.
 
-Patches that accumulated around it, each added after one measurement on one board, and each a sign of a missing idea rather than a solution:
+**Where a via may be.** Inside every layer's free space shrunk by the via's copper and clearance (worked out once, with a coarse grid for testing many points); clear of other vias; and really in the middle cell of its triangle on both layers, far enough from each corner for the keep-off and the wires cutting that corner. Candidate points are five per triangle reached.
 
-| Patch | What it stands in for |
-|---|---|
-| `spare`: a quarter pitch left free by late wires, growing each repair round | no margin in the capacity estimate |
-| a via's own trace "added back" to its spokes' capacity; capacity raised while searching for it (`lift`) | capacity is one number per gate and cannot tell whose wire it is |
-| three rules for how a trace leaves a via, half-pitch keep-off for a sleeping site, allowance for arc bulge | the via is a 2 µm hole standing in for a disc |
-| `complete` with its displacement rule, blocker limit and memo | vias could not live inside rip-up |
-| build a via, test it, undo it | the search does not know whether a via fits |
-| the older between-passes via code, still present | two via systems |
+**Committing it** (`Context.commit`). For each via in order: its site is made on every layer (12.2) without settling its edges, so that the rest of the plan is still good; the piece ending on it is extended across the site's nearest spoke to the hole and inserted. Then the sites' edges are settled (`legalise`), which carries all wires. If a via turns out not to fit (a gate beside it would be over-full, a later piece passes a triangle an earlier via went into, two pieces on one layer share a gate), everything is taken out again in reverse order and the route is planned once more without that point (`path.place`). A trace may over-fill a gate for rip-up to sort out; a via may not.
 
-### 12.4 What the prototype showed
+**The connection** then consists of pieces, each an ordinary connection from pad or via to via or pad, with the original as parent (`Connection.pieces`, `.sites`). `Context.rip` on any of them removes them all and deletes the vias from the maps (12.5 step 2).
 
-Measured with one variant on one worker. All results have zero design-rule violations (violators are dropped at the end).
+**Racing variants** hand their sites back through the map log (12.2); the parent replays it.
+
+What an earlier prototype had and this does not: a separate completion step after rip-up with its own displacement rule; a second, legality-only flood; spare capacity that grew with each repair round; capacity lifted while searching for a via's own trace; the older code that added vias between passes. About 740 lines fewer.
+
+### 12.4 What was measured
+
+Measured with one variant on one worker. All results have zero design-rule violations (violators are dropped at the end). The table and findings 1, 2, 4 and 5 are from the prototype that 12.3 replaced; "After M14c" below is the present code.
 
 | Board | No vias | Vias during the pass | Vias between passes (old) |
 |---|---|---|---|
@@ -394,6 +397,13 @@ Findings, from `blinkSP1` unless stated:
 4. **RAM Selector Tree is different**: there the failures are spacing between traces (25 of 311 without vias, 92 of 540 with), and widening the spacing of the offenders makes it much worse (38 violations on a layer become 131, then 207), because the gates have nothing to spare. That board has not been diagnosed further, by decision: work continues on `blinkSP1` only until it routes.
 5. **About 60 % of via attempts are built and undone**, because whether a via fits among the wires is only known after its edges are flipped.
 
+**After M14c** (`blinkSP1`, one variant, 9 s): 52 of 58 connections, 63 vias, no violations, the invariant intact after every commit and rip-up. The top layer carries about 70 wires and the bottom about 30, where before M14c the bottom carried 1.
+- **Completion** is past the target (51) and past both earlier attempts.
+- **Vias are far too many**: 63, against 33 in the file's own routing. Changing `via_cost` from 2 to 40 mm moves the result between 44 and 48 connections and 33 and 44 vias with no trend: the outcome is governed by how rip-up happens to go, not by the price.
+- **Rip-up still does not settle**: 23 to 36 rounds, over-full gates swinging between 0 and 65, then the over-fillers are removed. So finding 2 was only part of the story; vias inside rip-up made a solution possible but did not make rip-up find it steadily.
+- Part of the via count is structural: 30 connections cannot be routed on the top layer as the net decomposition stands, and each then needs two vias. The file's routing connects more on the top layer; it is not tied to a fixed set of pad pairs per net (section 11).
+- `Word of RAM`, which needs no via, now takes 6 (85 of 85, length ratio 1.08 against 1.12 without): a via is used wherever it is the cheaper way, which is not the same as wherever it is needed.
+
 ### 12.5 Plan for the rework
 
 In this order. Each step is to be measured on `blinkSP1` before the next.
@@ -404,10 +414,13 @@ In this order. Each step is to be measured on `blinkSP1` before the next.
    - **Logged like everything else**: a deletion rewinds and replays with creations and flips, so snapshots and raced variants are unaffected.
    - It is refused, changing nothing, when a wire that passes the polygon twice would have to cross one new edge twice (10 of 400 deletions in a trial with wires; 0 of 400 without). The site then stays asleep.
    - A first version, which flipped the site's spokes away until six were left (the reverse of creation), got stuck on 1 site in 40 for geometric reasons and was dropped.
-3. **One search.** The multi-layer search becomes the router's only search: candidates (Phase 1), commit, rip-up and refinement all route connections that may change layer, with a via priced like any other cost. Layers and vias are then chosen with the whole board in view. Rip-up rips whole connections; their vias are deleted (step 2). `complete`, the displacement rule and the between-passes code are removed.
-4. **Capacity with a margin**, decided from what is measured after steps 1 to 3, replacing `spare` and its growth.
+3. **One search. Done (M14c, 12.3 and 8.6).** The multi-layer search is the router's only search; `complete`, the displacement rule and the between-passes code are removed.
+4. **Open, in the order I would take them:**
+   - why rip-up does not settle now that a solution exists (12.4, after M14c);
+   - what a via should cost, and whether that cost belongs in Phase 1's global selection so that layers are assigned with the whole board in view;
+   - nets as trees grown from their own copper instead of fixed pad pairs (section 11), which decides how many connections need a via at all;
+   - capacity with a margin, from what is measured then.
 
-What is kept as it is: `topo/sites.py` (12.2), the flood, the split-connection model, the map log for raced variants.
 
 ### 12.6 Not in scope
 - Blind and buried vias: a site is on every layer.
@@ -470,8 +483,8 @@ A via's position is part of the geometry, not of the topology: moving a site ins
 weaveengine/
   io/        dsn.py  ses.py
   geom/      inflate.py  triangulate.py  capacity.py
-  topo/      planar_map.py  state.py  search.py  costs.py  barrier.py  runs.py
-  plan/      candidates.py  select.py  commit.py  ripup.py
+  topo/      planar_map.py  state.py  kernel.py  search.py  sites.py  costs.py  barrier.py  runs.py
+  plan/      context.py  path.py  candidates.py  select.py  commit.py  ripup.py
   realize/   relax.py  drc.py
   cli.py
 tests/       unit + property tests
@@ -481,7 +494,7 @@ bench/       board generators and the benchmark runner
 Key module contracts:
 - `planar_map.build(board) -> PlanarMap` (all arrays and tables, immutable after build)
 - `TopoState(planar_map)` with `insert(wire_id, steps)`, `remove(wire_id)`, `check_invariants()`
-- `search.route(state, net, costs, mode) -> steps | None` where `mode` is `normal`, `relaxed` or `corridor`
+- `search.route(pmap, state, src, dst, ...) -> Route | None` on one layer, where `mode` is `normal`, `relaxed` or `corridor`; `path.find(ctx, conn) -> Path | None` across layers; `Context.commit(conn, route or path) -> bool` and `Context.rip(wire)`
 - `runs.cross_count(pathA, pathB) -> int` (pure function over gate sequences)
 - `realize.relax(state) -> dict[wire_id, polyline]`
 
@@ -554,8 +567,8 @@ Keep a feature only if it improves completion or length ratio without disproport
 | M14 | Vias during the pass: prototype (12.3) | RAM Selector Tree connects everything in one pass with zero violations; other boards no worse. **Not met.** Built and measured (12.4): 383 of 400 with 206 vias on RAM Selector Tree, 37 of 59 with 33 vias on blinkSP1; ALU, Word of RAM and ulx3s not re-measured. To be reworked as M14a to M14d |
 | M14a | Pad-exit stub (12.5 step 1) | No clearance violation on blinkSP1 comes from a stub; connections routed without vias on blinkSP1 goes up from 26. **Done.** blinkSP1, one variant: violations at the first check 16 to 0 without vias and 30 to 5 with the prototype's vias; routed 26 to 28 without vias and 37 to 46 (42 vias) with. 78 of 965 pad edges on the top layer are restricted; one pad (U1-33, the pad under the chip) has no legal way out on its layer, so the board now counts 58 connections, not 59. Other boards not re-run, by decision |
 | M14b | Deleting a via site (12.5 step 2) | 10,000 random operations including deletions keep the invariant and the map's tables; a map with every site deleted equals the map before any was made, up to edge flips. **Done.** 10,000 operations with 220 deletions, none refused; with every site deleted the vertex, edge and triangle counts, the pad edges and the walls are those of the original map. 0.8 ms per deletion on the test grid. blinkSP1 routes as before (46 of 58, one variant) and no sleeping site is left in its maps |
-| M14c | One search across layers for every phase (12.5 step 3) | blinkSP1: at least 51 of 59 with no more than about 40 vias and zero violations; `complete` and the between-passes code deleted |
-| M14d | Capacity margin (12.5 step 4); then RAM Selector Tree, ALU, Word of RAM, ulx3s | The M14 criterion above |
+| M14c | One search across layers for every phase (12.5 step 3) | blinkSP1: at least 51 of 59 with no more than about 40 vias and zero violations; `complete` and the between-passes code deleted. **Partly met.** 52 of 58 with zero violations, and the old code is gone (the tree is about 740 lines shorter); but 63 vias, and the result swings with small changes (12.4). Other boards not re-measured except Word of RAM (85 of 85, now with 6 vias) |
+| M14d | The open questions of 12.5 step 4, on blinkSP1; then RAM Selector Tree, ALU, Word of RAM, ulx3s | blinkSP1 within reach of the file's own routing (51 or more connections, about 40 vias or fewer), steadily; the M14 criterion above; boards that need no via take none or nearly none |
 | M15 | Sliding vias (13.3) | Total length on RAM Selector Tree and ALU drops against M14 with the check still clean; added geometry time recorded |
 | M16 | Via reduction in Phase 4; flips while sliding (the flip itself exists since M13) if M15 shows vias pinned | Fewer vias at equal or shorter length on the benchmark boards |
 
@@ -588,12 +601,10 @@ Keep a feature only if it improves completion or length ratio without disproport
 | `pres_fac` | 0.5, x1.5 per round | present congestion weight |
 | `hist` increment | 1.0 per overflow unit | history growth |
 | `cross_penalty` (relaxed search) | 10 x median pad pitch | per violated crossing |
-| `via_cost` | 4 x median pad pitch | the detour, in mm, a via is worth. Prototype value: with 10 x (t + s) connections took four vias where one would do; still about three per connection (12.4) |
+| `via_cost` | 4 x median pad pitch | the detour, in mm, a via is worth. Not settled: on a fine-pitch board the median pad pitch is small (3.6 mm here on blinkSP1), and the result does not follow the price (12.4) |
 | `max_vias` | 4 | vias one connection may take |
-| `spare` | 0.25 pitch, +0.25 per repair round | room late wires leave on a gate. A patch (12.3), to be replaced (12.5 step 4) |
 | Site hole radius | 2 µm | size of a site in the map (12.2). Internal: `sites.SITE_RADIUS`. Not the via's drill, which is a rule (0.3 mm unless the DSN or the settings say otherwise) |
 | Via slide rounds / tolerance | 8 / 1 µm | stop condition of 13.3 |
-| `max_via_rounds` | 4 | only with vias between passes (`live_vias` off); to be removed with that code |
 | Slot cap per gate | 15 | search state limit |
 | Relaxation tolerance | 1e-4 mm | convergence |
 | Phase 3 iteration limit | 100 | stop condition |

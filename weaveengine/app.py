@@ -954,7 +954,7 @@ class MainWindow(QMainWindow):
         self.stats["showing"].setText("final result" + (f", {len(teardrops)} teardrops" if teardrops else ""))
         self.stats["race"].setText("–")
         self.progress.setValue(1000)
-        self.pass_label.setText(f"Finished after {stats['via_rounds'] + 1} pass(es)")
+        self.pass_label.setText("Finished")
         self.phase_label.setText(f"{stats['routed']} of {stats['connections']} connections routed")
         self.time_label.setText(f"took {clock(event['seconds'])}")
         self.say(f"Finished: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "

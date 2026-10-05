@@ -55,7 +55,7 @@ def _work(dsn_path: str, settings: Settings, events) -> None:
         events.put({"type": "board", "design": design})
         params = cost_params(settings, planar_map.build(design.board))
         result = route_board(design.board, params, settings.options(), seed=settings.seed,
-                             drc_rounds=settings.drc_rounds, max_via_rounds=settings.max_via_rounds,
+                             drc_rounds=settings.drc_rounds,
                              workers=settings.workers or None, events=events.put)
         summary = result.summary()
         events.put({"type": "done", "result": summary, "design": design, "seconds": time.time() - start,

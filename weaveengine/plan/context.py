@@ -1,5 +1,5 @@
 """Shared routing context: layers, connections, demand map, airwire index, barrier (Phase 0)."""
-import collections
+import copy
 import math
 import time
 from dataclasses import dataclass, field
@@ -9,6 +9,8 @@ from scipy.sparse.csgraph import minimum_spanning_tree
 
 from weaveengine import parallel
 from weaveengine.board import Board
+from weaveengine.plan.path import locate
+from weaveengine.topo import sites
 from weaveengine.topo.barrier import Barrier
 from weaveengine.topo.costs import CostParams
 from weaveengine.topo.planar_map import GATE, PlanarMap
@@ -32,13 +34,16 @@ class Connection:
     layer: int | None = None                         # where it is routed
     fails: int = 0
     dead: bool = False  # no path exists even with crossings allowed
-    rips: int = 0                                    # times it has been ripped up
-    # A connection that takes a via is split at the via's site into two
-    # children, each an ordinary connection ending on the site (12.3). While
-    # split it is not routed itself.
+    # A connection routed through vias (12.3) is made of pieces, one per layer
+    # it runs on: each an ordinary connection of its own, from pad or via to
+    # via or pad, with this one as its ``parent``. They come and go together.
+    pieces: tuple[int, ...] = ()                     # wire ids of the pieces, in order
+    sites: tuple[int, ...] = ()                      # pad ids of the vias between them
     parent: int | None = None
-    children: tuple[int, ...] = ()
-    site: int | None = None                          # pad id of the via joining the children
+
+    @property
+    def routed(self) -> bool:
+        return self.layer is not None or bool(self.pieces)
 
 
 class Layer:
@@ -87,8 +92,7 @@ class Options:
     demand: bool = True             # demand map (E4)
     ripup: bool = True              # Phase 3 (E5)
     refine: bool = True             # Phase 4: reroute each wire once, keep it if shorter
-    vias: bool = True               # insert via sites for connections that cannot be completed
-    live_vias: bool = True          # ... during the pass (12.2); False = only between passes, rebuilding the maps
+    vias: bool = True               # routes may change layer through vias (12.3)
     smooth: bool = True             # round sharp corners where the design rules leave room
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
@@ -123,137 +127,23 @@ class Context:
                 layers=tuple(l.index for l in layers if a in l.pmap.pad_edges and b in l.pmap.pad_edges))
         self.unrouted: set[int] = set(self.conns)
         self.rounds = 0
-        self.originals = len(self.conns)                 # wire ids 1..originals are the board's own connections
-        self.next_wire = len(self.conns) + 1             # ids of children; never reused
+        self.next_wire = len(self.conns) + 1             # ids of the pieces of connections through vias; never reused
         self.next_pad = max((p.pad_id for p in board.pads), default=-1) + 1   # pad ids of via sites
-        self.split_count = 0                             # vias tried, for the statistics
-        self.via_notes: collections.Counter = collections.Counter()   # how via attempts ended
+        self._legal = None
         self._setup()
 
-    # -- connections split at a via (12.3) -----------------------------------
+    # -- vias (12.3) -----------------------------------------------------------
     @property
-    def live_vias(self) -> bool:
-        return self.options.vias and self.options.live_vias and len(self.layers) > 1
+    def vias(self) -> bool:
+        return self.options.vias and len(self.layers) > 1
 
-    def root(self, wire_id: int) -> int:
-        """The board connection a wire belongs to."""
-        while self.conns[wire_id].parent is not None:
-            wire_id = self.conns[wire_id].parent
-        return wire_id
-
-    def depth(self, wire_id: int) -> int:
-        n = 0
-        while self.conns[wire_id].parent is not None:
-            wire_id, n = self.conns[wire_id].parent, n + 1
-        return n
-
-    def connected(self, wire_id: int) -> bool:
-        """Whether a connection is routed, itself or through all its children."""
-        conn = self.conns[wire_id]
-        if conn.children:
-            return all(self.connected(c) for c in conn.children)
-        return conn.layer is not None
-
-    def open_roots(self) -> list[int]:
-        return [w for w in range(1, self.originals + 1) if not self.connected(w)]
-
-    def _child(self, parent: Connection, src: int, dst: int) -> Connection:
-        pmap = self.layers[0].pmap
-        child = Connection(self.next_wire, parent.net_id, src, dst, weight=parent.weight, parent=parent.wire_id,
-                           air_len=math.dist(self.pad_centre(src), self.pad_centre(dst)),
-                           layers=tuple(l.index for l in self.layers if src in l.pmap.pad_edges and dst in l.pmap.pad_edges))
-        self.next_wire += 1
-        self.conns[child.wire_id] = child
-        self.unrouted.add(child.wire_id)
-        return child
-
-    def split(self, conn: Connection, site_pad: int) -> tuple[Connection, Connection]:
-        """Replaces an unrouted connection by two children joined at a via site."""
-        self.unrouted.discard(conn.wire_id)
-        self._demand(conn, -1.0)
-        for li, air in conn.airwire.items():
-            for g in air.gates:
-                self.layers[li].air_index[g].discard(conn.wire_id)
-        a, b = self._child(conn, conn.src, site_pad), self._child(conn, site_pad, conn.dst)
-        conn.children, conn.site = (a.wire_id, b.wire_id), site_pad
-        return a, b
-
-    def collapse(self, conn: Connection, delete: bool = True) -> None:
-        """Undoes a split whose children are all unrouted: the connection is open
-        again as a whole, and its via is taken out of the maps (``delete``
-        False: only put to sleep, for a caller that removes it another way)."""
-        from weaveengine.topo import sites
-        for w in conn.children:
-            child = self.conns[w]
-            if child.children:
-                self.collapse(child, delete)
-            self.unrouted.discard(w)
-            del self.conns[w]
-        for layer in self.layers:
-            site = layer.pmap.sites.get(conn.site)
-            if site is not None:
-                sites.set_net(layer.pmap, layer.state, site, -1)
-                if delete:
-                    sites.delete(layer.pmap, layer.state, site)
-        if delete:
-            self.maps_changed()
-        conn.children, conn.site = (), None
-        self.unrouted.add(conn.wire_id)
-        self._demand(conn, +1.0)
-        for li, air in conn.airwire.items():
-            for g in air.gates:
-                self.layers[li].air_index[g].add(conn.wire_id)
-
-    def collapse_idle(self) -> int:
-        """Collapses every split with nothing routed on it. Returns how many."""
-        n = 0
-        for w in sorted((w for w, c in self.conns.items() if c.children), reverse=True):
-            conn = self.conns.get(w)
-            if conn is not None and conn.children and all(
-                    self.conns[c].layer is None and not self.conns[c].children for c in conn.children):
-                self.collapse(conn)
-                n += 1
-        return n
-
-    def mark(self):
-        """A point ``rollback`` can return to: before trying via sites."""
-        from weaveengine.topo import sites
-        return [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]
-
-    def rollback(self, mark) -> None:
-        """Takes out the via sites made since ``mark`` (they did not fit),
-        putting every wire they moved back where it was."""
-        from weaveengine.topo import sites
-        for layer, (log_length, journal_length) in zip(self.layers, mark):
-            for w in sites.undo(layer.pmap, layer.state, log_length, journal_length):
-                if w in layer.state.wire_path:
-                    layer.paths[w] = path_from_steps(layer.pmap, layer.state.wire_path[w])
-
-    def keep(self) -> None:
-        """Accepts the via sites made since the last mark."""
-        from weaveengine.topo import sites
-        for layer in self.layers:
-            sites.journal(layer.state).clear()
-        self.maps_changed()
-
-    def abandon(self, conn: Connection, delete: bool = True) -> None:
-        """Takes a split connection's traces and vias out again, leaving it open as a whole."""
-        def leaves(c: Connection):
-            for w in c.children:
-                yield from leaves(self.conns[w])
-            if not c.children:
-                yield c
-        for leaf in list(leaves(conn)):
-            if leaf.layer is not None:
-                self.rip(leaf.wire_id)
-        if conn.children:
-            self.collapse(conn, delete)
-
-    def via_count(self, wire_id: int) -> int:
-        """Vias the board connection this wire belongs to has."""
-        def count(c: Connection) -> int:
-            return (1 if c.children else 0) + sum(count(self.conns[w]) for w in c.children)
-        return count(self.conns[self.root(wire_id)])
+    @property
+    def legal(self):
+        """Where a via may be (``plan.path.Legal``); worked out once."""
+        if self._legal is None:
+            from weaveengine.plan.path import Legal
+            self._legal = Legal(self)
+        return self._legal
 
     def pad_centre(self, pad: int) -> tuple[float, float]:
         for layer in self.layers:
@@ -261,24 +151,21 @@ class Context:
                 return layer.pmap.pad_centre[pad]
         raise KeyError(pad)
 
-    def maps_changed(self) -> None:
-        """After via sites were created: sizes of the per-gate tables, and the
-        stored gate paths of the wires the change moved."""
-        for layer in self.layers:
-            layer.demand += [0.0] * (layer.pmap.num_edges - len(layer.demand))
-            moved = layer.pmap.__dict__.pop("_moved_wires", ())
-            for w in moved:
-                if w in layer.state.wire_path:
-                    layer.paths[w] = path_from_steps(layer.pmap, layer.state.wire_path[w])
-
     def board_with_vias(self) -> Board:
-        """The board with the active via sites as pads (for realisation, DRC and output)."""
-        from weaveengine.topo import sites
-        import copy
+        """The board with the vias as pads (for realisation, DRC and output)."""
         board = copy.copy(self.board)
         have = {p.pad_id for p in self.board.pads}
         board.pads = self.board.pads + [p for p in sites.via_pads(self.layers[0].pmap, self.board.rules) if p.pad_id not in have]
         return board
+
+    def _maps_changed(self) -> None:
+        """After via sites came or went: sizes of the per-gate tables, and the
+        stored gate paths of the wires the change moved."""
+        for layer in self.layers:
+            layer.demand += [0.0] * (layer.pmap.num_edges - len(layer.demand))
+            for w in layer.pmap.__dict__.pop("_moved_wires", ()):
+                if w in layer.state.wire_path:
+                    layer.paths[w] = path_from_steps(layer.pmap, layer.state.wire_path[w])
 
     def _setup(self) -> None:
         """Phase 0: airwire paths and the demand map (9.2)."""
@@ -298,56 +185,148 @@ class Context:
                         layer.demand[g] += c.weight / len(c.layers)
 
     # -- bookkeeping shared by Phase 2 and 3 -------------------------------
-    def _demand(self, conn: Connection, sign: float) -> None:
+    def _waiting(self, conn: Connection, waiting: bool) -> None:
+        """Enters the connection among those still to be routed, or takes it
+        out: the unrouted set, the demand map (9.2) and the airwire index (9.4)."""
+        (self.unrouted.add if waiting else self.unrouted.discard)(conn.wire_id)
+        sign = 1.0 if waiting else -1.0
         for li, gates in conn.demand_gates.items():
             demand = self.layers[li].demand
             for g in gates:
                 demand[g] += sign * conn.weight / len(conn.layers)
-
-    def commit(self, conn: Connection, r: Route) -> None:
-        layer = self.layers[r.layer]
-        layer.state.insert(conn.wire_id, r.steps, conn.weight)
-        conn.layer = r.layer
-        self.unrouted.discard(conn.wire_id)
-        path = layer.paths[conn.wire_id] = path_from_steps(layer.pmap, r.steps)
-        self._own_room(conn, layer)
-        self._demand(conn, -1.0)
         for li, air in conn.airwire.items():
+            index = self.layers[li].air_index
             for g in air.gates:
-                self.layers[li].air_index[g].discard(conn.wire_id)
+                (index[g].add if waiting else index[g].discard)(conn.wire_id)
+
+    def _lay(self, conn: Connection, li: int, steps) -> None:
+        """Puts one wire into a layer's state."""
+        layer = self.layers[li]
+        layer.state.insert(conn.wire_id, steps, conn.weight)
+        conn.layer = li
+
+    def _laid(self, conn: Connection) -> None:
+        """Records a wire that is in its layer's state for good."""
+        layer = self.layers[conn.layer]
+        path = layer.paths[conn.wire_id] = path_from_steps(layer.pmap, layer.state.wire_path[conn.wire_id])
         self._weld(layer, conn, path)
 
+    def commit(self, conn: Connection, how) -> bool:
+        """Routes the connection as ``how`` says: a ``Route`` on one layer, or a
+        ``Path``, which may go through vias. The vias' sites are made in the
+        maps of every layer and the pieces put in exactly as planned.
+
+        Returns False, with nothing changed, if a via turns out not to fit
+        where it was planned: a trace may over-fill a gate for the rip-up to
+        sort out, but a via is copper that has to fit among the wires beside it.
+        """
+        routes, vias = (how.routes, how.vias) if hasattr(how, "routes") else ([how], [])
+        if not vias:
+            self._lay(conn, routes[0].layer, routes[0].steps)
+            self._laid(conn)
+            self._waiting(conn, False)
+            return True
+        # Each piece was planned as if the others were not there. Two on the
+        # same layer that use a gate in common might cross each other, and
+        # their places on that gate are not known: such a plan is not used.
+        used = [set() for _ in self.layers]
+        for r in routes:
+            if used[r.layer].intersection(r.gates):
+                return False
+            used[r.layer].update(r.gates)
+        keep = sites.keep_off(self.board.rules)
+        pads = [conn.src, *range(self.next_pad, self.next_pad + len(vias)), conn.dst]
+        pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id)
+                  for n in range(len(routes))]
+        def mark():
+            return [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]
+
+        def back_to(marks) -> None:
+            for l, m in zip(self.layers, marks):
+                sites.undo(l.pmap, l.state, *m)
+
+        before: list = []                                  # per via, the mark before its site was made
+        made: list[list] = []                              # per via, its site on each layer
+        split = [set() for _ in self.layers]               # triangles that have had a site put in them, per layer
+        laid: list[Connection] = []
+        settled = None
+        try:
+            for n, r in enumerate(routes):
+                if n < len(vias):  # the via this piece ends on: its site, on every layer
+                    point = vias[n]
+                    where = [int(locate(l.pmap, np.array([point]))[0]) for l in self.layers]
+                    if min(where) < 0 or not self.legal.exactly(*point):
+                        raise ValueError("no via there")
+                    before.append(mark())
+                    here = [sites.create(l.pmap, l.state, t, point, pad=pads[n + 1], settle=False) for l, t in zip(self.layers, where)]
+                    for l, site, t in zip(self.layers, here, where):
+                        sites.set_net(l.pmap, l.state, site, conn.net_id, keep)
+                        split[l.index].add(t)
+                    made.append(here)
+                layer = self.layers[r.layer]
+                steps = list(r.steps)
+                if any(step[1] in split[r.layer] for step in steps):
+                    raise ValueError("the plan passes a triangle one of its own vias went into")
+                if n > 0:
+                    steps[:1] = sites.leave(layer.pmap, layer.state, made[n - 1][r.layer], steps[0])
+                if n < len(vias):
+                    steps += sites.arrive(layer.pmap, layer.state, made[n][r.layer], steps[-1])
+                self._lay(pieces[n], r.layer, steps)
+                laid.append(pieces[n])
+            settled = mark()
+            for here in made:
+                for l, site in zip(self.layers, here):
+                    sites.refresh(l.pmap, l.state, site.pad)
+                    sites.legalise(l.pmap, l.state, site)
+            if any(l.state.overflow(e) for here in made for l, site in zip(self.layers, here) for e in site.spokes):
+                raise ValueError("a gate beside the via would be over-full")
+        except ValueError:
+            # Take everything out again, in the reverse of the order it went in:
+            # the settling of the sites' edges, then each piece and the site made for it.
+            if settled is not None:
+                back_to(settled)
+            for n in reversed(range(max(len(laid), len(before)))):
+                if n < len(laid):
+                    self.layers[laid[n].layer].state.remove(laid[n].wire_id)
+                if n < len(before):
+                    back_to(before[n])
+            self._maps_changed()
+            return False
+        for l in self.layers:
+            sites.journal(l.state).clear()
+        self._maps_changed()
+        self.next_wire += len(pieces)
+        self.next_pad += len(vias)
+        for piece in pieces:
+            piece.air_len = math.dist(self.pad_centre(piece.src), self.pad_centre(piece.dst))
+            self.conns[piece.wire_id] = piece
+            self._laid(piece)
+        conn.pieces, conn.sites = tuple(p.wire_id for p in pieces), tuple(pads[1:-1])
+        self._waiting(conn, False)
+        return True
+
     def rip(self, wire_id: int) -> None:
-        """Remove a wire. The barrier is not updated (append-only); rebuild it per round."""
+        """Removes the connection this wire belongs to: all its pieces, and its
+        vias from the maps. The barrier is not updated (append-only); rebuild it per round."""
         conn = self.conns[wire_id]
-        layer = self.layers[conn.layer]
-        layer.state.remove(wire_id)
-        del layer.paths[wire_id]
-        self._own_room(conn, layer)
-        conn.layer = None
-        conn.rips += 1
-        self.unrouted.add(wire_id)
-        self._demand(conn, +1.0)
-        for li, air in conn.airwire.items():
-            for g in air.gates:
-                self.layers[li].air_index[g].add(wire_id)
-
-    def _own_room(self, conn: Connection, layer: Layer) -> None:
-        """A via's own trace takes no room on the via's spokes: bring their capacity up to date."""
-        if layer.pmap.sites:
-            from weaveengine.topo import sites
-            for pad in (conn.src, conn.dst):
-                sites.refresh(layer.pmap, layer.state, pad)
-
-    def lift(self, conn: Connection, on: bool) -> None:
-        """While a route is being looked for that ends on a via: room for that
-        trace on the via's spokes, which it will not need once it is there."""
-        for layer in self.layers:
-            for pad in (conn.src, conn.dst):
+        if conn.parent is not None:
+            conn = self.conns[conn.parent]
+        for w in conn.pieces or (conn.wire_id,):
+            layer = self.layers[self.conns[w].layer]
+            layer.state.remove(w)
+            del layer.paths[w]
+            if w != conn.wire_id:
+                del self.conns[w]
+        for pad in conn.sites:
+            for layer in self.layers:
                 site = layer.pmap.sites.get(pad)
                 if site is not None:
-                    for e in site.spokes:
-                        layer.state.cap[e] += conn.weight if on else -conn.weight
+                    sites.set_net(layer.pmap, layer.state, site, -1)
+                    sites.delete(layer.pmap, layer.state, site)  # if it cannot be, it stays, asleep
+        if conn.sites:
+            self._maps_changed()
+        conn.layer, conn.pieces, conn.sites = None, (), ()
+        self._waiting(conn, True)
 
     def _weld(self, layer: Layer, conn: Connection, path: GatePath) -> None:
         pmap, state = layer.pmap, layer.state
@@ -366,26 +345,24 @@ class Context:
     def snapshot(self):
         """The routing as it stands: the states, how far each map's log of via
         sites had got, which sites are vias of which net, and the connections
-        that exist only because of a split."""
-        from weaveengine.topo import sites
-        tree = {w: (c.net_id, c.src, c.dst, c.weight, c.parent, c.children, c.site, c.fails, c.rips)
-                for w, c in self.conns.items() if c.parent is not None or c.children}
+        that are routed in pieces."""
         return {"states": [layer.state.snapshot() for layer in self.layers],
                 "caps": [(layer.state.cap.copy(), layer.state.hist.copy()) for layer in self.layers],
                 "logs": [len(sites.log(layer.pmap)) for layer in self.layers],
                 "vias": {s.pad: (s.net, s.keep) for s in self.layers[0].pmap.sites.values() if s.active},
-                "tree": tree, "next": (self.next_wire, self.next_pad)}
+                "pieces": {w: (c.pieces, c.sites, [(self.conns[p].src, self.conns[p].dst) for p in c.pieces])
+                           for w, c in self.conns.items() if c.pieces},
+                "next": (self.next_wire, self.next_pad)}
 
     def restore(self, snap, logs: list | None = None) -> None:
         """Restore every layer and recompute everything derived from the states.
-        The maps are taken back to where they were (sites created since are
-        removed). ``logs``, per layer, are log entries to do again first: those
-        of another copy of the maps, on which the snapshot was taken."""
-        from weaveengine.topo import sites
+        The maps are taken back to where they were (sites made since are
+        removed, sites deleted since are put back). ``logs``, per layer, are
+        log entries to do again first: those of another copy of the maps, on
+        which the snapshot was taken."""
         for i, (layer, s, length) in enumerate(zip(self.layers, snap["states"], snap["logs"])):
             if logs is not None:
-                have = len(sites.log(layer.pmap))
-                sites.replay(layer.pmap, logs[i][have:])
+                sites.replay(layer.pmap, logs[i][len(sites.log(layer.pmap)):])
             sites.rewind(layer.pmap, length)
             layer.pmap.__dict__.pop("_moved_wires", None)
             sites.journal(layer.state).clear()
@@ -394,34 +371,24 @@ class Context:
             layer.state.resize()   # the map's tables may have grown since the snapshot (they never shrink)
             sites.clear_free(layer.pmap, layer.state)
             for site in layer.pmap.sites.values():
-                net, keep = snap["vias"].get(site.pad, (-1, 0.0))
-                site.net, site.keep = net, keep
-                layer.pmap.pad_net[site.pad] = net
+                site.net, site.keep = snap["vias"].get(site.pad, (-1, 0.0))
+                layer.pmap.pad_net[site.pad] = site.net
             layer.paths = {w: path_from_steps(layer.pmap, steps) for w, steps in layer.state.wire_path.items()}
             layer.demand = [0.0] * layer.pmap.num_edges
             layer.air_index = {g: set() for g in layer.air_index}
-        for w in [w for w, c in self.conns.items() if c.parent is not None]:
-            del self.conns[w]
-        for c in self.conns.values():
-            c.children, c.site = (), None
+        self.conns = {w: c for w, c in self.conns.items() if c.parent is None}
         self.next_wire, self.next_pad = snap["next"]
-        for w, (net, src, dst, weight, parent, children, site, fails, rips) in snap["tree"].items():
-            if parent is None:
-                self.conns[w].children, self.conns[w].site = children, site
-                continue
-            self.conns[w] = Connection(
-                w, net, src, dst, weight=weight, parent=parent, children=children, site=site, fails=fails, rips=rips,
-                air_len=math.dist(self.pad_centre(src), self.pad_centre(dst)),
-                layers=tuple(l.index for l in self.layers if src in l.pmap.pad_edges and dst in l.pmap.pad_edges))
+        for c in list(self.conns.values()):
+            c.pieces, c.sites, ends = snap["pieces"].get(c.wire_id, ((), (), []))
+            for w, (src, dst) in zip(c.pieces, ends):
+                self.conns[w] = Connection(w, c.net_id, src, dst, weight=c.weight, parent=c.wire_id,
+                                           air_len=math.dist(self.pad_centre(src), self.pad_centre(dst)))
         for c in self.conns.values():
             c.layer = next((l.index for l in self.layers if c.wire_id in l.state.wire_path), None)
-        self.unrouted = {w for w, c in self.conns.items() if c.layer is None and not c.children}
-        for w in self.unrouted:
-            c = self.conns[w]
-            self._demand(c, +1.0)
-            for li, air in c.airwire.items():
-                for g in air.gates:
-                    self.layers[li].air_index[g].add(w)
+        self.unrouted = set()
+        for c in self.conns.values():
+            if c.parent is None and not c.routed:
+                self._waiting(c, True)
         self.rebuild_barrier()
 
     def report(self, phase: str, done: float = 0.0, total: float = 1.0) -> None:
@@ -456,13 +423,14 @@ class Context:
                     pts = [centre[conn.src]] + [mids[g] for g in path.gates] + [centre[conn.dst]]
                 wires.append((layer.index, conn.net_id, [(round(x, 3), round(y, 3)) for x, y in pts]))
         centre = self.pad_centre
+        total = sum(1 for c in self.conns.values() if c.parent is None)
         self.events({
             "type": "snapshot", "pass": self.pass_index, "variant": self.variant, "final": lines is not None,
             "wires": wires,
             "open": [(centre(self.conns[w].src), centre(self.conns[w].dst)) for w in self.unrouted],
             "vias": [p.centre for p in self.board.pads if p.is_via]
                     + [s.centre for s in self.layers[0].pmap.sites.values() if s.active],
-            "routed": self.originals - len(self.open_roots()), "total": self.originals,
+            "routed": total - len(self.unrouted), "total": total,
             "overflow": sum(len(l.state.overflowed_gates()) for l in self.layers),
             "rounds": self.rounds, "length": self.estimated_length(),
             "per_layer": {l.name: len(l.paths) for l in self.layers},

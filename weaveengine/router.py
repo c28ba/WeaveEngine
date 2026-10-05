@@ -9,10 +9,9 @@ from dataclasses import dataclass, field
 from weaveengine import parallel
 from weaveengine.board import Board, Pad
 from weaveengine.plan import candidates as cand_mod
-from weaveengine.plan import vias as via_mod
 from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
-from weaveengine.plan.ripup import complete, legalise, negotiate, refine
+from weaveengine.plan.ripup import legalise, negotiate, refine
 from weaveengine.plan.select import select
 from weaveengine.realize.relax import polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
@@ -62,85 +61,32 @@ class Result:
 
 
 def route_board(board: Board, params: CostParams | None = None, options: Options | None = None, seed: int = 0,
-                drc_rounds: int = 4, drop_violators: bool = True, max_via_rounds: int = 4,
+                drc_rounds: int = 4, drop_violators: bool = True,
                 workers: int | None = None, progress=None, events=None) -> Result:
     """Routes the board.
 
     ``workers``: processes to use (None = all cores, 1 = none besides this one);
     the result does not depend on it. ``progress``: optional callable
-    (phase, done, total), called as the work advances; ``phase`` starts with
-    "pass N: " for the N-th routing pass (a new pass starts whenever vias are added).
+    (phase, done, total), called as the work advances.
     ``events``: optional callable taking a dict, for live front ends: progress,
-    snapshots of the routing as it grows, and pass results, from every raced
-    variant (see ``weaveengine.session`` for the event types).
+    snapshots of the routing as it grows, and the result of the pass, from every
+    raced variant (see ``weaveengine.session`` for the event types).
     """
     t0 = time.perf_counter()
     options = options or Options()
-    work = copy.copy(board)
-    work.pads = list(board.pads)
-    pairs = origins = None
-    best = None
-    via_rounds = 0
-    while True:
-        layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(
-            work.layers, parallel.run(_build_task, work, range(len(work.layers)), workers)))]
-        if pairs is None:
-            pairs, buried = decompose(work, layers)
-            origins = list(range(len(pairs)))
-        run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
-        label = f"pass {via_rounds + 1}: "
-        ctx = Context(work, layers, pairs, run_params, options, seed, workers,
-                      (lambda phase, done=0.0, total=1.0: progress(label + phase, done, total)) if progress else None,
-                      events)
-        ctx.pass_index = via_rounds + 1
-        lines, violations, wire_net = _route_portfolio(ctx, drc_rounds, drop_violators)
-        if events is not None:
-            ctx.variant = -1  # the outcome of the pass, whichever variant it came from
-            ctx.emit_snapshot(force=True, lines=lines)
-            events({"type": "pass", "pass": via_rounds + 1, "open": len(ctx.open_roots()), "connections": ctx.originals,
-                    "vias": sum(1 for p in ctx.board_with_vias().pads if p.is_via)})
-        broken = {origins[w - 1] for w in ctx.open_roots()}
-        done = len(set(origins)) - len(broken)
-        key = (done, -sum(1 for p in work.pads if p.is_via))
-        if best is None or key > best[0]:
-            best = (key, ctx, lines, violations, wire_net, copy.copy(work), list(work.pads), list(origins))
-        # Vias are normally placed during the pass (12.2). The older way, below,
-        # adds them between passes and rebuilds the maps; it is used only when
-        # that is switched off.
-        if not ctx.unrouted or not options.vias or ctx.live_vias or len(layers) < 2 or via_rounds >= max_via_rounds:
-            break
-
-        # Split every connection that is still open at a via site and route again.
-        taken = [p.centre for p in work.pads if p.is_via]
-        new_pairs, new_origins, added = [], [], 0
-        ctx.report("placing vias")
-        open_ids = [i + 1 for i in range(len(pairs)) if i + 1 in ctx.unrouted]
-        guess = dict(zip(open_ids, parallel.run(_propose_task, (ctx, list(taken)), open_ids, workers)))
-        spacing = work.rules.via_diameter + work.rules.clearance + work.rules.pitch
-        for i, pair in enumerate(pairs):
-            conn = ctx.conns[i + 1]
-            at = guess.get(conn.wire_id)
-            if at is not None and any(math.dist(at, t) < spacing for t in taken):
-                at = via_mod.propose(ctx, conn, taken)  # too close to a via placed just before: look again
-            if at is None:
-                new_pairs.append(pair)
-                new_origins.append(origins[i])
-                continue
-            via = via_mod.add_via(work, conn.net_id, at)
-            taken.append(at)
-            new_pairs += [(conn.net_id, conn.src, via), (conn.net_id, via, conn.dst)]
-            new_origins += [origins[i], origins[i]]
-            added += 1
-        if not added:
-            break
-        pairs, origins = new_pairs, new_origins
-        via_rounds += 1
-
-    key, ctx, lines, violations, wire_net, work, pads, origins = best
-    work.pads = pads
-    # Vias made during the pass become pads of the result.
-    have = {p.pad_id for p in work.pads}
-    work.pads = work.pads + [p for p in sites.via_pads(ctx.layers[0].pmap, work.rules) if p.pad_id not in have]
+    layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(
+        board.layers, parallel.run(_build_task, board, range(len(board.layers)), workers)))]
+    pairs, buried = decompose(board, layers)
+    run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
+    ctx = Context(board, layers, pairs, run_params, options, seed, workers,
+                  (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events)
+    lines, violations, wire_net = _route_portfolio(ctx, drc_rounds, drop_violators)
+    work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
+    if events is not None:
+        ctx.variant = -1  # the outcome of the pass, whichever variant it came from
+        ctx.emit_snapshot(force=True, lines=lines)
+        events({"type": "pass", "pass": 1, "open": len(ctx.unrouted), "connections": len(pairs),
+                "vias": sum(1 for p in work.pads if p.is_via)})
     t_route = time.perf_counter()
 
     wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None}
@@ -169,11 +115,12 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     routed = sorted(wire_layer)
     air = sum(ctx.conns[w].air_len for w in routed)
     length = sum(polyline_length(lines[w]) for w in routed)
-    total = len(set(origins))
+    total = len(pairs)
+    done = total - len(ctx.unrouted)
     stats = {
         "connections": total,
-        "routed": key[0],
-        "completion": key[0] / total if total else 1.0,
+        "routed": done,
+        "completion": done / total if total else 1.0,
         "wires": len(routed),
         "vias": len(vias),
         "length": length,
@@ -182,9 +129,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "ripup_rounds": ctx.rounds,
         "corners_rounded": smoothed[0],
         "corners_left_sharp": smoothed[1],
-        "via_rounds": via_rounds,
         "via_sites": len(ctx.layers[0].pmap.sites),
-        "vias_tried": ctx.split_count,
         "buried_pads": buried,
         "wires_per_layer": {l.name: sum(1 for li in wire_layer.values() if li == l.index) for l in ctx.layers},
         "time_route": t_route - t0,
@@ -231,13 +176,12 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool):
         if outcomes and complete(outcomes[-1]):
             break
     best = len(outcomes) - 1 if outcomes[-1][0][:2] == (0, 0) else min(range(len(outcomes)), key=lambda i: (outcomes[i][0], i))
-    _, snaps, caps, hists, pres, flags, rounds, lines, violations, wire_net, logs, tried = outcomes[best]
+    _, snaps, caps, hists, pres, flags, rounds, lines, violations, wire_net, logs = outcomes[best]
     ctx.restore(snaps, logs)  # the variant's via sites are made again on this copy of the maps
     for layer, cap, hist in zip(ctx.layers, caps, hists):
         layer.state.cap, layer.state.hist = cap.copy(), hist.copy()
     ctx.params.pres_fac = pres
     ctx.rounds = rounds
-    ctx.split_count = tried
     for w, (fails, dead) in flags.items():
         ctx.conns[w].fails, ctx.conns[w].dead = fails, dead
     ctx.report("variant %d of %d kept" % (best + 1, count), 1.0, 1.0)
@@ -256,10 +200,10 @@ def _variant_task(shared, index: int):
         lines, violations, wire_net = _route_once(ctx, drc_rounds, drop_violators)
     except parallel.Stopped:
         return None  # an earlier variant already connected everything
-    key = (len(ctx.open_roots()), len(violations), round(sum(polyline_length(l) for l in lines.values()), 6))
+    key = (len(ctx.unrouted), len(violations), round(sum(polyline_length(l) for l in lines.values()), 6))
     return (key, ctx.snapshot(), [l.state.cap.copy() for l in ctx.layers], [l.state.hist.copy() for l in ctx.layers],
             ctx.params.pres_fac, {w: (c.fails, c.dead) for w, c in ctx.conns.items()}, ctx.rounds,
-            lines, violations, wire_net, [sites.log(l.pmap) for l in ctx.layers], ctx.split_count)
+            lines, violations, wire_net, [sites.log(l.pmap) for l in ctx.layers])
 
 
 def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
@@ -280,7 +224,6 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
     if opts.ripup:
         negotiate(ctx)
     legalise(ctx)
-    complete(ctx)  # vias for what no single layer could connect (12.4)
     # Phase 4: topology refinement.
     if opts.refine:
         ctx.report("refinement")
@@ -296,14 +239,9 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
         if not _penalise(ctx, violations):
             break
         ctx.report("design-rule repair", fix, drc_rounds)
-        # With vias on the board the repair stays legal throughout: negotiating
-        # again would tear the vias' traces out and start over.
-        if opts.ripup and not any(c.children for c in ctx.conns.values()):
+        if opts.ripup:
             negotiate(ctx, max_rounds=ctx.rounds + 5)
-        elif ctx.live_vias:
-            ctx.params.spare += 0.25  # what is placed again leaves more room each time round
         legalise(ctx)
-        complete(ctx)
         lines, violations, wire_net = _realize(ctx)
     # Whatever still violates is not a routed connection: drop it.
     while violations and drop_violators:
@@ -312,7 +250,8 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
             if not dropped.intersection(v.wires):
                 dropped.add(max(v.wires))
         for w in dropped:
-            ctx.rip(w)
+            if w in ctx.conns:  # not a piece of a connection ripped up a moment ago
+                ctx.rip(w)
         lines, violations, wire_net = _realize(ctx)
     ctx.emit_snapshot(force=True, lines=lines)
     return lines, violations, wire_net
@@ -344,11 +283,6 @@ def _realize_task(ctx: Context, index: int):
 
 def _build_task(board: Board, index: int) -> PlanarMap:
     return planar_map.build(board, index)
-
-
-def _propose_task(shared, wire_id: int):
-    ctx, taken = shared
-    return via_mod.propose(ctx, ctx.conns[wire_id], taken)
 
 
 def _smooth_task(shared, task):

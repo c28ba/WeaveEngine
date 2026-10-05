@@ -4,6 +4,7 @@ import math
 from weaveengine import parallel
 from weaveengine.plan.candidates import Candidate, best_route, replay
 from weaveengine.plan.context import Context
+from weaveengine.plan.path import Path, place
 from weaveengine.topo.search import Route, route
 
 
@@ -46,25 +47,26 @@ def commit_all(ctx: Context, cands: dict[int, list[Candidate]], selection: dict[
             conn = ctx.conns[w]
             if r is not None and i > 0:
                 r = replay(ctx, conn, r) or _place_task((ctx, cands, selection), w)
-            if r is None:
+            if not place(ctx, conn, r):
                 failed.append(w)
                 continue
-            ctx.commit(conn, r)
-            for g in r.gates:
-                dirty |= users.get((r.layer, g), set())
+            for piece in r.routes:
+                for g in piece.gates:
+                    dirty |= users.get((piece.layer, g), set())
         for d in dirty & pending:  # only regrets touched by these commits
             regrets[d] = regret(d)
         ctx.report("commit", total - len(pending), total)
     return failed
 
 
-def _place_task(shared, w: int) -> Route | None:
+def _place_task(shared, w: int) -> Path | None:
     ctx, cands, selection = shared
     chosen = cands[w][selection[w]] if w in selection and cands.get(w) else None
-    return _place(ctx, ctx.conns[w], chosen)
+    found = _place(ctx, ctx.conns[w], chosen)
+    return Path.on_one_layer(found) if isinstance(found, Route) else found
 
 
-def _place(ctx: Context, conn, chosen: Candidate | None) -> Route | None:
+def _place(ctx: Context, conn, chosen: Candidate | None):
     params = ctx.params
     if chosen is not None:
         # 1. Replay the selected gate sequence through the feasibility rules.

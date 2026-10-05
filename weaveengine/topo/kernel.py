@@ -1,8 +1,7 @@
-"""Compiled A* kernel for the slot-aware search (design sections 3, 8 and 19.7).
-
-The same algorithm as the pure-Python loop in ``search.py``, on flat arrays and
-compiled with numba. numba is optional: without it (or with the environment
-variable WEAVEENGINE_NO_NUMBA set) the Python loop is used.
+"""The search kernel (design sections 3, 8 and 19.7): the slot-aware A* on flat
+arrays, compiled with numba. numba is optional: without it (or with the
+environment variable WEAVEENGINE_NO_NUMBA set) the same functions run as plain
+Python, with the same results, only slower.
 """
 import os
 import sys
@@ -114,26 +113,59 @@ class Tables:
 
 
 @njit(cache=True, nogil=True)
-def astar(starts, dst_pad, tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, mid,
+def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, edge_v, edge_t,
+          tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
-          relaxed, pres, use_hist, cross_pen, hard_cap, weight, tx, ty, rad, hw,
-          g, parent, parent_tr, banned, touched, heap_f, heap_g, heap_n):
-    """Returns (goal node or -1 if none or -2 if the heap overflowed, cost, nodes touched).
-    ``g``/``parent`` are left filled for the caller to read the path, which must
-    then reset the first ``touched`` entries."""
+          relaxed, pres, use_hist, cross_pen, hard_cap, weight, tx, ty, rad, hw, bound,
+          g, parent, parent_tr, banned, touched, heap_f, heap_g, heap_n, best, best_node):
+    """The one search (design section 8). Cheapest way to ``dst_pad``.
+
+    It starts from the pad edges ``starts`` (cost 0) and from seeds: a point in
+    the middle cell of triangle ``seed_tri[i]`` at ``seed_cost[i]`` (a via from
+    another layer; the middle cell is the part of a triangle no wire has cut
+    off). ``parent`` of a seed's first node is -2 - i.
+
+    Returns (goal node, or -1 if none, or -2 if the heap overflowed; cost;
+    nodes touched). ``g``/``parent`` are left filled for the caller to read
+    paths, which must then reset the first ``touched`` entries. ``best`` and
+    ``best_node`` are filled, per triangle, with the cheapest cost at which
+    its middle cell was reached and the node where: every triangle a via
+    could usefully go in has been reached by the time the goal is. The search
+    gives up on anything that cannot cost less than ``bound``.
+    """
     n_touched = 0
     size = 0
     limit = heap_f.shape[0]
-    for si in range(starts.shape[0]):
-        e = starts[si]
-        n = count[e]
+    for si in range(starts.shape[0] + seed_tri.shape[0] * 3):
+        if si < starts.shape[0]:
+            e = starts[si]
+            n = count[e]
+            first, last, root, c = 0, n, -1, 0.0
+            node0 = (2 * e) * SLOTS
+            over = load[e] + weight - cap[e] if n > 0 else 0.0   # one wire always fits its own pad edge
+        else:
+            sj = (si - starts.shape[0]) // 3
+            t = seed_tri[sj]
+            e = tri_e[t, (si - starts.shape[0]) % 3]
+            n = count[e]
+            side = 1 if edge_t[e, 0] == t else 0
+            if si - starts.shape[0] == 3 * sj and seed_cost[sj] < best[t]:
+                best[t] = seed_cost[sj]
+                best_node[t] = -2 - sj
+            if kind[e] != 0 or edge_t[e, side] < 0:
+                continue
+            u = edge_v[e, 0]
+            ku = 0 if tri_v[t, 0] == u else (1 if tri_v[t, 1] == u else 2)
+            first = last = corner[t, ku]  # the middle of the gate, seen from inside the triangle
+            root = -2 - sj
+            c = seed_cost[sj] + np.hypot(mid[e, 0] - seed_x[sj], mid[e, 1] - seed_y[sj])
+            node0 = (2 * e + side) * SLOTS
+            over = load[e] + weight - cap[e]
         if n >= SLOTS - 1 or (use_corridor and corridor[e] == 0):
             continue
-        over = load[e] + weight - cap[e] if n > 0 else 0.0
-        if over > 1e-9 and hard_cap:
-            continue
-        c = 0.0
         if over > 1e-9:
+            if hard_cap:
+                continue
             c += pres * (over if over > 1.0 else 1.0)
         if use_hist:
             c += hist[e]
@@ -141,15 +173,17 @@ def astar(starts, dst_pad, tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, 
             c += penalty[e]
         h = np.hypot(mid[e, 0] - tx, mid[e, 1] - ty) - rad
         h = 0.0 if h < 0.0 else h * hw
-        for p in range(n + 1):
-            node = (2 * e) * SLOTS + p
-            if banned[node]:
+        for p in range(first, last + 1):
+            node = node0 + p
+            if banned[node] or c >= g[node]:
                 continue
+            if g[node] == np.inf:
+                touched[n_touched] = node
+                n_touched += 1
             g[node] = c
-            parent[node] = -1
-            touched[n_touched] = node
-            n_touched += 1
-            # push
+            parent[node] = root
+            if size >= limit:
+                return -2, 0.0, n_touched
             i = size
             size += 1
             f = c + h
@@ -162,6 +196,8 @@ def astar(starts, dst_pad, tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, 
             heap_f[i], heap_g[i], heap_n[i] = f, c, node
 
     while size > 0:
+        if heap_f[0] >= bound:
+            break  # nothing left that could beat what the caller already has
         gn = heap_g[0]
         node = heap_n[0]
         # pop
@@ -188,6 +224,12 @@ def astar(starts, dst_pad, tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, 
         if (he & 1) == 1 and kind[e] == 2:
             return node, gn, n_touched
         ne = count[e]
+        if tn[he] > 0:
+            t = tt[he, 0]
+            r = p if tcue[he, 0] else ne - p
+            if r == corner[t, tk[he, 0]] and gn < best[t]:
+                best[t] = gn
+                best_node[t] = node
         for j in range(tn[he]):
             b = tb[he, j]
             if kind[b] == 2 and owner[b] != dst_pad:
@@ -241,139 +283,7 @@ def astar(starts, dst_pad, tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, 
     return -1, 0.0, n_touched
 
 
-@njit(cache=True, nogil=True)
-def flood(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, edge_v, edge_t,
-          tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, mid, count, corner, load, cap, weight,
-          g, label, touched, heap_f, heap_n, best, origin, goal):
-    """Cheapest legal length to the middle cell of every triangle that can be
-    reached without crossing a wire or over-filling a gate (design 12.4). The
-    middle cell is the part of a triangle no wire has cut off, where a via
-    site would be put.
-
-    The search starts from the pad edges ``starts`` (cost 0) and from seeds: a
-    point in the middle cell of triangle ``seed_tri[i]`` at ``seed_cost[i]``
-    (a via from another layer). Fills, per triangle, ``best`` and ``origin``
-    (the seed the cheapest way came from; -1 = a pad edge), and ``goal`` with
-    the cost and origin of the cheapest arrival at ``dst_pad``.
-    Returns the number of ``g`` entries touched, or -1 if the heap overflowed."""
-    n_touched = 0
-    size = 0
-    limit = heap_f.shape[0]
-    for si in range(starts.shape[0]):
-        e = starts[si]
-        n = count[e]
-        if n >= SLOTS - 1 or (n > 0 and load[e] + weight - cap[e] > 1e-9):
-            continue
-        for p in range(n + 1):
-            node = (2 * e) * SLOTS + p
-            if g[node] == np.inf:
-                touched[n_touched] = node
-                n_touched += 1
-            g[node] = 0.0
-            label[node] = -1
-            if size >= limit:
-                return -1
-            heap_f[size], heap_n[size] = 0.0, node
-            size += 1
-    for si in range(seed_tri.shape[0]):
-        t = seed_tri[si]
-        c0 = seed_cost[si]
-        if c0 < best[t]:
-            best[t] = c0
-            origin[t] = si
-        for k in range(3):
-            e = tri_e[t, k]
-            nb = count[e]
-            c = c0 + np.hypot(mid[e, 0] - seed_x[si], mid[e, 1] - seed_y[si])
-            if kind[e] == 2:
-                if owner[e] == dst_pad and not (nb > 0 and load[e] + weight - cap[e] > 1e-9) and c < goal[0]:
-                    goal[0], goal[1] = c, si
-                continue
-            side = 1 if edge_t[e, 0] == t else 0
-            if kind[e] != 0 or edge_t[e, side] < 0 or nb >= SLOTS - 1 or load[e] + weight - cap[e] > 1e-9:
-                continue
-            u = edge_v[e, 0]
-            ku = 0 if tri_v[t, 0] == u else (1 if tri_v[t, 1] == u else 2)
-            node = (2 * e + side) * SLOTS + corner[t, ku]  # the middle of the gate, seen from inside t
-            if c < g[node]:
-                if g[node] == np.inf:
-                    touched[n_touched] = node
-                    n_touched += 1
-                g[node] = c
-                label[node] = si
-                if size >= limit:
-                    return -1
-                i = size
-                size += 1
-                while i > 0:
-                    up = (i - 1) >> 1
-                    if heap_f[up] <= c:
-                        break
-                    heap_f[i], heap_n[i] = heap_f[up], heap_n[up]
-                    i = up
-                heap_f[i], heap_n[i] = c, node
-    while size > 0:
-        gn = heap_f[0]
-        node = heap_n[0]
-        size -= 1
-        if size > 0:
-            f, nd = heap_f[size], heap_n[size]
-            i = 0
-            while True:
-                child = 2 * i + 1
-                if child >= size:
-                    break
-                if child + 1 < size and heap_f[child + 1] < heap_f[child]:
-                    child += 1
-                if heap_f[child] >= f:
-                    break
-                heap_f[i], heap_n[i] = heap_f[child], heap_n[child]
-                i = child
-            heap_f[i], heap_n[i] = f, nd
-        if gn > g[node]:
-            continue
-        he = node // SLOTS
-        p = node - he * SLOTS
-        ne = count[he >> 1]
-        if tn[he] > 0:
-            t = tt[he, 0]
-            r = p if tcue[he, 0] else ne - p
-            if r == corner[t, tk[he, 0]] and gn < best[t]:
-                best[t] = gn
-                origin[t] = label[node]
-        for j in range(tn[he]):
-            b = tb[he, j]
-            nxt = tnxt[he, j]
-            nb = count[b]
-            r = p if tcue[he, j] else ne - p
-            if r > corner[tt[he, j], tk[he, j]]:
-                continue
-            c = gn + tlen[he, j]
-            if kind[b] == 2:
-                if owner[b] == dst_pad and not (nb > 0 and load[b] + weight - cap[b] > 1e-9) and c < goal[0]:
-                    goal[0], goal[1] = c, label[node]
-                continue
-            if nxt < 0 or nb >= SLOTS - 1 or load[b] + weight - cap[b] > 1e-9:
-                continue
-            nn = nxt * SLOTS + (r if tcub[he, j] else nb - r)
-            if c < g[nn]:
-                if g[nn] == np.inf:
-                    touched[n_touched] = nn
-                    n_touched += 1
-                g[nn] = c
-                label[nn] = label[node]
-                if size >= limit:
-                    return -1
-                i = size
-                size += 1
-                while i > 0:
-                    up = (i - 1) >> 1
-                    if heap_f[up] <= c:
-                        break
-                    heap_f[i], heap_n[i] = heap_f[up], heap_n[up]
-                    i = up
-                heap_f[i], heap_n[i] = c, nn
-    return n_touched
+astar_plain = getattr(astar, "py_func", astar)  # the same search as plain Python: the fallback if the compiled one fails
 
 
 @njit(cache=True, nogil=True)

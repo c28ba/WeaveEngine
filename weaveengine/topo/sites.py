@@ -83,12 +83,15 @@ def incentre(pmap: PlanarMap, t: int) -> tuple[float, float]:
 
 
 def create(pmap: PlanarMap, state: TopoState, t: int, point: tuple[float, float], pad: int | None = None,
-           radius: float = SITE_RADIUS) -> Site:
+           radius: float = SITE_RADIUS, settle: bool = True) -> Site:
     """Puts a dormant site at ``point`` inside triangle ``t`` and returns it.
 
     ``state`` is the topological state on this map; its wires through ``t``
     are carried over. Raises ValueError if the point is too close to an edge
-    of the triangle to hold the hole.
+    of the triangle to hold the hole. ``settle`` False leaves the edges round
+    the site as they are (the caller calls ``legalise`` when it is ready: until
+    then every path planned on the map before the site is still good outside
+    that one triangle).
     """
     site = _create_map(pmap, t, point, pad, radius)
     state.resize()
@@ -97,8 +100,34 @@ def create(pmap: PlanarMap, state: TopoState, t: int, point: tuple[float, float]
     for e in site.hole:
         state.cap[e] = pmap.edge_width[e] / pmap.pitch + 1.0
     _carry_wires(pmap, state, site)
-    legalise(pmap, state, site)
+    if settle:
+        legalise(pmap, state, site)
     return site
+
+
+def _door(pmap: PlanarMap, state: TopoState, site: Site, gate: int):
+    """For a wire that comes to (or leaves) a new site across ``gate``, an edge
+    of the triangle the site was put in: the spoke it crosses next, its place
+    on that spoke, the two triangles it passes, and the hole edge it ends on.
+    The wire is beyond every wire that cuts the corner (it reaches the middle)."""
+    i = (site.outer_edges.index(gate) + 1) % 3   # the gate joins corners a_i and a_(i+1)
+    spoke = site.spokes[2 * i + 1]               # a_i p_(i+1)
+    slot = len(state.gate_order[spoke]) if pmap.edge_v_list[spoke][0] == site.outer[i] else 0
+    return spoke, slot, site.tris[i], site.tris[3 + i], site.hole[i]
+
+
+def arrive(pmap: PlanarMap, state: TopoState, site: Site, last) -> list:
+    """The steps that take a wire whose last planned step crosses into the
+    site's triangle on to the site itself."""
+    spoke, slot, big, small, hole = _door(pmap, state, site, last[0])
+    return [(spoke, big, 0, slot), (hole, small, 1, 0)]
+
+
+def leave(pmap: PlanarMap, state: TopoState, site: Site, first) -> list:
+    """The steps that bring a wire from the site out across the edge of the
+    site's triangle its plan starts on (they replace the plan's first step)."""
+    spoke, slot, big, small, hole = _door(pmap, state, site, first[0])
+    return [(hole, -1, -1, 0), (spoke, small, 1, slot), (first[0], big, 0, first[3])]
 
 
 FAR = 1.0e7  # mm: where the vertices of unused slots are parked, away from every board
@@ -399,8 +428,9 @@ def undo(pmap: PlanarMap, state: TopoState, log_length: int, journal_length: int
         note = notes.pop()
         if note[0] == "wires":
             for w, steps in note[1].items():
-                state.wire_path[w] = steps
-            wires.update(note[1])
+                if w in state.wire_path:  # not one that has been taken out since
+                    state.wire_path[w] = steps
+                    wires.add(w)
         elif note[0] == "gate":
             _, e, row, load, cap = note
             state.gate_order[e][:] = row
@@ -972,16 +1002,16 @@ def refresh(pmap: PlanarMap, state: TopoState, pad: int) -> None:
             _set_capacity(pmap, state, e)
 
 
-def fits(pmap: PlanarMap, state: TopoState, site: Site, keep: float, spare: float = 0.0) -> bool:
+def fits(pmap: PlanarMap, state: TopoState, site: Site, keep: float) -> bool:
     """Whether the site can be made active with this keep-off without putting
-    any of its spokes over capacity (or within ``spare`` pitches of it, where wires cross)."""
+    any of its spokes over capacity."""
     was = site.net, site.keep
     site.net, site.keep = max(site.net, 0), keep  # as if it were awake, with no trace of its own yet
     try:
         for e in site.spokes:
             before = state.cap[e]
             _set_capacity(pmap, state, e)
-            ok = state.load[e] <= state.cap[e] - (spare if state.load[e] > 0 else 0.0) + 1e-9
+            ok = state.load[e] <= state.cap[e] + 1e-9
             state.cap[e] = before
             if not ok:
                 return False

@@ -18,10 +18,8 @@ DESCRIPTIONS = {
     "workers": ("Worker processes", "How many processor cores routing may use", "Speed"),
     "portfolio": ("Variants raced per pass", "Each pass is tried several ways at once and the best is kept", "Speed"),
     "seed": ("Random seed", "Same seed and settings give the same result", "Speed"),
-    "max_via_rounds": ("Via passes", "How many times vias may be added and the board routed again", "Routing"),
     "drc_rounds": ("Design-rule repair rounds", "Reroute attempts for traces that fail the final check", "Routing"),
-    "use_vias": ("Insert vias", "Allow vias for connections no single layer can complete", "Routing"),
-    "live_vias": ("Vias during routing", "Place vias while the board is being routed; off = only between passes, routing everything again", "Routing"),
+    "use_vias": ("Use vias", "Let a connection change layer through vias where that is the cheaper way", "Routing"),
     "global_selection": ("Global candidate selection", "Phase 1: choose routes for all nets together", "Routing"),
     "regret_order": ("Commit in regret order", "Phase 2: most-constrained nets first", "Routing"),
     "lookahead": ("Look-ahead costs", "Airwire-crossing and barrier costs", "Routing"),
@@ -69,10 +67,8 @@ class Settings:
     workers: int = 0
     portfolio: int = 0
     seed: int = 0
-    max_via_rounds: int = 4
     drc_rounds: int = 4
     use_vias: bool = True
-    live_vias: bool = True
     global_selection: bool = True
     regret_order: bool = True
     lookahead: bool = True
@@ -129,7 +125,7 @@ class Settings:
     # -- what the router takes ----------------------------------------------
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
-                       demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias, live_vias=self.live_vias,
+                       demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
                        smooth=self.smooth_corners, teardrops=self.teardrops, teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        portfolio=self.portfolio)

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from weaveengine import parallel
 from weaveengine.plan.context import Connection, Context, Layer
+from weaveengine.plan.path import Path, find
 from weaveengine.topo import kernel
 from weaveengine.topo.planar_map import GATE
 from weaveengine.topo.runs import GatePath, cross_count, path_from_steps
@@ -26,14 +27,10 @@ def generate(ctx: Context, conn: Connection, k: int | None = None) -> list[Candi
     search workspace, and the compiled kernel does not hold the interpreter lock.
     """
     k = ctx.params.K if k is None else k
-    ctx.lift(conn, True)
-    try:
-        if _use_threads(ctx, conn):
-            found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k), conn.layers))
-        else:
-            found = [_layer_routes(ctx, conn, li, k) for li in conn.layers]
-    finally:
-        ctx.lift(conn, False)
+    if _use_threads(ctx, conn):
+        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k), conn.layers))
+    else:
+        found = [_layer_routes(ctx, conn, li, k) for li in conn.layers]
     cands: list[Candidate] = []
     for li, routes in zip(conn.layers, found):
         pmap = ctx.layers[li].pmap
@@ -166,21 +163,16 @@ def severed(ctx: Context, layer: Layer, conn: Connection, path: GatePath) -> set
     return cut
 
 
-def plain_route(ctx: Context, conn: Connection, spare: float = 0.0, **kwargs) -> Route | None:
-    """Cheapest in-search route over the usable layers (searched at the same time).
-    ``spare``: room, in pitches, the route must leave on every gate it uses."""
+def plain_route(ctx: Context, conn: Connection, **kwargs) -> Route | None:
+    """Cheapest in-search route on one layer, over the usable layers (searched at the same time)."""
     def one(li: int) -> Route | None:
         layer = ctx.layers[li]
-        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight + spare, **kwargs)
+        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, **kwargs)
 
-    ctx.lift(conn, True)
-    try:
-        if _use_threads(ctx, conn):
-            found = list(_threads().map(one, conn.layers))
-        else:
-            found = [one(li) for li in conn.layers]
-    finally:
-        ctx.lift(conn, False)
+    if _use_threads(ctx, conn):
+        found = list(_threads().map(one, conn.layers))
+    else:
+        found = [one(li) for li in conn.layers]
     best = None
     for li, r in zip(conn.layers, found):
         if r is not None and (best is None or r.cost < best.cost):
@@ -189,12 +181,18 @@ def plain_route(ctx: Context, conn: Connection, spare: float = 0.0, **kwargs) ->
     return best
 
 
-def best_route(ctx: Context, conn: Connection) -> Route | None:
-    """Best route on the current state under the full cost model."""
-    if not (ctx.options.lookahead or ctx.options.demand):
-        return plain_route(ctx, conn)
-    cands = generate(ctx, conn, ctx.params.K_reroute)
-    return cands[0].route if cands else None
+def best_route(ctx: Context, conn: Connection) -> Path | None:
+    """Best route on the current state: on one layer under the full cost model
+    (the lookahead terms of section 9), or through vias if that is cheaper."""
+    if ctx.options.lookahead or ctx.options.demand:
+        cands = generate(ctx, conn, ctx.params.K_reroute)
+        direct = cands[0].route if cands else None
+    else:
+        direct = plain_route(ctx, conn)
+    through = find(ctx, conn) if ctx.vias else None
+    if through is not None and through.vias and (direct is None or through.cost < direct.cost):
+        return through
+    return Path.on_one_layer(direct) if direct is not None else through
 
 
 def _generate_task(ctx: Context, wire_id: int) -> list[Candidate]:
@@ -209,18 +207,23 @@ def generate_all(ctx: Context) -> dict[int, list[Candidate]]:
     return dict(zip(ids, found))
 
 
-def _best_task(ctx: Context, wire_id: int) -> Route | None:
+def _best_task(ctx: Context, wire_id: int) -> Path | None:
     return best_route(ctx, ctx.conns[wire_id])
 
 
-def replay(ctx: Context, conn: Connection, r: Route) -> Route | None:
-    """The same gate sequence on the present state (slots recomputed), or None if it no longer fits."""
+def replay(ctx: Context, conn: Connection, path: Path) -> Path | None:
+    """The same gate sequence on the present state (slots recomputed), or None
+    if it no longer fits. A route through vias is not replayed but planned again."""
+    if path.vias:
+        return None
+    r = path.routes[0]
     layer = ctx.layers[r.layer]
     again = route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, mode="corridor",
                   corridor=set(r.gates), weight=conn.weight)
-    if again is not None:
-        again.layer = r.layer
-    return again
+    if again is None:
+        return None
+    again.layer = r.layer
+    return Path.on_one_layer(again)
 
 
 def route_batch(ctx: Context, wire_ids: list[int], compute=_best_task):

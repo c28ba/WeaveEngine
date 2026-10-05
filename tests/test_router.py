@@ -621,7 +621,7 @@ def test_vias_are_placed_during_the_pass():
     result = route_board(board, options=Options(portfolio=1), workers=1)
     assert_clean(board, result)
     stats = result.stats
-    assert stats["routed"] == 4 and stats["via_rounds"] == 0 and 2 <= stats["vias"] <= 8
+    assert stats["routed"] == 4 and 2 <= stats["vias"] <= 8 and stats["via_sites"] == stats["vias"]
     assert len(board.pads) == 8 and all(not p.is_via for p in board.pads)   # the input board is not modified
     assert len([p for p in result.board.pads if p.is_via]) >= stats["vias"]
     # Every via joins traces on both layers, and is drawn from its centre.
@@ -629,9 +629,6 @@ def test_vias_are_placed_during_the_pass():
         ends = [w for w, c in result.connections.items() if via.pad_id in (c.src, c.dst) and w in result.polylines]
         assert {result.wire_layer[w] for w in ends} == {0, 1}
     assert all(net_is_connected(result, net) for net in range(4))
-    # The older way, between passes, still works when asked for.
-    old = route_board(board, options=Options(portfolio=1, live_vias=False), workers=1)
-    assert old.stats["routed"] == 4 and old.stats["via_rounds"] >= 1
 
 
 def test_raced_variants_hand_their_vias_back():
@@ -678,3 +675,44 @@ def test_a_trace_leaves_a_fine_pitch_pad_clear_of_its_neighbours():
     result = route_board(board, options=Options(portfolio=1), workers=1, drc_rounds=0, drop_violators=False)
     assert result.unrouted == [] and result.violations == []          # clean at the first check, with no repair
     assert_clean(board, result)
+
+
+def test_a_via_plan_that_does_not_fit_leaves_no_trace(monkeypatch):
+    """12.3: a route through vias goes in whole or not at all. If it fails after
+    its sites are made and its pieces laid, the maps and states are as before."""
+    from weaveengine.plan.context import Context, Layer, decompose
+    from weaveengine.plan.path import find
+    from weaveengine.topo import sites
+    board = crossing_board()
+    layers = [Layer(i, name, planar_map.build(board, i)) for i, name in enumerate(board.layers)]
+    ctx = Context(board, layers, decompose(board, layers)[0], options=Options(portfolio=1), workers=1)
+    tried = 0
+    for conn in list(ctx.conns.values()):
+        path = find(ctx, conn, hard_cap=True)
+        assert path is not None
+        if path.vias and not tried:
+            tried += 1
+            before = [(l.state.snapshot(), len(sites.log(l.pmap)), sorted(l.pmap.sites), l.pmap.num_edges) for l in layers]
+
+            def no(*args, **kwargs):
+                raise ValueError("no room after all")
+
+            monkeypatch.setattr(sites, "legalise", no)
+            assert ctx.commit(conn, path) is False
+            monkeypatch.undo()
+            assert conn.wire_id in ctx.unrouted and not conn.pieces and len(ctx.conns) == 4
+            for layer, (snap, log, live, edges) in zip(layers, before):
+                now = layer.state.snapshot()
+                assert now[2] == snap[2] and now[0][:edges] == snap[0] and now[1][:len(snap[1])] == snap[1]
+                assert not any(now[0][edges:]) and len(sites.log(layer.pmap)) == log and sorted(layer.pmap.sites) == live
+                assert layer.state.invariant_errors() == []
+        assert ctx.commit(conn, path)
+        assert all(layer.state.invariant_errors() == [] for layer in layers)
+    assert tried and not ctx.unrouted
+    # Ripping a connection through vias takes its pieces and its vias out together.
+    split = next(c for c in ctx.conns.values() if c.pieces)
+    pieces, pads = split.pieces, split.sites
+    ctx.rip(pieces[1])
+    assert split.wire_id in ctx.unrouted and not any(w in ctx.conns for w in pieces)
+    assert all(pad not in layer.pmap.sites for pad in pads for layer in layers)
+    assert all(layer.state.invariant_errors() == [] for layer in layers)

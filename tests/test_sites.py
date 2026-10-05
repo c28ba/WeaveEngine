@@ -9,7 +9,7 @@ from shapely.geometry import LineString, Point
 
 from tests.conftest import grid_board
 from weaveengine.board import Board, Pad, Rules
-from weaveengine.plan.vias import locate
+from weaveengine.plan.path import locate
 from weaveengine.realize.relax import realize
 from weaveengine.realize.terminals import straighten
 from weaveengine.topo import kernel, planar_map, sites
@@ -352,24 +352,28 @@ def test_the_log_rebuilds_the_same_map_elsewhere():
     assert fingerprint(mine) == fingerprint(third)
 
 
-def test_flood_agrees_with_the_search():
-    """The flood that places vias finds the legal route the search finds, at the same length (12.4)."""
-    from weaveengine.topo.search import flood
+def test_a_search_from_a_via_point_matches_the_search_from_the_pad():
+    """12.3: a search reports what it reached on the way, and another search can
+    start from such a point, as from a via. The way back costs what the way there did."""
     board = grid_board(6, 10.0, seed=3)
     pmap = planar_map.build(board)
     state = busy_state(pmap, PAIRS)
-    for a, b in [(7, 28), (3, 32), (10, 25), (14, 21)]:
-        r = route(pmap, state, a, b, hard_cap=True)
-        best, origin, (cost, came_from) = flood(pmap, state, a, dst_pad=b)
-        assert (r is None) == math.isinf(cost)
-        if r is not None:
-            assert cost == pytest.approx(r.length) and came_from == -1
-    # From a seed in the middle of a triangle, the way back to the pad costs what the way there did.
-    best, _, _ = flood(pmap, state, 7)
-    t = int(np.argmax(np.where(np.isfinite(best), best, -1.0)))
+    r, seen = route(pmap, state, 7, 28, hard_cap=True, reach=True)
+    assert r is not None and r.seed == -1 and np.isfinite(seen.best).sum() > 20
+    # The way to a triangle the search passed: an insertable route whose last step crosses into it.
+    t = int(np.argmax(np.where(np.isfinite(seen.best), seen.best, -1.0)))
+    there = seen.route_to(t)
+    assert there is not None and there.cost == pytest.approx(seen.best[t])
+    last_edge = there.steps[-1][0]
+    assert last_edge in pmap.tri_e_list[t] and there.steps[-1][1] != t
+    # From a seed in the middle of that triangle, back to the pad.
     x, y = pmap.tri_cen[t]
-    back = flood(pmap, state, None, seeds=(np.array([t]), np.array([2.5]), np.array([x]), np.array([y])), dst_pad=7)[2]
-    assert back[1] == 0 and back[0] == pytest.approx(best[t] + 2.5, abs=0.75 * max(pmap.edge_len_list))
+    back = route(pmap, state, None, 7, hard_cap=True, seeds=(np.array([t]), np.array([2.5]), np.array([x]), np.array([y])))
+    assert back is not None and back.seed == 0
+    assert back.cost == pytest.approx(seen.best[t] + 2.5, abs=0.75 * max(pmap.edge_len_list[e] for e in pmap.tri_e_list[t]))
+    # ``bound`` cuts the search short: nothing dearer than it is reported.
+    assert route(pmap, state, 7, 28, hard_cap=True, bound=r.cost - 1.0) is None
+    assert route(pmap, state, 7, 28, hard_cap=True, bound=r.cost + 1.0).cost == pytest.approx(r.cost)
 
 
 def test_deleting_every_site_gives_the_map_back():
