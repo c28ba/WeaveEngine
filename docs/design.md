@@ -485,12 +485,43 @@ The via count (53) is still above the file's routing (33). That routing puts mor
 
 The common factor in every one of these is that rip-up does not settle, so whatever is being varied, the outcome is mostly where rip-up happened to stop.
 
+### 12.7 What rip-up does on a board that needs vias (investigation)
+
+Traced round by round on `blinkSP1` (default settings, no DRC repair):
+
+| Before round | Open | Over-full gates | Ripped, then placed again (through vias) | Vias | On one layer |
+|---|---|---|---|---|---|
+| 0 (after the commit phase) | 18 | 51 | | 30 | 22 |
+| 1 | 5 | 38 | 24, 37 (22) | 53 | 24 |
+| 3 | 11 | 19 | 16, 16 (7) | 49 | 20 |
+| 5 | 12 | 6 | 12, 9 (6) | 52 | 17 |
+| 7 | 11 | 0 | 11, 9 (4) | 50 | 19 |
+| 9 | 12 | 3 | 6, 6 (2) | 49 | 19 |
+| 12 | 11 | 0 | 5, 4 (2) | 53 | 18 |
+| 14 | 10 | 2 | 7, 6 (3) | 55 | 18 |
+
+1. **The over-full gates do get cleared**, in about seven rounds. "Rip-up does not settle" was the wrong description: what does not go away is a core of about ten open connections. From round 2 on, each round rips the wires in the way of the open ones (the relaxed search names them), places most of them again, and leaves about as many open as before, often different ones. The best state seen is kept, so this does no harm, but it does no good either, and which state is "best" by a connection or two is where the run-to-run differences come from.
+2. **That core may be near what the board allows.** The file's own routing, after thousands of passes of another router, makes 51 of these connections. This router's level is 48 to 50.
+3. **Vias are taken from the start, not as a last resort.** Already after the commit phase there are 30 vias and only 22 connections on one layer; with vias switched off the same phases put 28 on one layer. About half of everything rip-up places goes through vias. A connection takes vias as soon as that is cheaper than its single-layer route with congestion priced in, and at the default price that is almost at once.
+
+**As a spread** (18 runs each over small changes that should not matter: congestion growth 1.45 to 1.55, via price within 5 %, two search weightings). A single run of this router means little; from here on results are quoted like this.
+
+| | Routed (of 58) | Vias | On one layer |
+|---|---|---|---|
+| As it is (`via_cost` 3.6 mm) | 48 (41 to 52) | 54 (39 to 63) | 18 (16 to 25) |
+| `via_cost` 150 mm | 48 (45 to 50) | 37 (32 to 48) | 23 (18 to 27) |
+| `via_cost` 89 mm (the highest price an over-full gate reaches) | 47 (42 to 50) | 44 (22 to 57) | 21 (16 to 29) |
+| A via only if no single-layer route exists at all, however over-full | 46 (43 to 48) | 44 (34 to 57) | 21 (17 to 27) |
+| The file's own routing | 51 | 33 | 31 |
+
+A high price keeps the same number of connections, with a third fewer vias and half the spread. Why it works, from the trace: the price of an over-full gate grows each round up to a cap (about 89 mm on this board). With a via dearer than that, a connection stays on one layer while rip-up sorts out the layer, and only changes layer when its single-layer route is still over-full in several places at the highest price. With a cheap via it changes layer in the first round, before rip-up has sorted anything out. The rule "never, while a single-layer route exists" goes too far the other way: connections that have no legal single-layer route then sit on over-full gates for good (the same six ripped and put back every round), until they are removed at the end.
+
 **Next (M14d).**
 1. Rip-up: find out why it does not settle with a solution available, measuring over a spread of small changes instead of one run. Everything else is unreadable until this is steady.
 2. Then the price of a via as a principle: more than any detour on the board, so that single-layer routes are kept (the plateau above suggests it).
 3. Then: a net changes layer once and branches (a connection may start from any via or through-hole pad its net already has), which is where the file's routing gets 1.65 vias per connection instead of 2.
 
-### 12.7 Not in scope
+### 12.8 Not in scope
 - Blind and buried vias: a site is on every layer.
 - Vias in pads (`via_at_smd`).
 
