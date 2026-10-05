@@ -528,7 +528,22 @@ A price somewhat above the cap keeps the same number of connections, with a thir
 **Still open.**
 1. A net changes layer once and branches: a connection may start from any via or through-hole pad its net already has. This is where the file's routing gets 1.65 vias per connection through vias; this router pays 2.
 2. Run-to-run spread is still 45 to 50 connections and 32 to 48 vias.
-3. None of this has been measured on a second board that needs vias. `RAM Selector Tree`, `ALU`, `Word of RAM` and `ulx3s` have not been run since M14b.
+3. The repair after the design-rule check on `RAM Selector Tree` (below).
+
+**The other boards on this code** (command line; `main` is the code without any of section 12.2 onwards):
+
+| Board | Now | On `main` |
+|---|---|---|
+| Word of RAM | 85 of 85, 0 vias, 3 s | the same |
+| ALU | 409 of 409, 9 vias, 55 s | 409 of 409, 0 vias, 99 s |
+| ulx3s (one variant) | 200 of 203, 39 vias, 60 s | 200 of 203, 37 vias, 239 s |
+| blinkSP1 | 50 of 58, 41 vias, 68 s | 35 of 58, 47 vias, 58 s; with more passes the vias only grow (26, 50, 63, ... 99 after nine) and the open pieces never fall |
+| RAM Selector Tree (one variant) | 360 of 400, 216 vias, 18 min | does not finish in hours |
+
+All measured clean from the written file.
+- `ALU` takes 9 vias it does not need.
+- `RAM Selector Tree` is worse than the prototype of 12.4 was (383 of 400, 206 vias, about 5 minutes). The main rip-up takes 9 minutes, and then each of the four repair rounds after the design-rule check takes over two minutes more. The geometry failures with vias on this board (12.4, finding 4) have never been diagnosed, and the repair for them is where half the time and probably the connections go.
+- Racing variants on a board no variant will finish runs all eight for nothing: the variants differ only in seed and search weighting, and the seed has no effect. `RAM Selector Tree` raced was stopped after 13 minutes with its first heat of four still running.
 
 ### 12.8 Not in scope
 - Blind and buried vias: a site is on every layer.
