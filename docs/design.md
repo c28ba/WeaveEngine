@@ -461,10 +461,34 @@ The via count (53) is still above the file's routing (33). That routing puts mor
 
 **Where that leaves the question.** The planar part is not what is behind: on one layer the router matches the reference. What is behind is everything about vias, and on this board a via is mostly a matter of *room*: its keep-off is 1.5 mm across beside pins 0.5 mm apart. The search prices a via as a constant and puts it wherever is nearest. Nothing says what it costs the others to have it there, and nothing lets a net reuse a layer change it already has.
 
-**Next (M14d), as hypotheses to test one at a time on `blinkSP1`:**
-1. A via costs what it takes away: priced by the demand (9.2) on the gates round the point, on every layer, so that vias go where there is room.
-2. A net changes layer once and branches: a connection may start from any via or through-hole pad its net already has.
-3. Only then, again: layer choice in the global selection, with ways through vias that can be replayed (their via points fixed, their pieces replayed by corridor).
+**Hypothesis 1 tested before building it, and dropped.** "Vias crowd the fine-pitch part" is true of the made-first variant above, not of the router as it is. Measured on its result (63 vias) against the file's routing (33): median distance from a via to the nearest pad of its own net 3.8 mm against 2.6; to the nearest foreign pad 1.7 against 1.0; vias within 2 mm of the chip's pins 4 against 7. The file's routing packs its vias *tighter* than this router does. Placement is not the problem.
+
+**What is different is how many connections stay on one layer.** Of this router's 52 routed connections 18 are on one layer and 34 go through vias (25 of them through two). The file's routing has 31 on the top layer alone and 20 through vias. With vias switched off this router also puts 28 on the top layer. So with vias on offer from the start, about ten connections that could stay on one layer take vias instead, and that is most of the extra thirty vias.
+
+**The price of a via, swept properly** (one variant; "one layer" = routed connections with no via):
+
+| `via_cost` (mm) | Routed | Vias | One layer |
+|---|---|---|---|
+| 3.4 | 41 | 44 | 17 |
+| 3.5 | 45 | 50 | 19 |
+| 3.56 (the default) and 3.6 | 52 | 63 | 18 |
+| 3.7 | 45 | 45 | 20 |
+| 10, 20, 40, 60, 80, 100 | 45 to 49 | 41 to 46 | 20 to 23 |
+| 130 to 170 | 48 | 32 | 27 |
+| 200, 300, 600 | 44, 43, 42 | 33, 36, 36 | 24, 21, 20 |
+| 2000 | 46 | 46 | 20 |
+| vias only after single-layer routing has settled (not a price: rip-up without vias, then legal placement with them) | 42 | 28 | 26 |
+
+- **The default's 52 of 58 was one draw.** A change of 4 % in the price moves the result between 41 and 52 connections. Results quoted from a single run of this router on this board cannot be trusted to within ten connections; from here on a result is quoted as a range over small changes.
+- **There is a plateau** from 130 to 170 mm, more than twice the board's diagonal (58 mm), where the result is steady and close to the file's routing: 48 connections, 32 vias, 27 on one layer, in 8 s. A price that high means "a via only where the connection cannot otherwise be made". Outside the plateau it is worse again, in both directions, so this is an observation about this board, not yet a setting.
+- **The seed changes nothing** (three seeds, identical results), and neither does racing variants on this board: the variants differ only in seed and search weighting.
+
+The common factor in every one of these is that rip-up does not settle, so whatever is being varied, the outcome is mostly where rip-up happened to stop.
+
+**Next (M14d).**
+1. Rip-up: find out why it does not settle with a solution available, measuring over a spread of small changes instead of one run. Everything else is unreadable until this is steady.
+2. Then the price of a via as a principle: more than any detour on the board, so that single-layer routes are kept (the plateau above suggests it).
+3. Then: a net changes layer once and branches (a connection may start from any via or through-hole pad its net already has), which is where the file's routing gets 1.65 vias per connection instead of 2.
 
 ### 12.7 Not in scope
 - Blind and buried vias: a site is on every layer.
