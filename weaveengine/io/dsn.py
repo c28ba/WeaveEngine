@@ -58,6 +58,8 @@ class Design:
     placements: list[tuple[str, str, float, float, str, float]] = field(default_factory=list)  # image, ref, x, y, side, rot (file units)
     via_padstack: str = ""
     via_shapes: list[list] = field(default_factory=list)  # raw shape descriptors of the via padstack
+    defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
+    dropped_wiring: str = ""                                 # what was done with routing already in the file
 
     @property
     def net_names(self) -> dict[int, str]:
@@ -130,7 +132,11 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     scale = UNIT_MM[unit.lower()]
 
     structure = _child(root, "structure")
+    if structure is None:
+        raise ValueError("DSN has no structure section (layers and boundary)")
     all_layers = [n[1] for n in _children(structure, "layer")]
+    if not all_layers:
+        raise ValueError("DSN has no signal layer")
     use = layers or all_layers
     unknown = [name for name in use if name not in all_layers]
     if unknown:
@@ -171,7 +177,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         for rule in _children(node, "rule"):
             for w in _children(rule, "width"):
                 width = float(w[1]) * scale
-            for c in _children(rule, "clearance"):
+            for c in _children(rule, "clearance") + _children(rule, "clear"):  # some tools write "clear"
                 if not _children(c, "type"):
                     clearance = float(c[1]) * scale
         return width, clearance
@@ -181,14 +187,22 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     classes = [(cls, *rule_of(cls)) for cls in _children(network, "class")]
     # The class named kicad_default (or the first one) overrides the structure rule as the default.
     for cls, w, c in classes:
-        if cls[1] in ("kicad_default", "default") and w:
+        if len(cls) > 1 and cls[1] in ("kicad_default", "default") and w:
             width = w
     if not width:
         width = min((w for _, w, _ in classes if w), default=None)
     clearances = [c for c in [clearance] + [c for _, _, c in classes] if c]
-    if not width or not clearances:
-        raise ValueError("DSN has no width/clearance rule")
-    board = Board(outline=outline, rules=Rules(width, max(clearances)), layers=list(use))
+    # A DSN need not carry rules (section 4): whatever is missing takes the built-in default.
+    rules, defaulted = Rules(), {}
+    if width:
+        rules.trace_width = width
+    else:
+        defaulted["trace_width"] = f"trace width {rules.trace_width:g} mm"
+    if clearances:
+        rules.clearance = max(clearances)
+    else:
+        defaulted["clearance"] = f"clearance {rules.clearance:g} mm"
+    board = Board(outline=outline, rules=rules, layers=list(use))
 
     for k in _children(structure, "keepout"):
         for desc in k[1:]:
@@ -203,16 +217,22 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     padstacks = {p[1]: [s[1] for s in _children(p, "shape")] for p in _children(library, "padstack")}
     images = {img[1]: img for img in _children(library, "image")}
 
-    design = Design(root[1], board, unit, resolution)
+    design = Design(root[1] if len(root) > 1 and isinstance(root[1], str) else "board", board, unit, resolution,
+                    defaulted=defaulted)
     via = _child(structure, "via")
-    if via and via[1] in padstacks:
+    circles = []
+    if via and len(via) > 1 and via[1] in padstacks:
         design.via_padstack = via[1]
         design.via_shapes = padstacks[via[1]]
-        circles = [float(d[2]) * scale for d in design.via_shapes if d[0] == "circle"]
+        circles = [float(d[2]) * scale for d in design.via_shapes if d[0] == "circle" and len(d) > 2]
         if circles:
             board.rules.via_diameter = max(circles)
             m = re.search(r"_(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)_um", via[1])
             board.rules.via_drill = float(m.group(2)) / 1000.0 if m else board.rules.via_diameter / 2.0
+    if not circles:
+        design.via_padstack, design.via_shapes = "", []  # the writer makes a round one of the default size
+        defaulted["via_diameter"] = f"via diameter {board.rules.via_diameter:g} mm"
+        defaulted["via_drill"] = f"via drill {board.rules.via_drill:g} mm"
 
     # Nets and their classes.
     pin_net: dict[str, int] = {}
@@ -282,9 +302,27 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 component.pads.append(len(board.pads))
                 board.pads.append(Pad(len(board.pads), pin_net.get(name, -1), shape, name, on, radius))
 
-    # Pre-existing copper is a fixed obstacle in v1.
+    # Pre-existing copper that is marked fixed is an obstacle. The rest is
+    # routing some earlier run left behind (a saved, already-routed design):
+    # it is discarded and those connections are routed afresh. Keeping its
+    # vias while its traces are redone would only litter the board with walls.
     wiring = _child(root, "wiring") or []
+
+    def fixed(item) -> bool:
+        kind = _child(item, "type")
+        return kind is not None and len(kind) > 1 and kind[1] in ("protect", "fix", "shove_fixed")
+
+    loose = [item for item in wiring[1:] if isinstance(item, list) and item[0] in ("wire", "via") and not fixed(item)]
+    unread = [w for w in _children(wiring, "wire") if fixed(w) and not any(
+        isinstance(x, list) and x[0] in ("path", "polygon", "rect", "circle") for x in w[1:])]
+    if loose:
+        design.dropped_wiring = f"{len(loose)} existing traces and vias that are not marked fixed are discarded and routed afresh"
+    if unread:
+        design.dropped_wiring += ("; " if design.dropped_wiring else "") + \
+            f"{len(unread)} fixed traces are in a form that is not read (polyline_path) and are ignored"
     for wire in _children(wiring, "wire"):
+        if not fixed(wire):
+            continue
         net = _child(wire, "net")
         net_id = design.net_ids.get(net[1], -1) if net else -1
         for desc in wire[1:]:
@@ -295,6 +333,8 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                     if on is None or on:
                         board.obstacles.append(Obstacle(got[0], net_id, on))
     for via in _children(wiring, "via"):
+        if not fixed(via):
+            continue
         net = _child(via, "net")
         net_id = design.net_ids.get(net[1], -1) if net else -1
         parts = [g[0] for g in (_shape(d, scale) for d in padstacks.get(via[1], [])) if g]

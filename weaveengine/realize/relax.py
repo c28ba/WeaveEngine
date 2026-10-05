@@ -60,12 +60,15 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
         ux, uy, dx, dy, _ = frame[e]
         return (ux + s * dx, uy + s * dy)
 
-    # Terminal points are fixed during a pass: wires sharing a pad edge are spread along it in order.
+    # Terminal points are fixed during a pass: wires sharing a pad edge are
+    # spread along it in order, within the part a trace may leave through.
     S: dict[int, list[float]] = {}
+    exits = pmap.exit_window
     for e in frame:
         if kind[e] == TERMINAL:
             k = len(order[e])
-            S[e] = list(terminals[e]) if terminals and e in terminals else [(i + 0.5) / k * frame[e][4] for i in range(k)]
+            a, b = exits.get(e, (0.0, frame[e][4]))
+            S[e] = list(terminals[e]) if terminals and e in terminals else [a + (i + 0.5) / k * (b - a) for i in range(k)]
 
     # Half of each wire's width beyond the base width the map was inflated for.
     half = {w: board.rules.extra(net) for w, net in wire_net.items()}
@@ -213,7 +216,7 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
             if e in window:
                 lo, hi = window[e][k]
             elif slide:
-                lo, hi = 0.0, L
+                lo, hi = exits.get(e, (0.0, L))
             else:
                 lo = hi = S[e][k]
             mx, my = mids[e]
@@ -277,7 +280,8 @@ def relax(state: TopoState, board: Board, tol: float = 1e-4, max_sweeps: int = 1
                 space[o + k] = spacing(wires_e[k], wires_e[k + 1])
         else:
             is_term[o:o + n] = 1
-            share[o:o + n] = min(d, frame[e][4] / n)
+            wlo[o:o + n], whi[o:o + n] = exits.get(e, (0.0, frame[e][4]))
+            share[o:o + n] = min(d, (whi[o] - wlo[o]) / n)
     wire_ids = list(wires)
     wire_ptr = np.zeros(len(wire_ids) + 1, dtype=np.int64)
     wire_slot = np.zeros(sum(len(wires[w]) for w in wire_ids), dtype=np.int64)

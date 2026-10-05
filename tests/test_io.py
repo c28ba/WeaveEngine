@@ -1,3 +1,5 @@
+import pytest
+
 from bench.generators import channel
 from weaveengine.cli import main
 from weaveengine.io.dsn import parse_sexpr, read_dsn, write_dsn
@@ -189,3 +191,63 @@ def test_components_outlines_and_values_are_read(tmp_path):
     assert [round(v, 3) for v in r1.bounds()] == [4.0, -5.5, 6.0, -4.5]          # 2 x 1 mm about (5, -5)
     assert [round(v, 3) for v in r2.bounds()] == [14.5, -6.0, 15.5, -4.0]        # the same, turned 90 degrees
     assert len(r1.outlines) == 2 and parts["TP1"].outlines == []
+
+
+def _without(text: str, name: str) -> str:
+    """``text`` with every (name ...) list removed."""
+    import re
+    out, i = [], 0
+    while (found := re.compile(r"\(" + name + r"\s").search(text, i)) is not None:
+        depth, j = 0, (start := found.start())
+        while True:
+            depth += {"(": 1, ")": -1}.get(text[j], 0)
+            j += 1
+            if depth == 0:
+                break
+        out.append(text[i:start])
+        i = j
+    return "".join(out) + text[i:]
+
+
+def test_missing_rules_take_defaults(tmp_path):
+    """A DSN need not carry rules (design section 4); each missing value is defaulted on its own and reported."""
+    def load(text):
+        path = tmp_path / "board.dsn"
+        path.write_text(text)
+        return read_dsn(str(path))
+
+    # KICAD_STYLE names a via padstack its library does not define: the via size is defaulted.
+    assert set(load(KICAD_STYLE).defaulted) == {"via_diameter", "via_drill"}
+    complete = KICAD_STYLE.replace("    (padstack Round", '    (padstack "Via[0-1]_800:400_um" (shape (circle F.Cu 800)) '
+                                   "(shape (circle B.Cu 800)) (attach off))\n    (padstack Round", 1)
+    full = load(complete)
+    assert not full.defaulted and (full.board.rules.via_diameter, full.board.rules.via_drill) == (0.8, 0.4)
+    bare = load(_without(_without(KICAD_STYLE, "rule"), "via"))
+    rules = bare.board.rules
+    assert (rules.trace_width, rules.clearance, rules.via_diameter, rules.via_drill) == (0.2, 0.2, 0.6, 0.3)
+    assert set(bare.defaulted) == {"trace_width", "clearance", "via_diameter", "via_drill"}
+    assert len(bare.board.pads) == len(full.board.pads)
+    width_only = load(_without(complete, "clearance"))
+    assert set(width_only.defaulted) == {"clearance"} and width_only.board.rules.trace_width == full.board.rules.trace_width
+    clearance_only = load(_without(complete, "width"))
+    assert set(clearance_only.defaulted) == {"trace_width"}
+    assert clearance_only.board.rules.clearance == full.board.rules.clearance
+    # A setting the user made is not reported as defaulted.
+    from weaveengine.settings import Settings
+    notes = Settings(trace_width=0.3).apply_rules(bare)[2]
+    said = next(n for n in notes if n.startswith("not in the DSN"))
+    assert "clearance 0.2 mm" in said and "trace width" not in said and bare.board.rules.trace_width == 0.3
+    # What cannot be assumed is still refused, readably.
+    for name in ("boundary", "layer", "structure"):
+        with pytest.raises(ValueError, match="DSN has no"):
+            load(_without(KICAD_STYLE, name))
+
+
+def test_cli_routes_a_dsn_without_rules(tmp_path, capsys):
+    from tests.conftest import demo_board
+    dsn = tmp_path / "bare.dsn"
+    write_dsn(demo_board(), str(dsn))
+    dsn.write_text(_without(dsn.read_text(), "rule"))
+    assert main([str(dsn), "--quiet", "--workers", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "not in the DSN, defaults used: trace width 0.2 mm, clearance 0.2 mm" in out and "-> OK" in out

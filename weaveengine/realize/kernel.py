@@ -87,13 +87,14 @@ def sweep(pos, frame, wlo, whi, terminal, has_prev, has_next, space, share,
                 if i == 0 or i == n - 1:
                     # An end slides along its pad edge towards the straight line
                     # from the pad centre; wires sharing the edge keep their order.
-                    lo = pos[s - 1] + share[s] if has_prev[s] else 0.0
-                    hi = pos[s + 1] - share[s] if has_next[s] else L
+                    # It stays inside the part of the edge it may leave through (wlo, whi).
+                    lo = pos[s - 1] + share[s] if has_prev[s] else wlo[s]
+                    hi = pos[s + 1] - share[s] if has_next[s] else whi[s]
                     if lo <= hi:
                         v = min(max(v, lo), hi)
                     else:
                         v = (lo + hi) / 2.0
-                    v = min(max(v, 0.0), L)
+                    v = min(max(v, wlo[s]), whi[s])
                 else:
                     lo, hi = wlo[s], whi[s]
                     if has_prev[s]:

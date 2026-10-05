@@ -9,6 +9,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, fields
 
+from weaveengine.board import Rules
 from weaveengine.plan.context import Options
 from weaveengine.topo.costs import CostParams
 
@@ -54,10 +55,10 @@ DESCRIPTIONS = {
 AUTOMATIC = {
     "workers": ("Use every core", 4),
     "portfolio": ("One per worker, up to 8", 4),
-    "trace_width": ("Use the value in the DSN", 0.2),
-    "clearance": ("Use the value in the DSN", 0.2),
-    "via_diameter": ("Use the value in the DSN", 0.6),
-    "via_drill": ("Use the value in the DSN", 0.3),
+    "trace_width": ("Use the value in the DSN", Rules.trace_width),
+    "clearance": ("Use the value in the DSN", Rules.clearance),
+    "via_diameter": ("Use the value in the DSN", Rules.via_diameter),
+    "via_drill": ("Use the value in the DSN", Rules.via_drill),
     "edge_clearance": ("From the KiCad project beside the DSN, else the clearance", 0.5),
 }
 
@@ -153,6 +154,12 @@ class Settings:
             rules.via_diameter = self.via_diameter
         if self.via_drill > 0:
             rules.via_drill = self.via_drill
+        # Rules the DSN left out and the settings do not set either: say what is used.
+        missing = [text for name, text in design.defaulted.items() if getattr(self, name) <= 0]
+        if missing:
+            notes.append("not in the DSN, defaults used: " + ", ".join(missing))
+        if design.dropped_wiring:
+            notes.append(design.dropped_wiring)
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
         else:

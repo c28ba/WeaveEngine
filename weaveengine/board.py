@@ -12,9 +12,12 @@ EPS = 1e-6
 class Rules:
     """Design rules. ``trace_width`` is the default class; ``net_width`` holds
     the widths of nets in other classes. One clearance ``s`` applies to all
-    classes (the largest in the design, so it is conservative)."""
-    trace_width: float = 0.15
-    clearance: float = 0.15
+    classes (the largest in the design, so it is conservative).
+
+    The values here are the built-in defaults (design section 4): what a DSN
+    that does not give a rule is routed with."""
+    trace_width: float = 0.2
+    clearance: float = 0.2
     edge_clearance: float | None = None  # defaults to ``clearance``
     net_width: dict[int, float] = field(default_factory=dict)
     via_diameter: float = 0.6

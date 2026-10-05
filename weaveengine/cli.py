@@ -57,6 +57,12 @@ def main(argv: list[str] | None = None) -> int:
         rules.clearance = args.clearance
     if args.via:
         rules.via_diameter, rules.via_drill = args.via
+    given = {"trace_width": args.trace_width, "clearance": args.clearance, "via_diameter": args.via, "via_drill": args.via}
+    missing = [text for name, text in design.defaulted.items() if not given[name]]
+    if missing:
+        print("not in the DSN, defaults used: " + ", ".join(missing))
+    if design.dropped_wiring:
+        print(design.dropped_wiring)
     print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"

@@ -1,0 +1,3047 @@
+
+(PCB blinkSP1
+  (parser
+    (string_quote ')
+    (space_in_quoted_tokens on)
+    (host_cad 'PCB Layout')
+    (host_version 10)
+    (generated_by_freeroute)
+  )
+  (resolution mil 1000)
+  (structure
+    (boundary
+      (rect pcb -818.402 -712.89 968.402 712.89)
+    )
+    (boundary
+      (polygon signal 0
+        -393.701 -681.89
+        393.701 -681.89
+        787.402 0.0
+        393.701 681.89
+        -393.701 681.89
+        -787.402 0.0
+      )
+    )
+    (snap_angle 
+      fortyfive_degree
+    )
+    (via 'DipViaStyle_0')
+    (control
+      (via_at_smd off)
+    )
+    (rule
+      (width 5.906)
+      (clear 5.906)
+      (clear 2.953 (type smd_to_turn_gap))
+    )
+    (layer Top
+      (type signal)
+    )
+    (layer Bottom
+      (type signal)
+    )
+    (autoroute_settings
+      (fanout off)
+      (autoroute on)
+      (postroute on)
+      (vias on)
+      (via_costs 50)
+      (plane_via_costs 5)
+      (start_ripup_costs 100)
+      (start_pass_no 3902)
+      (layer_rule Top
+        (active on)
+        (preferred_direction horizontal)
+        (preferred_direction_trace_costs 1.0)
+        (against_preferred_direction_trace_costs 2.3)
+      )
+      (layer_rule Bottom
+        (active on)
+        (preferred_direction vertical)
+        (preferred_direction_trace_costs 1.0)
+        (against_preferred_direction_trace_costs 1.8)
+      )
+    )
+  )
+  (placement
+    (component 'BK-912-ND_B1'
+      (place 
+        B1 -1.909 0.24 back 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+      )
+    )
+    (component 'CAP_0603_C1'
+      (place 
+        C1 -659.21 23.13 front 270
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'CAP_0603_C2'
+      (place 
+        C2 0.0 -157.48 front 180
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'BAT54_D1'
+      (place 
+        D1 -237.316 513.205 front 180
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+      )
+    )
+    (component 'Mounting@Hole@TOP_H1'
+      (place 
+        H1 393.701 0.0 front 90
+        (pin 1 (clearance_class default))
+      )
+    )
+    (component 'IR26-51C_IR0'
+      (place 
+        IR0 7.815 594.245 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'IR26-51C_IR1'
+      (place 
+        IR1 502.906 294.412 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'IR26-51C_IR2'
+      (place 
+        IR2 512.539 -296.138 front 180
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'IR26-51C_IR3'
+      (place 
+        IR3 -7.815 -594.245 front 180
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'IR26-51C_IR4'
+      (place 
+        IR4 -502.904 -294.412 front 180
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'IR26-51C_IR5'
+      (place 
+        IR5 -512.539 296.138 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+      )
+    )
+    (component 'ISP-6-NO-OUTLINE_J1'
+      (place 
+        J1 579.921 0.0 front 0
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+        (pin 5 (clearance_class default))
+        (pin 6 (clearance_class default))
+      )
+    )
+    (component 'RGBLED-SY1_P0'
+      (place 
+        P0 0.591 325.098 front 180
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'RGBLED-SY1_P1'
+      (place 
+        P1 282.972 156.89 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'RGBLED-SY1_P2'
+      (place 
+        P2 283.366 -158.071 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'RGBLED-SY1_P3'
+      (place 
+        P3 -0.591 -325.098 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'RGBLED-SY1_P4'
+      (place 
+        P4 -282.972 -156.89 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'RGBLED-SY1_P5'
+      (place 
+        P5 -282.972 158.071 front 0
+         (lock_type position)
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'Pad_Pad2'
+      (place 
+        Pad2 393.701 0.0 back 0
+        (pin 1 (clearance_class default))
+      )
+    )
+    (component 'P12970SCT-ND_S1'
+      (place 
+        S1 0.0 0.0 front 0
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'DF13-4P-1.25DSA_SP'
+      (place 
+        SP -232.346 -403.035 front 90
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+      )
+    )
+    (component 'ATMEGA168PB_MLF@Moved@pins_U1'
+      (place 
+        U1 -451.328 0.0 front 180
+        (pin 1 (clearance_class default))
+        (pin 2 (clearance_class default))
+        (pin 3 (clearance_class default))
+        (pin 4 (clearance_class default))
+        (pin 5 (clearance_class default))
+        (pin 6 (clearance_class default))
+        (pin 7 (clearance_class default))
+        (pin 8 (clearance_class default))
+        (pin 9 (clearance_class default))
+        (pin 10 (clearance_class default))
+        (pin 11 (clearance_class default))
+        (pin 12 (clearance_class default))
+        (pin 13 (clearance_class default))
+        (pin 14 (clearance_class default))
+        (pin 15 (clearance_class default))
+        (pin 16 (clearance_class default))
+        (pin 17 (clearance_class default))
+        (pin 18 (clearance_class default))
+        (pin 19 (clearance_class default))
+        (pin 20 (clearance_class default))
+        (pin 21 (clearance_class default))
+        (pin 22 (clearance_class default))
+        (pin 23 (clearance_class default))
+        (pin 24 (clearance_class default))
+        (pin 25 (clearance_class default))
+        (pin 26 (clearance_class default))
+        (pin 27 (clearance_class default))
+        (pin 28 (clearance_class default))
+        (pin 29 (clearance_class default))
+        (pin 30 (clearance_class default))
+        (pin 31 (clearance_class default))
+        (pin 32 (clearance_class default))
+        (pin 33 (clearance_class default))
+      )
+    )
+  )
+  (library
+    (image 'BK-912-ND_B1'
+      (side front)
+      (pin 0 1 0.0 -0.24)
+      (pin 1 2 0.0 432.24)
+      (pin 2 3 0.0 -432.24)
+      (outline
+        (polygon signal 0
+          -351.774 -490.442
+          351.774 -490.442
+          353.696 -488.52
+          353.696 488.52
+          351.774 490.442
+          -351.774 490.442
+          -353.696 488.52
+          -353.696 -488.52
+        )
+      )
+    )
+    (image 'CAP_0603_C1'
+      (side front)
+      (pin 3 1 -33.465 0.0)
+      (pin 3 2 33.465 0.0)
+      (outline
+        (polygon signal 0
+          -56.477 -22.966
+          56.477 -22.966
+          58.399 -21.044
+          58.399 21.044
+          56.477 22.966
+          -56.477 22.966
+          -58.399 21.044
+          -58.399 -21.044
+        )
+      )
+    )
+    (image 'CAP_0603_C2'
+      (side front)
+      (pin 3 1 -33.465 0.0)
+      (pin 3 2 33.465 0.0)
+      (outline
+        (polygon signal 0
+          -56.477 -22.966
+          56.477 -22.966
+          58.399 -21.044
+          58.399 21.044
+          56.477 22.966
+          -56.477 22.966
+          -58.399 21.044
+          -58.399 -21.044
+        )
+      )
+    )
+    (image 'BAT54_D1'
+      (side front)
+      (pin 4 1 -44.4 28.953)
+      (pin 4 2 -44.4 -45.85)
+      (pin 4 3 46.151 -8.449)
+      (outline
+        (polygon signal 0
+          -68.179 -70.785
+          68.179 -70.785
+          70.101 -68.863
+          70.101 68.863
+          68.179 70.785
+          -68.179 70.785
+          -70.101 68.863
+          -70.101 -68.863
+        )
+      )
+    )
+    (image 'Mounting@Hole@TOP_H1'
+      (side front)
+      (pin 5 1 0.0 0.0)
+      (outline
+        (polygon signal 0
+          -89.942 -91.864
+          89.942 -91.864
+          91.864 -89.942
+          91.864 89.942
+          89.942 91.864
+          -89.942 91.864
+          -91.864 89.942
+          -91.864 -89.942
+        )
+      )
+    )
+    (image 'IR26-51C_IR0'
+      (side front)
+      (pin 6 1 -64.902 -3.694)
+      (pin 6 2 49.272 -3.694)
+      (outline
+        (polygon signal 0
+          -91.851 -158.812
+          91.851 -158.812
+          93.773 -156.89
+          93.773 156.89
+          91.851 158.812
+          -91.851 158.812
+          -93.773 156.89
+          -93.773 -156.89
+        )
+      )
+    )
+    (image 'IR26-51C_IR1'
+      (side front)
+      (pin 7 1 -19.579 50.302)
+      (pin 8 2 37.507 -48.575)
+      (outline
+        (polygon signal 0
+          -22.807 -120.156
+          -20.569848244429437 -120.156
+          113.95684738457172 -42.48715261542828
+          115.222 -41.222
+          115.222 -38.98485289469904
+          24.072138033059097 118.89086196694089
+          22.807 120.156
+          20.569848244429437 120.156
+          -113.95684738457172 42.48715261542828
+          -115.222 41.222
+          -115.222 38.98485289469904
+          -24.072138033059097 -118.89086196694089
+        )
+      )
+    )
+    (image 'IR26-51C_IR2'
+      (side front)
+      (pin 9 1 -28.015 -50.301)
+      (pin 10 2 29.072 48.576)
+      (outline
+        (polygon signal 0
+          20.565845661377036 -120.152
+          22.803 -120.152
+          24.06816375575515 -118.88683624424485
+          115.216 38.9868446917373
+          115.216 41.224
+          113.95083928476397 42.48916071523602
+          -20.565845661377036 120.152
+          -22.803 120.152
+          -24.06816375575515 118.88683624424485
+          -115.216 -38.9868446917373
+          -115.216 -41.224
+          -113.95083928476397 -42.48916071523602
+        )
+      )
+    )
+    (image 'IR26-51C_IR3'
+      (side front)
+      (pin 6 1 -64.902 -3.694)
+      (pin 6 2 49.272 -3.694)
+      (outline
+        (polygon signal 0
+          -91.851 -158.812
+          91.851 -158.812
+          93.773 -156.89
+          93.773 156.89
+          91.851 158.812
+          -91.851 158.812
+          -93.773 156.89
+          -93.773 -156.89
+        )
+      )
+    )
+    (image 'IR26-51C_IR4'
+      (side front)
+      (pin 11 1 -19.579 50.302)
+      (pin 12 2 37.507 -48.575)
+      (outline
+        (polygon signal 0
+          -22.807 -120.156
+          -20.569848244429437 -120.156
+          113.95684738457172 -42.48715261542828
+          115.222 -41.222
+          115.222 -38.98485289469904
+          24.072138033059097 118.89086196694089
+          22.807 120.156
+          20.569848244429437 120.156
+          -113.95684738457172 42.48715261542828
+          -115.222 41.222
+          -115.222 38.98485289469904
+          -24.072138033059097 -118.89086196694089
+        )
+      )
+    )
+    (image 'IR26-51C_IR5'
+      (side front)
+      (pin 13 1 -28.015 -50.301)
+      (pin 14 2 29.072 48.576)
+      (outline
+        (polygon signal 0
+          20.565845661377036 -120.152
+          22.803 -120.152
+          24.06816375575515 -118.88683624424485
+          115.216 38.9868446917373
+          115.216 41.224
+          113.95083928476397 42.48916071523602
+          -20.565845661377036 120.152
+          -22.803 120.152
+          -24.06816375575515 118.88683624424485
+          -115.216 -38.9868446917373
+          -115.216 -41.224
+          -113.95083928476397 -42.48916071523602
+        )
+      )
+    )
+    (image 'ISP-6-NO-OUTLINE_J1'
+      (side front)
+      (pin 15 1 -32.677 100.0)
+      (pin 16 2 67.323 100.0)
+      (pin 16 3 -32.677 0.0)
+      (pin 16 4 67.323 0.0)
+      (pin 16 5 -32.677 -100.0)
+      (pin 16 6 67.323 -100.0)
+      (outline
+        (polygon signal 0
+          -102.146 -136.746
+          102.146 -136.746
+          104.068 -134.824
+          104.068 134.824
+          102.146 136.746
+          -102.146 136.746
+          -104.068 134.824
+          -104.068 -134.824
+        )
+      )
+    )
+    (image 'RGBLED-SY1_P0'
+      (side front)
+      (pin 17 1 -17.52 40.059)
+      (pin 18 2 17.52 -18.996)
+      (pin 19 3 17.52 39.665)
+      (pin 20 4 -17.52 -19.39)
+      (outline
+        (polygon signal 0
+          -31.674 -60.072
+          31.674 -60.072
+          33.596 -58.15
+          33.596 58.15
+          31.674 60.072
+          -31.674 60.072
+          -33.596 58.15
+          -33.596 -58.15
+        )
+      )
+    )
+    (image 'RGBLED-SY1_P1'
+      (side front)
+      (pin 21 1 -40.06 -17.52)
+      (pin 22 2 18.995 17.52)
+      (pin 23 3 -39.666 17.52)
+      (pin 24 4 19.389 -17.52)
+      (outline
+        (polygon signal 0
+          -58.152 -33.596
+          58.152 -33.596
+          60.074 -31.674
+          60.074 31.674
+          58.152 33.596
+          -58.152 33.596
+          -60.074 31.674
+          -60.074 -31.674
+        )
+      )
+    )
+    (image 'RGBLED-SY1_P2'
+      (side front)
+      (pin 25 1 -40.06 -17.52)
+      (pin 26 2 18.995 17.52)
+      (pin 27 3 -39.666 17.52)
+      (pin 28 4 19.389 -17.52)
+      (outline
+        (polygon signal 0
+          -58.152 -33.596
+          58.152 -33.596
+          60.074 -31.674
+          60.074 31.674
+          58.152 33.596
+          -58.152 33.596
+          -60.074 31.674
+          -60.074 -31.674
+        )
+      )
+    )
+    (image 'RGBLED-SY1_P3'
+      (side front)
+      (pin 29 1 -17.52 40.059)
+      (pin 30 2 17.52 -18.996)
+      (pin 31 3 17.52 39.665)
+      (pin 32 4 -17.52 -19.39)
+      (outline
+        (polygon signal 0
+          -31.674 -60.072
+          31.674 -60.072
+          33.596 -58.15
+          33.596 58.15
+          31.674 60.072
+          -31.674 60.072
+          -33.596 58.15
+          -33.596 -58.15
+        )
+      )
+    )
+    (image 'RGBLED-SY1_P4'
+      (side front)
+      (pin 33 1 40.06 17.52)
+      (pin 34 2 -18.995 -17.52)
+      (pin 35 3 39.666 -17.52)
+      (pin 36 4 -19.389 17.52)
+      (outline
+        (polygon signal 0
+          -58.152 -33.596
+          58.152 -33.596
+          60.074 -31.674
+          60.074 31.674
+          58.152 33.596
+          -58.152 33.596
+          -60.074 31.674
+          -60.074 -31.674
+        )
+      )
+    )
+    (image 'RGBLED-SY1_P5'
+      (side front)
+      (pin 37 1 40.06 17.52)
+      (pin 38 2 -18.995 -17.52)
+      (pin 39 3 39.666 -17.52)
+      (pin 40 4 -19.389 17.52)
+      (outline
+        (polygon signal 0
+          -58.152 -33.596
+          58.152 -33.596
+          60.074 -31.674
+          60.074 31.674
+          58.152 33.596
+          -58.152 33.596
+          -60.074 31.674
+          -60.074 -31.674
+        )
+      )
+    )
+    (image 'Pad_Pad2'
+      (side front)
+      (pin 41 1 0.0 0.0)
+      (outline
+        (polygon signal 0
+          -44.666 -46.588
+          44.666 -46.588
+          46.588 -44.666
+          46.588 44.666
+          44.666 46.588
+          -44.666 46.588
+          -46.588 44.666
+          -46.588 -44.666
+        )
+      )
+    )
+    (image 'P12970SCT-ND_S1'
+      (side front)
+      (pin 42 1 -133.858 -78.74)
+      (pin 42 2 133.858 -78.74)
+      (pin 42 3 133.858 78.74)
+      (pin 42 4 -133.858 78.74)
+      (outline
+        (polygon signal 0
+          -198.209 -473.36
+          198.209 -473.36
+          200.131 -471.438
+          200.131 471.438
+          198.209 473.36
+          -198.209 473.36
+          -200.131 471.438
+          -200.131 -471.438
+        )
+      )
+    )
+    (image 'DF13-4P-1.25DSA_SP'
+      (side front)
+      (pin 43 1 -73.819 -19.291)
+      (pin 44 2 -24.606 -19.291)
+      (pin 44 3 24.606 -19.291)
+      (pin 44 4 73.819 -19.291)
+      (outline
+        (polygon signal 0
+          -132.265 -70.21
+          132.265 -70.21
+          134.187 -68.288
+          134.187 68.288
+          132.265 70.21
+          -132.265 70.21
+          -134.187 68.288
+          -134.187 -68.288
+        )
+      )
+    )
+    (image 'ATMEGA168PB_MLF@Moved@pins_U1'
+      (side front)
+      (pin 45 1 -85.186 68.898)
+      (pin 45 2 -85.186 49.213)
+      (pin 45 3 -85.186 29.528)
+      (pin 45 4 -85.186 9.843)
+      (pin 45 5 -85.186 -9.843)
+      (pin 45 6 -85.186 -29.528)
+      (pin 45 7 -85.186 -49.213)
+      (pin 45 8 -85.186 -68.898)
+      (pin 46 9 -57.627 -96.457)
+      (pin 46 10 -37.942 -96.457)
+      (pin 46 11 -18.257 -96.457)
+      (pin 46 12 1.428 -96.457)
+      (pin 46 13 21.113 -96.457)
+      (pin 46 14 40.798 -96.457)
+      (pin 46 15 60.483 -96.457)
+      (pin 46 16 80.168 -96.457)
+      (pin 45 17 107.727 -68.898)
+      (pin 45 18 107.727 -49.213)
+      (pin 45 19 107.727 -29.528)
+      (pin 45 20 107.727 -9.843)
+      (pin 45 21 107.727 9.843)
+      (pin 45 22 107.727 29.528)
+      (pin 45 23 107.727 49.213)
+      (pin 45 24 107.727 68.898)
+      (pin 46 25 80.168 96.457)
+      (pin 46 26 60.483 96.457)
+      (pin 46 27 40.798 96.457)
+      (pin 46 28 21.113 96.457)
+      (pin 46 29 1.428 96.457)
+      (pin 46 30 -18.257 96.457)
+      (pin 46 31 -37.942 96.457)
+      (pin 46 32 -57.627 96.457)
+      (pin 47 33 11.27 0.0)
+      (outline
+        (polygon signal 0
+          -125.818 -116.47
+          125.818 -116.47
+          127.74 -114.548
+          127.74 114.548
+          125.818 116.47
+          -125.818 116.47
+          -127.74 114.548
+          -127.74 -114.548
+        )
+      )
+    )
+    (padstack 'DipViaStyle_0'
+      (shape
+        (circle Top 40.0 0.0 0.0)
+      )
+      (shape
+        (circle Bottom 40.0 0.0 0.0)
+      )
+    )
+    (padstack 0
+      (shape
+        (circle Top 196.85 0.0 0.0)
+      )
+    )
+    (padstack 1
+      (shape
+        (rect Top -100.0 -54.921 100.0 54.921)
+      )
+    )
+    (padstack 2
+      (shape
+        (rect Top -100.0 -54.921 100.0 54.921)
+      )
+    )
+    (padstack 3
+      (shape
+        (rect Top -21.654 -19.685 21.654 19.685)
+      )
+    )
+    (padstack 4
+      (shape
+        (rect Top -20.669 -12.795 20.669 12.795)
+      )
+    )
+    (padstack 5
+      (shape
+        (circle Top 177.166 0.0 0.0)
+      )
+    )
+    (padstack 6
+      (shape
+        (rect Top -25.591 -35.433 25.591 35.433)
+      )
+    )
+    (padstack 7
+      (shape
+        (polygon Top 0
+          -17.891 -39.878
+          43.482 -4.445
+          17.891 39.878
+          -43.482 4.445
+        )
+      )
+    )
+    (padstack 8
+      (shape
+        (polygon Top 0
+          -17.891 -39.878
+          43.482 -4.445
+          17.891 39.878
+          -43.482 4.445
+        )
+      )
+    )
+    (padstack 9
+      (shape
+        (polygon Top 0
+          17.891 -39.878
+          43.482 4.445
+          -17.891 39.878
+          -43.482 -4.445
+        )
+      )
+    )
+    (padstack 10
+      (shape
+        (polygon Top 0
+          17.891 -39.878
+          43.482 4.445
+          -17.891 39.878
+          -43.482 -4.445
+        )
+      )
+    )
+    (padstack 11
+      (shape
+        (polygon Top 0
+          -17.891 -39.878
+          43.482 -4.445
+          17.891 39.878
+          -43.482 4.445
+        )
+      )
+    )
+    (padstack 12
+      (shape
+        (polygon Top 0
+          -17.891 -39.878
+          43.482 -4.445
+          17.891 39.878
+          -43.482 4.445
+        )
+      )
+    )
+    (padstack 13
+      (shape
+        (polygon Top 0
+          17.891 -39.878
+          43.482 4.445
+          -17.891 39.878
+          -43.482 -4.445
+        )
+      )
+    )
+    (padstack 14
+      (shape
+        (polygon Top 0
+          17.891 -39.878
+          43.482 4.445
+          -17.891 39.878
+          -43.482 -4.445
+        )
+      )
+    )
+    (padstack 15
+      (shape
+        (rect Top -33.465 -33.465 33.465 33.465)
+      )
+      (shape
+        (rect Bottom -33.465 -33.465 33.465 33.465)
+      )
+    )
+    (padstack 16
+      (shape
+        (circle Top 66.93 0.0 0.0)
+      )
+      (shape
+        (circle Bottom 66.93 0.0 0.0)
+      )
+    )
+    (padstack 17
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 18
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 19
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 20
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 21
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 22
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 23
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 24
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 25
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 26
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 27
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 28
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 29
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 30
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 31
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 32
+      (shape
+        (rect Top -12.795 -16.732 12.795 16.732)
+      )
+    )
+    (padstack 33
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 34
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 35
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 36
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 37
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 38
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 39
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 40
+      (shape
+        (rect Top -16.732 -12.795 16.732 12.795)
+      )
+    )
+    (padstack 41
+      (shape
+        (circle Top 86.614 0.0 0.0)
+      )
+    )
+    (padstack 42
+      (shape
+        (rect Top -62.992 -23.622 62.992 23.622)
+      )
+    )
+    (padstack 43
+      (shape
+        (rect Top -19.685 -19.685 19.685 19.685)
+      )
+      (shape
+        (rect Bottom -19.685 -19.685 19.685 19.685)
+      )
+    )
+    (padstack 44
+      (shape
+        (circle Top 39.37 0.0 0.0)
+      )
+      (shape
+        (circle Bottom 39.37 0.0 0.0)
+      )
+    )
+    (padstack 45
+      (shape
+        (polygon Top 0
+          -13.273 -5.906
+          13.273 -5.906
+          16.733 -2.446
+          16.733 2.446
+          13.273 5.906
+          -13.273 5.906
+          -16.733 2.446
+          -16.733 -2.446
+        )
+      )
+    )
+    (padstack 46
+      (shape
+        (polygon Top 0
+          -2.446 -16.733
+          2.446 -16.733
+          5.906 -13.273
+          5.906 13.273
+          2.446 16.733
+          -2.446 16.733
+          -5.906 13.273
+          -5.906 -13.273
+        )
+      )
+    )
+    (padstack 47
+      (shape
+        (rect Top -63.976 -63.976 63.976 63.976)
+      )
+    )
+  )
+  (network
+    (net BLUE 1
+      (pins
+        P5-3
+        P4-3
+        P3-3
+        P2-3
+        P1-3
+        P0-3
+        D1-1
+        C2-1
+      )
+    )
+    (net BUT 1
+      (pins
+        U1-11
+        S1-3
+      )
+    )
+    (net GND 1
+      (pins
+        U1-33
+        U1-21
+        U1-5
+        SP-1
+        S1-1
+        J1-6
+        C1-2
+        B1-1
+      )
+    )
+    (net GREEN 1
+      (pins
+        U1-9
+        P5-1
+        P4-1
+        P3-1
+        P2-1
+        P1-1
+        P0-1
+      )
+    )
+    (net 'IR-A1' 1
+      (pins
+        U1-12
+        IR0-1
+      )
+    )
+    (net 'IR-A2' 1
+      (pins
+        U1-13
+        IR1-1
+      )
+    )
+    (net 'IR-A3' 1
+      (pins
+        U1-14
+        IR2-1
+      )
+    )
+    (net 'IR-A4' 1
+      (pins
+        U1-15
+        J1-4
+        IR3-1
+      )
+    )
+    (net 'IR-A5' 1
+      (pins
+        U1-16
+        J1-1
+        IR4-1
+      )
+    )
+    (net 'IR-A6' 1
+      (pins
+        U1-17
+        J1-3
+        IR5-1
+      )
+    )
+    (net 'IR-C1' 1
+      (pins
+        U1-23
+        IR0-2
+      )
+    )
+    (net 'IR-C2' 1
+      (pins
+        U1-24
+        IR1-2
+      )
+    )
+    (net 'IR-C3' 1
+      (pins
+        U1-25
+        IR2-2
+      )
+    )
+    (net 'IR-C4' 1
+      (pins
+        U1-26
+        IR3-2
+      )
+    )
+    (net 'IR-C5' 1
+      (pins
+        U1-27
+        IR4-2
+      )
+    )
+    (net 'IR-C6' 1
+      (pins
+        U1-28
+        IR5-2
+      )
+    )
+    (net Net@8 1
+      (pins
+        U1-29
+        J1-5
+      )
+    )
+    (net Net@18 1
+      (pins
+        U1-7
+        P0-2
+      )
+    )
+    (net Net@19 1
+      (pins
+        U1-8
+        P2-2
+      )
+    )
+    (net Net@1 1
+      (pins
+        U1-30
+        SP-3
+      )
+    )
+    (net Net@0 1
+      (pins
+        U1-31
+        SP-2
+      )
+    )
+    (net Net@22 1
+      (pins
+        U1-32
+        P5-2
+      )
+    )
+    (net Net@23 1
+      (pins
+        U1-2
+        P4-2
+      )
+    )
+    (net Net@25 1
+      (pins
+        U1-1
+        C2-2
+      )
+    )
+    (net Net@26 1
+      (pins
+        U1-22
+        D1-3
+      )
+    )
+    (net RED 1
+      (pins
+        U1-10
+        P5-4
+        P4-4
+        P3-4
+        P2-4
+        P1-4
+        P0-4
+      )
+    )
+    (net Vcc 1
+      (pins
+        U1-18
+        U1-4
+        J1-2
+        H1-1
+        C1-1
+        B1-3
+      )
+    )
+    (net Net@27 1
+      (pins
+        U1-3
+        P1-2
+      )
+    )
+    (net Net@28 1
+      (pins
+        U1-6
+        P3-2
+      )
+    )
+    (net Net@29 1
+      (pins
+        U1-19
+        SP-4
+      )
+    )
+    (via 
+      'DipViaStyle_0' 'DipViaStyle_0' default
+    )
+    (via_rule
+      default 'DipViaStyle_0'
+    )
+    (class default
+      BLUE BUT GREEN 'IR-A1' 'IR-A2' 'IR-A3' 'IR-A4' 'IR-A5'
+      'IR-A6' 'IR-C1' 'IR-C2' 'IR-C3' 'IR-C4' 'IR-C5' 'IR-C6' Net@8
+      Net@18 Net@19 Net@1 Net@0 Net@22 Net@23 Net@25 Net@26
+      RED Net@27 Net@28 Net@29
+      (clearance_class default)
+      (via_rule default)
+      (rule
+        (width 5.906)
+      )
+      (circuit 
+        (use_layer Top Bottom)
+      )
+    )
+    (class class1
+      GND Vcc
+      (clearance_class default)
+      (via_rule default)
+      (rule
+        (width 11.812)
+      )
+      (circuit 
+        (use_layer Top Bottom)
+      )
+    )
+  )
+  (wiring
+    (wire
+      (polyline_path Top 5.906
+        61.901 -25.654 61.9 -25.655 
+        0.0 -113.03 -129.946 16.916 
+        -129.946 16.916 -184.422 16.916 
+        -184.422 16.916 -184.422 16.917 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        207.28 -186.025 3.106 -186.025 
+        -2.83 -177.884 -2.83 -177.883 
+        0.0 -113.03 -129.946 16.916 
+        61.901 -25.654 61.9 -25.655 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        230.116 139.37 230.117 139.371 
+        230.116 139.37 255.388 114.098 
+        255.388 114.098 255.388 30.65 
+        255.388 30.65 238.725 13.987 
+        238.725 13.987 207.651 13.987 
+        207.651 13.987 188.424 33.214 
+        95.115 24.201 95.114 24.201 
+        61.901 -25.654 61.9 -25.655 
+        -129.946 16.916 0.0 -113.03 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        230.116 139.37 230.116 132.925 
+        242.912 139.37 242.911 139.37 
+        217.32 0.0 217.32 -0.001 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        242.912 139.37 242.912 139.369 
+        242.912 139.37 242.911 139.37 
+        230.116 139.37 230.116 132.925 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        123.976 -4.752 123.976 -4.751 
+        243.7 -4.752 243.701 -4.752 
+        243.7 -4.752 243.701 -4.753 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -393.701 -96.457 -393.7 -96.457 
+        -393.701 -96.457 -393.701 -148.377 
+        -393.701 -148.377 -275.726 -266.352 
+        -275.726 -266.352 -234.636 -266.352 
+        -234.636 -266.352 -234.636 -266.353 
+      )
+      (net Net@22 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -234.636 -266.352 -234.636 -266.353 
+        -241.006 -266.352 -204.439 -266.352 
+        -204.439 -266.352 -163.294 -225.207 
+        -163.294 -225.207 -163.294 -88.824 
+        -176.08 -88.824 -176.081 -88.823 
+        -540.825 26.068 -540.826 26.068 
+        -540.825 20.163 -604.449 83.787 
+        -604.449 83.787 -604.449 117.707 
+        -604.449 117.707 -562.122 160.034 
+        -532.885 155.858 -358.669 155.858 
+        -358.669 155.858 -354.004 160.523 
+        -354.004 160.523 -354.003 160.522 
+      )
+      (net Net@22 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -354.004 160.523 -354.003 160.524 
+        -354.004 160.523 -334.032 140.551 
+        -334.032 140.551 -301.967 140.551 
+        -301.967 140.551 -301.967 140.55 
+      )
+      (net Net@22 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -563.767 100.787 -563.768 100.788 
+        -563.767 100.787 -544.704 119.85 
+        427.393 119.85 427.394 119.85 
+        427.393 119.851 547.244 0.0 
+        547.244 0.0 547.243 -0.001 
+      )
+      (net 'IR-A6' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -184.422 16.916 -184.423 16.916 
+        -184.422 16.916 -184.422 18.136 
+        -184.422 18.136 -242.096 75.81 
+        -242.096 75.81 -274.216 75.81 
+        -274.216 75.81 -310.159 39.867 
+        -310.159 39.867 -543.823 39.867 
+        -543.823 39.867 -592.636 88.68 
+        -592.636 88.68 -592.636 112.814 
+        -592.636 112.814 -561.406 144.044 
+        -549.025 131.663 -236.133 131.663 
+        -236.133 131.663 -199.981 167.815 
+        -199.981 167.815 -199.98 167.814 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -137.878 256.538 -137.878 256.537 
+        -137.878 256.538 -315.509 256.538 
+        -315.509 256.538 -433.071 138.976 
+        -433.071 138.976 -433.071 122.05 
+        -433.071 122.05 -433.072 122.05 
+      )
+      (net BUT 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -91.538 590.551 -91.537 590.55 
+        -91.538 590.551 -152.537 529.552 
+        -152.537 529.552 -210.77 529.552 
+        -210.77 529.552 -246.55 493.772 
+        -246.55 493.772 -246.55 328.256 
+        -260.497 328.256 -452.756 135.997 
+        -452.756 135.997 -452.756 122.05 
+        -452.756 122.05 -452.757 122.05 
+      )
+      (net 'IR-A1' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -302.361 197.246 -302.361 197.245 
+        -302.361 197.246 -358.095 197.246 
+        -358.095 197.246 -413.386 141.955 
+        -413.386 141.955 -413.386 122.05 
+        -413.386 122.05 -413.387 122.05 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        64.291 323.993 64.292 323.992 
+        64.291 323.993 25.697 285.399 
+        25.697 285.399 -420.051 285.399 
+        -420.051 285.399 -533.603 171.847 
+        -533.603 171.847 -567.015 171.847 
+        -567.015 171.847 -616.262 122.6 
+        -616.262 122.6 -616.262 78.894 
+        -616.262 78.894 -551.622 14.254 
+        -297.627 14.254 -297.626 14.254 
+        -297.627 14.255 -266.73 -16.642 
+        -266.73 -16.642 -266.73 -49.237 
+        -266.73 -49.237 -266.731 -49.237 
+      )
+      (net Net@27 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        17.26 648.52 17.26 648.519 
+        17.26 648.52 -73.946 648.52 
+        -73.946 648.52 -550.619 171.847 
+        0.0 183.66 -0.001 183.66 
+        -755.568 0.0 -755.569 -0.001 
+        -628.075 0.0 -628.075 -0.001 
+        -554.074 0.0 -554.073 -0.001 
+        -577.697 40.329 -577.697 -101.369 
+        -577.697 -101.369 -577.698 -101.369 
+      )
+      (net 'IR-C1' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -291.066 482.714 -291.065 482.713 
+        -291.066 482.714 -639.888 133.892 
+        -639.888 133.892 -639.888 -17.122 
+        -639.888 -17.122 -613.753 -43.257 
+        -613.753 -43.257 -613.754 -43.258 
+      )
+      (net Net@26 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -413.386 -122.05 -413.385 -122.05 
+        -413.386 -122.05 -413.386 -145.398 
+        -413.386 -145.398 -258.163 -300.621 
+        -258.163 -300.621 -200.911 -300.621 
+        -200.911 -300.621 -184.368 -317.164 
+        -184.368 -317.164 -184.368 -398.954 
+        -184.368 -398.954 -213.055 -427.641 
+        -213.055 -427.641 -213.056 -427.64 
+      )
+      (net Net@0 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -243.306 140.551 -243.306 140.552 
+        -243.306 140.551 -243.305 140.551 
+        -217.714 0.0 -217.714 0.001 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 68.898 -366.143 68.899 
+        -366.142 68.898 -337.281 97.759 
+        -337.281 97.759 -252.062 97.759 
+        -252.062 97.759 -200.079 45.776 
+        -200.079 45.776 223.645 45.776 
+        223.645 45.776 226.39 43.031 
+        226.39 43.031 226.389 43.03 
+      )
+      (net Net@19 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        285.465 -101.509 285.464 -101.509 
+        285.465 -101.509 285.465 -16.044 
+        285.465 -16.044 226.39 43.031 
+        226.39 43.031 226.391 43.032 
+      )
+      (net Net@19 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -199.981 167.815 -199.981 167.816 
+        -196.794 167.815 -235.136 167.815 
+        -217.32 175.591 -217.321 175.592 
+        -242.911 175.591 -242.912 175.591 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -2.83 -186.025 -2.83 -186.024 
+        26.024 -186.025 207.28 -186.025 
+        207.28 -186.025 217.714 -175.591 
+        217.714 -175.591 217.715 -175.592 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -18.111 -207.086 -18.111 -285.039 
+        3.106 -186.025 207.28 -186.025 
+        -2.83 -177.884 -2.83 -177.883 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -242.912 175.591 -242.912 175.592 
+        -242.912 175.591 -242.911 175.591 
+        -217.32 0.0 -217.32 0.001 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -243.306 140.551 -243.305 140.551 
+        -217.714 140.551 -217.713 140.55 
+        -241.71 138.955 -184.839 138.955 
+        -38.584 285.433 -38.583 285.434 
+        -38.584 285.433 -38.583 285.433 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -366.142 9.843 -366.142 9.844 
+        -366.142 9.843 -325.152 9.843 
+        -325.152 9.843 -320.47 14.525 
+        -320.47 14.525 -216.235 14.525 
+        -216.235 3.739 -183.351 -29.145 
+        -183.351 -29.145 -161.567 -29.145 
+        -161.567 -29.145 -161.567 -29.146 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        223.149 89.585 223.15 89.586 
+        231.398 81.336 197.522 115.212 
+        197.522 115.212 126.524 115.212 
+        93.151 160.358 93.15 160.359 
+        104.043 149.466 104.042 149.465 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -56.149 340.904 -56.15 340.905 
+        -56.149 340.904 -44.199 352.854 
+        -44.199 352.854 76.336 352.854 
+        76.336 352.854 104.043 325.147 
+        104.043 325.147 104.043 149.466 
+        104.043 149.466 104.042 149.466 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -121.6 160.358 -121.601 160.358 
+        -121.6 160.358 -121.6 240.26 
+        -121.6 240.26 -137.878 256.538 
+        -137.878 256.538 -137.877 256.539 
+      )
+      (net BUT 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        18.111 370.08 18.11 370.079 
+        18.111 370.08 -117.987 506.178 
+        -117.987 506.178 -217.23 506.178 
+        -217.23 506.178 -222.631 500.777 
+        -222.631 500.777 -222.631 382.281 
+        -222.631 382.281 -106.592 266.242 
+        -108.496 266.242 -108.496 266.241 
+        -107.357 245.578 -107.358 245.577 
+        -137.05 215.12 -284.488 215.12 
+        -284.488 215.12 -284.488 215.119 
+        -284.488 215.119 -302.361 197.246 
+        -302.361 197.246 -302.362 197.247 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        62.006 78.74 62.005 78.739 
+        62.006 78.74 -19.612 160.358 
+        -19.612 160.358 -121.6 160.358 
+        -121.6 160.358 -121.6 160.359 
+      )
+      (net BUT 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        285.465 -101.509 285.464 -101.51 
+        280.734 -96.778 302.361 -118.405 
+        302.361 -118.405 302.361 -140.551 
+        302.361 -140.551 302.36 -140.551 
+      )
+      (net Net@19 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -268.504 175.591 -268.503 175.59 
+        -268.504 175.591 -276.374 167.721 
+        -276.374 167.721 -276.374 119.717 
+        -280.124 119.717 -280.125 119.716 
+        -285.375 110.716 -378.605 110.716 
+        -378.605 110.716 -389.939 122.05 
+        -389.939 122.05 -393.701 122.05 
+        -393.701 122.05 -393.701 122.051 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 49.213 -366.142 49.214 
+        -366.142 49.213 -366.141 49.213 
+        -340.549 0.0 -340.549 0.001 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -322.843 68.898 -322.844 68.899 
+        -322.843 68.898 -284.007 107.734 
+        -284.007 107.734 205.0 107.734 
+        205.0 107.734 231.398 81.336 
+        223.149 89.585 223.15 89.586 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -56.149 340.904 -56.149 340.903 
+        -63.543 340.904 -20.119 340.904 
+        -38.584 344.094 -38.583 344.095 
+        -16.93 344.094 -16.929 344.094 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -16.929 344.094 -16.929 344.093 
+        -16.929 344.094 -16.93 344.094 
+        -38.584 0.0 -38.584 -0.001 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -192.916 462.597 -192.915 462.597 
+        -192.916 462.597 -192.916 429.463 
+        -185.668 429.463 -185.667 429.462 
+        -74.887 311.434 -38.584 311.434 
+        -38.584 311.434 -38.584 311.433 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 49.213 -366.141 49.213 
+        -340.549 0.0 -340.549 0.001 
+        -334.897 56.844 -322.843 68.898 
+        -322.843 68.898 -322.842 68.897 
+      )
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        243.7 -4.752 243.699 -4.751 
+        243.7 -4.752 271.969 23.517 
+        268.898 174.41 268.898 174.411 
+        268.898 174.41 268.899 174.411 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        217.32 139.37 217.32 139.369 
+        217.32 139.37 188.906 139.37 
+        188.906 139.37 68.829 259.447 
+        68.829 259.447 18.111 259.447 
+        18.111 259.447 18.111 259.448 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -228.289 -78.276 -228.288 -78.275 
+        -228.289 -78.276 -175.395 -131.17 
+        -175.395 -131.17 -175.395 -219.818 
+        -175.395 -219.818 -192.293 -236.716 
+        -192.293 -236.716 -264.314 -236.716 
+        -264.314 -236.716 -287.423 -213.607 
+        -287.423 -213.607 -287.422 -213.606 
+      )
+      (net Net@23 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -559.055 -29.528 -559.055 -29.529 
+        -559.055 -29.528 -600.024 -29.528 
+        -600.024 -29.528 -616.921 -46.425 
+        -613.753 -43.257 -613.752 -43.258 
+      )
+      (net Net@26 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -39.766 -317.07 -39.767 -317.071 
+        -39.766 -317.07 -95.707 -261.129 
+        -95.707 -261.129 -198.856 -261.129 
+        -198.856 -261.129 -276.301 -183.684 
+        -276.301 -183.684 -276.301 -139.838 
+        -276.301 -139.838 -276.769 -139.37 
+        -276.769 -139.37 -276.768 -139.369 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -452.756 -96.457 -452.755 -96.457 
+        -452.756 -96.457 -452.756 -156.105 
+        -323.031 -285.829 -323.03 -285.83 
+        -319.703 -285.829 -319.703 -422.486 
+        -319.703 -422.486 -236.787 -505.402 
+        -236.787 -505.402 142.888 -505.402 
+        142.888 -505.402 547.244 -101.046 
+        547.244 -101.046 547.244 -100.0 
+        547.244 -100.0 547.245 -100.0 
+      )
+      (net Net@8 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -433.071 -96.457 -433.07 -96.457 
+        -433.071 -96.457 -433.071 -158.413 
+        -433.071 -158.413 -213.055 -378.429 
+        -213.055 -378.429 -213.056 -378.43 
+      )
+      (net Net@1 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -242.912 175.591 -242.912 175.59 
+        -242.912 175.591 -242.913 175.591 
+        -268.504 0.0 -268.504 -0.001 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        302.755 -175.591 302.755 -175.59 
+        302.755 -175.591 302.756 -175.591 
+        328.347 0.0 328.347 0.001 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        302.361 128.543 302.362 128.542 
+        302.361 128.543 284.3 110.482 
+        284.3 110.482 284.3 -52.267 
+        284.3 -52.267 328.385 -96.352 
+        328.347 -175.591 328.347 -175.592 
+        328.347 -175.591 328.346 -175.59 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        39.765 344.489 39.766 344.488 
+        39.766 344.488 52.099 356.821 
+        162.311 352.967 162.312 352.967 
+        162.312 356.821 327.56 191.573 
+        327.56 191.573 327.56 153.742 
+        305.961 132.143 284.3 110.482 
+        302.36 128.544 302.361 128.543 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        301.967 196.065 301.966 196.064 
+        301.967 196.065 174.039 323.993 
+        69.95 323.993 64.291 323.993 
+        64.291 323.993 64.291 323.994 
+      )
+      (net Net@27 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -38.584 311.434 -38.584 311.435 
+        -38.584 311.434 35.789 311.434 
+        35.789 311.434 151.158 196.065 
+        151.158 196.065 243.306 196.065 
+        243.306 196.065 243.306 196.064 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        504.919 100.0 504.919 99.999 
+        504.919 100.0 474.06 100.0 
+        474.06 100.0 -3.323 577.383 
+        -3.323 577.383 -3.323 627.188 
+        -3.323 627.188 -22.793 646.658 
+        -22.793 646.658 -221.699 646.658 
+        -221.699 646.658 -395.006 473.351 
+        -395.006 473.351 -395.006 297.55 
+        -395.006 297.55 -531.496 161.06 
+        -531.496 161.06 -531.496 96.457 
+        -531.496 96.457 -531.497 96.457 
+      )
+      (net 'IR-A5' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        468.893 -137.574 468.893 -137.575 
+        468.893 -137.574 393.318 -137.574 
+        393.318 -137.574 296.22 -40.476 
+        296.22 -40.476 296.22 69.737 
+        296.22 69.737 339.724 113.241 
+        339.724 113.241 339.724 216.846 
+        -19.313 575.882 -19.314 575.883 
+        -19.313 575.882 -19.313 626.472 
+        -19.313 626.472 -27.686 634.845 
+        -27.686 634.845 -216.806 634.845 
+        -216.806 634.845 -343.076 508.575 
+        -343.076 508.575 -343.076 290.786 
+        -343.076 290.786 -511.811 122.051 
+        -511.811 122.051 -511.811 96.457 
+        -511.811 96.457 -511.812 96.457 
+      )
+      (net 'IR-A4' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -136.06 -469.526 -136.061 -469.526 
+        -136.06 -469.526 -136.06 -373.417 
+        296.13 0.0 296.131 0.001 
+        -134.577 -404.351 -134.577 -404.35 
+        247.728 0.0 247.729 0.001 
+        -132.876 -245.04 -132.876 -245.039 
+        229.671 0.0 229.672 0.001 
+        -117.892 0.0 -117.892 0.001 
+        -439.099 0.0 -439.1 0.001 
+        -132.876 -245.04 -132.876 -245.039 
+        -132.876 -130.967 -95.517 -93.608 
+        -157.63 -29.144 -157.629 -29.145 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -584.648 68.898 -584.649 68.898 
+        -584.648 68.898 -584.648 79.906 
+        -584.648 79.906 -563.767 100.787 
+        -563.767 100.787 -563.766 100.786 
+      )
+      (net 'IR-A6' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        123.976 -26.255 -24.179 -174.41 
+        -24.179 -174.41 -103.578 -174.41 
+        -101.063 -174.41 -101.063 -174.411 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        123.976 -4.752 123.977 -4.752 
+        123.976 -4.752 123.976 -26.255 
+        123.976 -26.255 -24.179 -174.41 
+        -24.179 -174.41 -24.178 -174.411 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        123.976 -26.255 -24.179 -174.41 
+        -24.179 -174.41 -24.178 -174.411 
+        16.929 -230.752 16.929 -242.713 
+        16.929 -242.713 16.928 -242.713 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        16.929 -242.713 16.928 -242.713 
+        16.929 -230.752 16.929 -285.433 
+        16.929 -285.433 16.928 -285.433 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        123.976 -4.752 123.975 -4.752 
+        243.7 -118.896 243.7 -118.897 
+        243.7 -118.896 243.699 -118.897 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        243.7 -140.551 243.699 -140.551 
+        243.7 -140.551 243.7 -140.55 
+        0.0 -118.896 -0.001 -118.896 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -283.466 521.654 -283.467 521.654 
+        -283.467 521.654 -283.467 489.794 
+        -291.066 482.714 -291.067 482.713 
+        -291.066 482.714 -291.066 482.715 
+      )
+      (net Net@26 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        16.929 -344.094 16.93 -344.094 
+        16.929 -344.094 16.929 -344.095 
+        0.0 -369.686 0.001 -369.686 
+      )
+      (net Net@28 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -149.705 -334.385 -149.704 -334.384 
+        -149.705 -334.385 -114.009 -370.081 
+        -114.009 -370.081 16.534 -370.081 
+        16.534 -370.081 16.929 -369.686 
+        16.929 -369.686 16.93 -369.687 
+      )
+      (net Net@28 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -255.211 46.949 -255.21 46.949 
+        -255.211 46.949 -255.211 22.531 
+        -255.211 22.531 -149.705 -82.975 
+        -149.705 -82.975 -149.705 -334.385 
+        -149.705 -334.385 -149.706 -334.385 
+      )
+      (net Net@28 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 29.528 -366.142 29.529 
+        -366.142 29.528 -272.632 29.528 
+        -266.905 35.255 -255.211 46.949 
+        -255.211 46.949 -255.21 46.948 
+      )
+      (net Net@28 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -690.708 56.595 -690.707 56.594 
+        -690.708 56.595 -703.198 44.105 
+        -703.198 44.105 -703.198 -63.966 
+        -570.08 -183.854 -570.079 -183.855 
+        -570.08 -183.854 -570.08 -183.855 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -584.648 29.528 -584.647 29.527 
+        -584.648 29.528 -588.096 26.08 
+        -588.096 26.08 -677.14 26.08 
+        -677.14 26.08 -687.941 15.279 
+        -687.941 15.279 -687.941 -58.341 
+        -665.276 -58.341 -665.275 -58.342 
+        -591.289 -154.993 -501.795 -154.993 
+        -501.795 -154.993 -499.629 -157.159 
+        -499.629 -157.159 -499.63 -157.16 
+      )
+      (net Net@29 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -559.055 -49.213 -559.055 -49.214 
+        -559.055 -49.213 -559.056 -49.213 
+        -584.648 0.0 -584.648 -0.001 
+      )
+      (net 'IR-C1' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -584.648 -49.213 -584.647 -49.213 
+        -584.648 -94.148 -584.648 -94.149 
+        -584.783 -94.283 -577.697 -101.369 
+        -577.697 -101.369 -577.698 -101.37 
+      )
+      (net 'IR-C1' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        57.087 590.551 57.086 590.551 
+        57.087 590.551 57.087 590.552 
+        0.0 634.844 -0.001 634.844 
+      )
+      (net 'IR-C1' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        57.087 590.551 57.087 590.552 
+        0.0 634.844 -0.001 634.844 
+        13.885 651.895 13.884 651.896 
+        17.26 648.52 17.259 648.519 
+      )
+      (net 'IR-C1' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -306.823 -17.743 -306.823 -17.742 
+        -306.823 -99.844 -306.822 -99.845 
+        -204.305 -207.496 -204.305 -207.497 
+        -204.305 -207.496 -204.306 -207.495 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -570.08 -183.854 -570.081 -183.854 
+        -570.08 -183.854 -570.08 -182.618 
+        -570.08 -182.618 -487.306 -99.844 
+        -487.306 -99.844 -278.711 -99.844 
+        -306.823 -17.743 -306.823 -17.742 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -278.711 -99.844 -487.306 -99.844 
+        -306.823 -17.743 -306.823 -17.742 
+        -306.823 -17.743 -306.822 -17.742 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -161.567 -30.732 -161.567 -30.731 
+        -157.629 -29.145 -157.628 -29.145 
+        -155.383 -26.899 -157.629 -29.145 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -159.47 -157.561 -1.909 0.0 
+        -157.629 -29.145 -157.63 -29.144 
+        -157.628 -29.145 -157.629 -29.145 
+        -155.383 -26.899 -157.629 -29.145 
+        -157.629 -29.145 -157.63 -29.144 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -366.142 -9.843 -366.142 -9.842 
+        -366.142 -9.843 -314.723 -9.843 
+        -314.723 -9.843 -306.823 -17.743 
+        -306.823 -17.743 -306.824 -17.744 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 -29.528 -366.142 -29.527 
+        -366.142 -29.528 -333.05 -29.528 
+        -333.05 -32.331 -316.144 -49.237 
+        -266.73 -49.237 -266.729 -49.237 
+        -266.73 -49.213 -266.73 -49.237 
+      )
+      (net Net@27 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -301.966 -174.41 -301.967 -174.41 
+        -301.967 -174.41 -301.967 -203.482 
+        -262.462 -238.568 -262.461 -238.569 
+        -287.423 -213.607 -287.422 -213.606 
+      )
+      (net Net@23 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 -49.213 -366.141 -49.213 
+        -340.549 -49.213 -340.548 -49.214 
+        -228.29 -78.276 -228.289 -78.276 
+        -228.289 -78.276 -228.289 -78.277 
+      )
+      (net Net@23 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 -49.213 -366.142 -49.212 
+        -366.142 -49.213 -366.141 -49.213 
+        -340.549 0.0 -340.549 0.001 
+      )
+      (net Net@23 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -462.598 0.0 -462.599 0.001 
+        -462.598 0.0 -452.755 9.843 
+        -409.448 9.843 -340.862 9.843 
+        -366.142 9.843 -366.142 9.842 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        301.967 174.41 301.966 174.41 
+        301.967 174.41 301.967 174.411 
+        0.0 196.065 -0.001 196.065 
+      )
+      (net Net@27 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        109.904 -432.0 109.904 -431.999 
+        109.904 -432.0 140.775 -432.0 
+        140.775 -432.0 412.297 -160.478 
+        412.297 -160.478 412.297 -147.75 
+        413.092 -147.75 413.093 -147.749 
+        505.566 -54.481 557.072 -54.481 
+        557.072 -54.481 597.244 -14.309 
+        597.244 -14.309 597.244 50.0 
+        597.244 50.0 647.244 100.0 
+        647.244 100.0 647.245 99.999 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -161.567 -78.74 -161.568 -78.74 
+        -161.567 -30.732 -161.567 -30.731 
+        -161.567 -29.145 -161.568 -29.145 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -101.063 -231.631 -101.064 -231.632 
+        -101.063 -231.631 -128.63 -204.064 
+        -204.305 -207.496 -204.306 -207.496 
+        -204.305 -207.496 -204.306 -207.495 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        -213.055 -329.217 -213.055 -329.216 
+        -213.055 -329.216 -327.572 -329.216 
+        -499.173 -157.615 -505.578 -151.21 
+        -499.629 -157.159 -499.63 -157.16 
+      )
+      (net Net@29 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -655.845 -10.335 -655.845 -10.336 
+        -655.845 -10.335 -661.34 -10.335 
+        -659.21 -10.335 -659.21 -10.334 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -655.845 -10.335 -655.845 -10.336 
+        -659.21 -10.335 -659.209 -10.335 
+        -627.712 0.0 -627.712 0.001 
+      )
+      (net GND 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -413.386 96.457 -413.387 96.457 
+        -413.386 96.457 -413.386 96.458 
+        0.0 122.05 -0.001 122.05 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -1.908 -0.001 -1.909 0.0 
+        -1.909 0.0 -159.47 -157.561 
+        -157.629 -29.145 -157.63 -29.144 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -302.361 175.591 -302.362 175.591 
+        -302.361 175.591 -302.361 175.592 
+        0.0 197.246 -0.001 197.246 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -243.306 -174.409 -243.306 -174.41 
+        -103.578 -174.41 -101.063 -174.41 
+        -101.063 -174.41 -101.063 -174.411 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -18.111 -186.025 -18.111 -186.026 
+        -18.111 -186.025 -59.502 -186.025 
+        -59.502 -186.025 -72.203 -173.324 
+        -72.203 -173.324 -72.203 -162.455 
+        -72.203 -162.455 -95.288 -139.37 
+        -95.288 -139.37 -217.32 -139.37 
+        -217.32 -139.37 -217.32 -139.369 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        53.998 -432.0 53.997 -432.0 
+        53.998 -432.0 53.998 -386.692 
+        53.998 -386.692 -101.063 -231.631 
+        -101.063 -231.631 -101.062 -231.63 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        547.244 100.0 547.244 99.999 
+        547.244 100.0 547.243 100.0 
+        504.919 0.0 504.919 -0.001 
+      )
+      (net 'IR-A5' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -659.21 56.595 -659.21 56.594 
+        -659.21 56.595 -659.211 56.595 
+        -690.708 0.0 -690.708 -0.001 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -645.676 56.595 -645.676 56.594 
+        -652.443 56.595 -678.099 56.595 
+        -659.21 56.595 -659.21 56.596 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -559.055 29.528 -559.055 29.527 
+        -559.055 29.528 -559.056 29.528 
+        -584.648 0.0 -584.648 -0.001 
+      )
+      (net Net@29 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -57.087 -590.551 -57.087 -590.552 
+        -57.087 -590.551 -168.346 -590.551 
+        -168.346 -590.551 -338.457 -420.44 
+        -338.457 -420.44 -338.457 -295.404 
+        -338.457 -295.404 -470.313 -163.548 
+        -470.313 -163.548 -470.313 -145.66 
+        -470.313 -145.66 -493.923 -122.05 
+        -493.923 -122.05 -511.811 -122.05 
+        -511.811 -122.05 -511.811 -122.049 
+      )
+      (net 'IR-C4' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -559.055 -9.842 -559.055 -9.843 
+        -599.415 -9.843 -627.22 -9.843 
+        -627.22 -9.843 -627.712 -10.335 
+        -627.712 -10.335 -627.713 -10.334 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -462.597 -0.001 -462.598 0.0 
+        -463.089 -0.491 -463.09 -0.492 
+        -515.748 -9.843 -570.844 -9.843 
+        -559.055 -9.842 -559.055 -9.843 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        53.998 -432.0 53.998 -388.791 
+        -1.909 -432.0 -1.908 -432.0 
+        109.904 0.0 109.904 0.001 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -1.909 -432.0 -1.909 -431.999 
+        -1.909 -432.0 -1.908 -432.0 
+        53.998 -432.0 53.998 -388.791 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -204.455 -476.854 -204.454 -476.855 
+        -204.455 -476.854 -204.456 -476.854 
+        -213.055 -476.854 -213.055 -476.853 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -204.455 -476.854 -206.42 -478.819 
+        -213.055 -476.854 -213.054 -476.854 
+        -181.557 0.0 -181.557 0.001 
+      )
+      (net GND 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -33.465 -157.48 -33.466 -157.48 
+        -33.465 -157.48 -33.465 -157.479 
+        0.0 -128.935 -0.001 -128.935 
+      )
+      (net Net@25 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -366.142 -68.898 -366.142 -68.897 
+        -366.142 -68.898 -366.141 -68.898 
+        -340.549 0.0 -340.549 0.001 
+      )
+      (net Net@25 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -340.549 -68.898 -340.548 -68.897 
+        -340.549 -68.898 -294.235 -115.212 
+        -294.235 -115.212 -47.188 -115.212 
+        -47.188 -115.212 -33.465 -128.935 
+        -33.465 -128.935 -33.466 -128.936 
+      )
+      (net Net@25 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Bottom 5.906
+        468.893 -137.574 468.894 -137.573 
+        468.893 -137.574 474.116 -142.797 
+        474.116 -142.797 564.582 -142.797 
+        564.582 -142.797 589.57 -117.809 
+        589.57 -117.809 589.57 -57.674 
+        589.57 -57.674 647.244 0.0 
+        647.244 0.0 647.245 -0.001 
+      )
+      (net 'IR-A4' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        18.111 344.488 18.111 344.489 
+        18.111 344.488 18.112 344.488 
+        39.766 0.0 39.766 0.001 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -559.055 68.898 -559.055 68.897 
+        -559.055 68.898 -559.056 68.898 
+        -584.648 0.0 -584.648 -0.001 
+      )
+      (net 'IR-A6' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        57.087 -590.551 57.087 -590.55 
+        57.087 -590.551 57.088 -590.551 
+        91.538 0.0 91.538 0.001 
+      )
+      (net 'IR-A4' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -136.06 -469.526 -136.059 -469.525 
+        -136.06 -469.526 -106.84 -498.746 
+        -106.84 -498.746 268.932 -498.746 
+        647.244 -100.0 647.245 -99.999 
+        647.244 -100.0 647.245 -100.0 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        647.244 0.0 647.245 -0.001 
+        647.244 0.0 597.244 -50.0 
+        597.244 -50.0 597.244 -109.884 
+        597.244 -109.884 116.577 -590.551 
+        116.577 -590.551 91.538 -590.551 
+        91.538 -590.551 91.538 -590.55 
+      )
+      (net 'IR-A4' 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -645.676 56.595 -645.676 56.594 
+        -659.21 56.595 -659.209 56.595 
+        -632.142 56.595 -632.142 56.596 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -242.912 -139.37 -242.912 -139.369 
+        -242.912 -139.37 -242.911 -139.37 
+        -217.32 0.0 -217.32 0.001 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        207.28 -186.025 -67.728 -186.025 
+        -18.111 -207.086 -18.111 -285.039 
+        -18.111 -285.039 -18.112 -285.039 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -452.756 96.457 -452.757 96.457 
+        -452.756 96.457 -452.756 96.458 
+        0.0 122.05 -0.001 122.05 
+      )
+      (net 'IR-A1' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        18.111 344.488 18.11 344.488 
+        18.111 344.488 18.111 344.489 
+        0.0 370.08 -0.001 370.08 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -433.071 96.457 -433.072 96.457 
+        -433.071 96.457 -433.071 96.458 
+        0.0 122.05 -0.001 122.05 
+      )
+      (net BUT 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Bottom 11.812
+        -136.06 -451.86 -136.06 -469.526 
+        -136.06 -469.526 -136.061 -469.526 
+        -181.557 -476.854 -181.558 -476.855 
+        -181.557 -476.854 -181.558 -476.854 
+      )
+      (net GND 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        243.306 174.41 243.306 174.411 
+        243.306 174.41 243.307 174.41 
+        268.898 0.0 268.898 0.001 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -302.361 -139.37 -302.361 -139.369 
+        -302.361 -139.37 -302.36 -139.37 
+        -276.769 0.0 -276.769 0.001 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        302.755 -197.246 302.756 -197.247 
+        302.755 -197.246 182.931 -317.07 
+        -33.464 -317.07 -159.943 -317.07 
+        -39.766 -323.372 -39.766 -344.488 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -33.464 -317.07 -159.943 -317.07 
+        -39.766 -323.372 -39.766 -344.488 
+        -39.766 -344.488 -39.767 -344.488 
+      )
+      (net RED 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -57.087 590.551 -57.087 590.55 
+        -57.087 590.551 -57.088 590.551 
+        -91.538 0.0 -91.538 -0.001 
+      )
+      (net 'IR-A1' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        302.361 139.37 302.362 139.37 
+        302.361 139.37 302.361 139.369 
+        302.361 128.543 327.56 128.543 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        243.306 -175.591 243.306 -175.592 
+        243.306 -175.591 243.305 -175.591 
+        217.714 0.0 217.714 -0.001 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        133.858 78.74 133.858 78.739 
+        133.858 78.74 133.857 78.74 
+        62.006 0.0 62.006 -0.001 
+      )
+      (net BUT 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -393.701 96.457 -393.702 96.457 
+        -393.701 96.457 -393.701 96.458 
+        0.0 122.05 -0.001 122.05 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -192.916 484.252 -192.915 484.252 
+        -192.916 484.252 -192.916 484.251 
+        0.0 462.597 0.001 462.597 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -67.275 311.434 -67.274 311.434 
+        -38.584 285.433 -38.584 285.432 
+        -38.584 285.433 -38.583 285.432 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        243.306 174.41 243.305 174.41 
+        243.306 174.41 243.306 174.411 
+        0.0 196.065 -0.001 196.065 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        33.465 -157.48 33.465 -157.479 
+        33.465 -157.48 33.466 -157.48 
+        63.979 0.0 63.979 0.001 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        33.465 -157.48 33.466 -157.48 
+        63.979 -157.48 63.98 -157.479 
+        50.394 -140.551 243.7 -140.551 
+        243.7 -140.551 243.7 -140.552 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        302.755 -175.591 302.756 -175.591 
+        302.755 -175.591 302.755 -175.592 
+        0.0 -197.246 0.001 -197.246 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -511.811 -96.457 -511.81 -96.457 
+        -511.811 -96.457 -511.811 -96.458 
+        0.0 -122.05 0.001 -122.05 
+      )
+      (net 'IR-C4' 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -559.055 49.213 -559.056 49.213 
+        -587.601 49.213 -587.602 49.214 
+        -632.142 56.595 -632.143 56.595 
+        -632.142 56.595 -632.143 56.596 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -559.055 49.213 -559.055 49.212 
+        -559.055 49.213 -559.056 49.213 
+        -587.601 0.0 -587.601 -0.001 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -16.929 285.433 -16.929 285.432 
+        -16.929 285.433 -16.93 285.433 
+        -38.584 0.0 -38.584 -0.001 
+      )
+      (net BLUE 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 11.812
+        -133.858 -78.74 -133.858 -78.741 
+        -133.858 -78.74 -133.859 -78.74 
+        -161.567 -27.558 -161.567 -78.74 
+      )
+      (net GND 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -413.386 -96.457 -413.385 -96.457 
+        -413.386 -96.457 -413.386 -96.458 
+        0.0 -122.05 0.001 -122.05 
+      )
+      (net Net@0 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 11.812
+        647.244 100.0 647.245 99.999 
+        647.244 100.0 597.244 50.0 
+        597.244 50.0 597.244 -26.261 
+        566.367 -45.279 566.366 -45.28 
+        501.965 -45.55 501.964 -45.55 
+        443.701 -50.0 393.701 0.0 
+        393.701 0.0 393.702 0.001 
+      )
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (wire
+      (polyline_path Top 5.906
+        18.111 285.039 18.112 285.039 
+        18.111 285.039 18.111 285.038 
+        0.0 259.447 0.001 259.447 
+      )
+      (net GREEN 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (wire
+      (polyline_path Top 5.906
+        -18.111 -344.488 -18.111 -344.489 
+        -18.111 -344.488 -18.112 -344.488 
+        -39.766 0.0 -39.766 -0.001 
+      )
+      (net RED 1)
+      (clearance_class default)
+      (type shove_fixed)
+    )
+    (via 'DipViaStyle_0' -354.004 160.523
+      (net Net@22 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -234.636 -266.352
+      (net Net@22 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -199.981 167.815
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -184.422 16.916
+      (net GREEN 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 285.465 -101.509
+      (net Net@19 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 226.39 43.031
+      (net Net@19 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -56.149 340.904
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 104.043 149.466
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 223.149 89.585
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -322.843 68.898
+      (net Net@18 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 16.929 -242.713
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -149.705 -334.385
+      (net Net@28 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -255.211 46.949
+      (net Net@28 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -291.066 482.714
+      (net Net@26 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -613.753 -43.257
+      (net Net@26 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 17.26 648.52
+      (net 'IR-C1' 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -577.697 -101.369
+      (net 'IR-C1' 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -287.423 -213.607
+      (net Net@23 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -228.289 -78.276
+      (net Net@23 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -266.73 -49.237
+      (net Net@27 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 64.291 323.993
+      (net Net@27 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -306.823 -17.743
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -570.08 -183.854
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -499.629 -157.159
+      (net Net@29 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -204.305 -207.496
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -101.063 -231.631
+      (net Vcc 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 468.893 -137.574
+      (net 'IR-A4' 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -101.063 -174.41
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' 123.976 -4.752
+      (net BLUE 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -121.6 160.358
+      (net BUT 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -137.878 256.538
+      (net BUT 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -563.767 100.787
+      (net 'IR-A6' 1)
+      (clearance_class default)
+    )
+    (via 'DipViaStyle_0' -157.629 -29.145
+      (net GND 1)
+      (clearance_class default)
+    )
+  )
+)

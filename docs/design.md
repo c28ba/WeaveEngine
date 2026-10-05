@@ -72,7 +72,19 @@
 **Format: Specctra DSN in, SES out** (the same interchange TopoR 4.0 added, which most CAD tools can produce). It keeps the router independent of any one CAD tool.
 - A DSN parser is a small s-expression reader. Needed sections: `boundary`, `structure` (layers, rules), `placement`, `library` (images and padstacks), `network` (nets, classes), and optionally `wiring` for fixed existing copper.
 - **Open item:** confirm which CAD versions you use can export DSN and import SES (KiCad has historically supported both; check your version).
-- Pre-existing wires and vias in `wiring` are treated as fixed obstacles in v1.
+- Routing already in the file (`wiring`): traces and vias marked fixed (`type` `protect`, `fix` or `shove_fixed`) are obstacles. Anything else is what an earlier run left behind and is discarded, with a note, and those connections are routed afresh. Keeping its vias while redoing its traces would only leave walls on the board. **Open:** fixed traces written as `polyline_path` are not read and are ignored; the connections they make are routed again.
+- A clearance written as `clear` (some tools) is read like `clearance`.
+- **Missing rules fall back to defaults.** A DSN with no `rule`, or with only a width or only a clearance, is valid and is routed, not rejected. Each value is resolved separately, in this order: the user's override in the settings, the DSN (default class, then the `structure` rule, then the other classes), the built-in default.
+
+  | Value | Built-in default |
+  |---|---|
+  | Trace width | 0.2 mm |
+  | Clearance | 0.2 mm |
+  | Via diameter / drill | 0.6 / 0.3 mm (also used when the `via` padstack is missing or has no circle) |
+  | Edge clearance | the clearance (as now) |
+  | Unit / resolution | um / 10 (as now) |
+
+  The built-in defaults live in one place (`board.Rules`), which the settings editor's starting values also read. The reader records what it defaulted in `Design.defaulted`; whatever the user's settings do not then set is reported, as a line on the command line and a note in the app's log. A `via` that names a padstack the library does not define counts as missing. The only things still refused are a file that is not a DSN, one with no signal layer, and one with no boundary, because nothing sensible can be assumed for those.
 - A DSN does not carry the copper-to-board-edge clearance or drill sizes. The edge clearance is taken from `--edge-clearance`, or from the KiCad project file (`--kicad-pro`, or a `.kicad_pro` next to the DSN); otherwise it defaults to the trace clearance. Hole clearance cannot be checked from a DSN.
 - Routing uses a small extra margin (`--margin`, default 0.01 mm) so that nothing sits exactly on a limit; the written SES is read back and measured against the unpadded rules.
 - SES writer emits each wire as a polyline `path` with width. Arcs are approximated by polylines until M8.
@@ -299,7 +311,7 @@ Input: per wire, the gate sequence and the per-gate ordering `gate_order`.
 1. **Initial placement.** On each gate with `k` wires ordered `w_1..w_k`, place wire `w_i`'s crossing point at fraction `(i - 0.5) / k` along the gate (gate endpoints already include the clearance inflation).
 2. **Gauss-Seidel sweeps.** For each wire, for each interior crossing point, move it to the point on its gate that minimises path length (intersect the line between its two neighbours' points with the gate, clamp to the gate). Then clamp it between its ordered neighbours on the same gate: at least `(t + s)` away from the previous wire's point and from the next wire's point. Repeat until the largest movement in a sweep is below `1e-4 mm` or a sweep limit is hit.
 3. **Bends.** A point clamped to a gate endpoint means the wire bends around that obstacle vertex. Because obstacles are already inflated by `s + t/2`, a wire touching the inflated vertex is DRC-legal. Use a mitred/rounded inflation with enough resolution to avoid clearance loss at convex corners.
-4. **Terminals.** The wire's first and last points lie on the inflated pad boundary. Add a short *stitch* segment from that point to the pad's anchor (centroid or nearest copper point). The inflation ring guarantees no foreign copper is in between.
+4. **Terminals.** The wire's first and last points lie on the inflated pad boundary. A short straight stub joins that point to the pad centre. The ring guarantees only that the point itself is clear of foreign copper. Where the rings of neighbouring pads have merged (fine-pitch parts), a stub from the part of the ring over the gap cuts across towards the neighbour. So each pad edge has a window, the part of it from which the stub keeps its clearance, found once per map by trying 17 points along the edge (`geom/exits.py`). An edge with no such part is made a wall, so the search never leaves a pad through it; relaxation keeps a trace's end inside the window. A pad with no legal edge at all cannot be reached on that layer and is reported with the other unreachable pads.
 
 Vectorise the sweep with NumPy (all wires processed per gate-index class), or use `numba` for this kernel only.
 
@@ -376,6 +388,7 @@ Synthetic generators plus a few real boards:
 2. Escape-routing case (dense pad array to periphery).
 3. Channel-routing case.
 4. A few real boards exported from your CAD tool. First one: `boards/Word of RAM.dsn` (KiCad, 2 layers, relay-based 6-bit word of RAM; through-hole parts with custom footprints, a 0.5 mm power class next to the 0.2 mm default, hyphenated references).
+5. `boards/blinkSP1.dsn` (59 connections, mostly surface-mount on one layer, a fine-pitch part, 1.0 mm vias; a saved Freerouting result, re-routed from scratch) and `boards/RAM Selector Tree.dsn` (400 connections, through-hole). Both need many vias; neither routes completely yet.
 Compare against a baseline (Freerouting or your CAD tool's router) on completion, length ratio and runtime.
 
 ### 17.3 Experiments that decide what stays in the design
@@ -488,6 +501,13 @@ A simple GUI started from `main.py` at the repository root (`weaveengine/app.py`
 - A progress bar with elapsed time and time left in the pass. Stop cancels the run and its worker processes.
 - A settings editor over `settings.json` (`weaveengine/settings.py`): speed, routing phases and costs, rule overrides, teardrops. Beside `main.py` when run from source; in the user's configuration folder in a packaged app.
 - **Compiled-kernel status** is checked at start-up, off the GUI thread, and shown as a banner; if the kernels are unavailable the reason is shown and confirmed before routing starts. Routing then uses the Python fallback; it never crashes on this (`weaveengine/accel.py`).
+
+**Selection follows what is drawn.** Clicking selects a pad, else a trace, else a part. A thing can be selected only if its switch is on (`BoardView.pick`).
+- A part: only while footprint outlines are switched on.
+- A trace or teardrop: only while its layer is shown (as now).
+- A pad that is on hidden layers only: neither drawn nor selectable. Through-hole pads and vias stay while any layer is shown.
+- Switching something off clears the selection if it was the thing selected.
+- Detail that is merely too small to draw at the current zoom stays selectable; that is a drawing shortcut, not the user hiding it.
 
 **How it is put together**
 - The window never routes. `weaveengine/session.py` runs the router in its own (spawned) process and passes events back through a pipe: status, progress, snapshots of the routing from every variant, pass results, the final result. The router forks its workers inside that process, away from the GUI.

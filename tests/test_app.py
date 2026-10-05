@@ -56,3 +56,48 @@ def test_app_reports_a_bad_file_without_crashing(tmp_path):
     bad.write_text("this is not a board")
     done = run_app("--self-test", str(bad))
     assert done.returncode == 2 and "could not open" in done.stdout
+
+
+def test_hidden_things_cannot_be_selected():
+    """Design section 23: only what is switched on can be picked."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import BoardView
+    from weaveengine.board import Board, Component, Pad, Rules
+    app = QApplication.instance() or QApplication([])
+    board = Board.rectangle(40.0, 30.0, Rules(), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.circle(0, 5, 5, 1.0, 1), Pad.rect(1, 30, 5, 2, 2, 2, layers=frozenset({0})),
+                   Pad.rect(2, 30, 25, 2, 2, 2, layers=frozenset({1}))]
+    board.components.append(Component("U1", outlines=[[(10, 10), (20, 10), (20, 20), (10, 20), (10, 10)]]))
+    view = BoardView()
+    view.resize(800, 600)
+    view.set_board(board)
+    wires = [(0, 1, [(5.0, 15.0), (35.0, 15.0)]), (1, 2, [(5.0, 22.0), (35.0, 22.0)])]
+    view.show_routing(wires)
+    seen = []
+    view.selected.connect(seen.append)
+    kind = lambda x, y: (view.pick(x, y) or {}).get("kind")
+
+    assert kind(15, 12) == "part" and kind(25, 15) == "trace" and kind(30, 5) == "pad" and kind(30, 25) == "pad"
+    # outlines off: the part is gone, and so is a selection of it; what lies under it is still found
+    view.select_at(view.mapToScene(view.mapFromScene(15.0, -12.0)))
+    assert seen[-1]["kind"] == "part"
+    view.set_outlines_visible(False)
+    assert seen[-1] is None and not view.selection_items
+    assert kind(15, 12) is None and kind(15, 15) == "trace"
+    view.set_outlines_visible(True)
+    assert kind(15, 12) == "part"
+    # front layer off: its trace and its surface pad are neither drawn nor picked; the rest stays
+    view.select_at(view.mapToScene(view.mapFromScene(25.0, -15.0)))
+    assert seen[-1]["kind"] == "trace"
+    view.set_layer_visible(0, False)
+    assert seen[-1] is None
+    assert kind(25, 15) is None and kind(15, 15) == "part" and kind(30, 5) is None and kind(25, 22) == "trace"
+    assert kind(5, 5) == "pad" and kind(30, 25) == "pad"      # through-hole, and a pad of the layer still shown
+    shown = {pad.pad_id: item.isVisible() for item, pad in view.pad_items}
+    assert shown == {0: True, 1: False, 2: True}
+    view.set_layer_visible(1, False)                         # nothing shown: no pad at all
+    assert kind(5, 5) is None and kind(30, 25) is None
+    view.set_layer_visible(0, True)
+    assert kind(30, 5) == "pad" and kind(25, 15) == "trace"
+    app.processEvents()

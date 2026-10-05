@@ -598,3 +598,38 @@ def test_corner_is_left_alone_where_an_arc_would_break_a_rule():
     board.pads[2] = Pad.circle(2, 17.55, 2.45, 0.1, net_id=1)
     stuck, rounded, kept = smooth(board, {1: corner}, {1: 0})
     assert (rounded, kept) == (0, 1) and stuck[1] == corner
+
+
+def fine_pitch_board() -> Board:
+    """A row of pads 0.3 mm wide and 0.2 mm apart (their keep-off rings merge),
+    each joined to a pad straight above it, with the far pads in mirrored order
+    so that the traces have to fan across one another's exits."""
+    board = Board.rectangle(12, 10, Rules(0.15, 0.16))
+    for i in range(6):
+        board.pads.append(Pad.rect(i, 4.75 + 0.5 * i, 2.0, 0.3, 0.85, net_id=i))
+        board.pads.append(Pad.rect(10 + i, 2.0 + 1.6 * (5 - i), 8.0, 0.8, 0.8, net_id=i))
+    return board
+
+
+def test_a_trace_leaves_a_fine_pitch_pad_clear_of_its_neighbours():
+    """13.1 step 4: the stub from a pad's centre to its keep-off ring must keep
+    its clearance from the next pad. Over the gap between two pads it does not,
+    so that part of the ring is no way out."""
+    board = fine_pitch_board()
+    pmap = planar_map.build(board)
+    row = [p.pad_id for p in board.pads if p.pad_id < 6]
+    assert all(pad in pmap.pad_edges for pad in row)                   # every pad can still be left
+    restricted = {pmap.edge_owner_list[e] for e in pmap.exit_window}
+    assert set(row) <= restricted                                      # ... but none of them just anywhere
+    need = board.rules.clearance + board.rules.trace_width / 2.0
+    pads = {p.pad_id: p for p in board.pads}
+    for e, (a, b) in pmap.exit_window.items():
+        pad = pads[pmap.edge_owner_list[e]]
+        (ux, uy), (vx, vy) = (pmap.vxy[v] for v in pmap.edge_v_list[e])
+        length = pmap.edge_len_list[e]
+        for s in (a, (a + b) / 2.0, b):
+            stub = LineString([pad.centre, (ux + s / length * (vx - ux), uy + s / length * (vy - uy))])
+            assert all(stub.distance(o.shape) >= need - 2e-4 for o in board.pads if o.net_id != pad.net_id)
+    result = route_board(board, options=Options(portfolio=1), workers=1, drc_rounds=0, drop_violators=False)
+    assert result.unrouted == [] and result.violations == []          # clean at the first check, with no repair
+    assert_clean(board, result)
