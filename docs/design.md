@@ -9,7 +9,7 @@
 - This is a design, not a tested result. Anything marked **[HYPOTHESIS]** is a design bet that must be validated by the experiments in section 17 before it is relied on.
 - TopoR's internal algorithms are not public in anything I could verify. This design is built from general topological-routing ideas (homotopic routing, rubber-band sketches, negotiated congestion), not from TopoR's source. Do not describe it as a reimplementation.
 - The riskiest piece is the slot-aware topological search (section 8). Milestone M2 is a deliberate spike to prove or kill it early.
-- Geometry. Since M14e a trace is the taut line against discs at the vertices it passes (13.1). On the five benchmark boards every written result checks clean, and the board that needs most vias went from 360 to 393 of 400 connections for it (12.8).
+- Geometry. Since M14e a trace is the taut line against discs at the vertices it passes (13.1). On the five benchmark boards every written result checks clean, and the board that needs most vias routes 368 of 400 in half the time, with no repair round (12.8, which also records that rip-up stops too soon there).
 - Vias. The machinery for putting a via into the map is built and tested (12.2, M13). The layer that decides *where* vias go has been prototyped (12.3) and is not good enough: it uses several vias per connection and no board that needs vias routes completely. It is to be reworked (12.5). Section 12.4 records what the prototype showed, with numbers.
 - Library API details (`triangle`, `shapely`) are from memory. Check them when implementing.
 
@@ -592,13 +592,15 @@ End to end, one variant, every result measured from the written file and clean:
 
 | Board | Before | Rubber band |
 |---|---|---|
-| RAM Selector Tree | 360 of 400, 216 vias, 18 min (349, 218 vias, 20 min with the spreading) | **393 of 400**, 253 vias, 16 min |
+| RAM Selector Tree | 360 of 400, 216 vias, 18 min (349, 218 vias, 20 min with the spreading) | 368 of 400, 215 vias, 9 min (see below: 393 with 253 vias in 16 min when repair rounds ran) |
 | blinkSP1 (18 runs) | 48 (45 to 52) of 58, 14 s | 48 (47 to 51), 9 s |
 | ALU | 409 of 409, 5 vias | 409 of 409, 3 vias, 27 s |
 | ulx3s | 200 of 203, 39 vias, 50 s | 200 of 203, 37 vias, 36 s |
 | Word of RAM | 85 of 85, 0 vias | 85 of 85, 0 vias, 1.5 s |
 
-What RAM Selector Tree was losing to the geometry it now keeps: connections that fitted and were ripped up or dropped because their traces could not be drawn. blinkSP1 does not change, as expected: it had no geometry problem, and its open connections are the search's (12.7).
+**Read the RAM Selector Tree row with care.** With the final code its first geometry check finds nothing, so no design-rule repair round runs and the result is the routing as rip-up left it: 368, in half the time. Two runs made earlier the same day, when the geometry still left one or two violations, went through the repair rounds, and each repair round also runs up to five more rounds of rip-up; those runs ended at 393 of 400 with 253 vias. So 25 connections are there to be had by negotiating longer, and the rule that stops rip-up once nothing is over-full and the open count has stalled for three rounds (12.7) is stopping too soon on this board. That is a search question, not a geometry one, and it is open.
+
+What the geometry itself changed: nothing that fits is ripped up or dropped any more because its trace could not be drawn (360 to 368 with no repair rounds at all, against 18 minutes half spent in them). blinkSP1 does not change, as expected: it had no geometry problem, and its open connections are the search's (12.7).
 
 ### 12.9 Not in scope
 - Blind and buried vias: a site is on every layer.
@@ -769,7 +771,7 @@ Keep a feature only if it improves completion or length ratio without disproport
 | M14b | Deleting a via site (12.5 step 2) | 10,000 random operations including deletions keep the invariant and the map's tables; a map with every site deleted equals the map before any was made, up to edge flips. **Done.** 10,000 operations with 220 deletions, none refused; with every site deleted the vertex, edge and triangle counts, the pad edges and the walls are those of the original map. 0.8 ms per deletion on the test grid. blinkSP1 routes as before (46 of 58, one variant) and no sleeping site is left in its maps |
 | M14c | One search across layers for every phase (12.5 step 3) | blinkSP1: at least 51 of 59 with no more than about 40 vias and zero violations; `complete` and the between-passes code deleted. **Partly met.** 52 of 58 with zero violations, and the old code is gone (the tree is about 740 lines shorter); but 63 vias, and the result swings with small changes (12.4). Other boards not re-measured except Word of RAM (85 of 85, now with 6 vias) |
 | M14d | The open questions of 12.5 step 4, on blinkSP1; then RAM Selector Tree, ALU, Word of RAM, ulx3s | blinkSP1 within reach of the file's own routing (51 or more connections, about 40 vias or fewer), steadily; the M14 criterion above; boards that need no via take none or nearly none |
-| M14e | Realisation as the rubber band with thickness (12.8, 13.1, 13.2) | The saved RAM Selector Tree routing realises with no violation; RAM Selector Tree end to end improves; other boards no worse. **Done.** Saved state: 82 violations to 0. End to end: 360 to 393 of 400 in 16 minutes instead of 18; blinkSP1, ALU, ulx3s and Word of RAM as before or slightly better, all clean (table in 12.8). `realize/` lost about 100 lines over it (relax, kernel and funnel: 800 lines; relax and kernel now: 700). Not done: the seven connections RAM Selector Tree still leaves open |
+| M14e | Realisation as the rubber band with thickness (12.8, 13.1, 13.2) | The saved RAM Selector Tree routing realises with no violation; RAM Selector Tree end to end improves; other boards no worse. **Done.** Saved state: 82 violations to 0. End to end: 360 to 368 of 400 in 9 minutes instead of 18, with no repair round needed (393 when rip-up is given more rounds: 12.8); blinkSP1, ALU, ulx3s and Word of RAM as before or slightly better, all clean (table in 12.8). `realize/` lost about 100 lines over it (relax, kernel and funnel: 800 lines; relax and kernel now: 700). Not done: the connections RAM Selector Tree still leaves open |
 | M15 | Sliding vias (13.3) | Total length on RAM Selector Tree and ALU drops against M14 with the check still clean; added geometry time recorded |
 | M16 | Via reduction in Phase 4; flips while sliding (the flip itself exists since M13) if M15 shows vias pinned | Fewer vias at equal or shorter length on the benchmark boards |
 
