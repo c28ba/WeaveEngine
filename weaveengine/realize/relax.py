@@ -15,7 +15,7 @@ ARC_STEP = math.radians(6.0)  # an arc turns at most this much per segment (as i
 ARC_OUT = 4e-4  # mm: the most the corners of a drawn arc stand out from its circle (DRC allows a micron)
 
 
-def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None = None,
+def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
           report: dict | None = None) -> dict[int, Polyline]:
     """Returns wire id -> polyline, from pad centre to pad centre.
 
@@ -26,17 +26,21 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
     Wires pulled against the same vertices then run side by side at exactly the
     spacing they owe, as parallel lines and concentric arcs.
 
-    ``spacing_scale`` maps a wire id to a factor on the spacing it keeps from
-    its neighbours; DRC repair (13.2) uses it to widen spacing locally.
+    ``cuts`` gives a wire more discs to keep clear of than its own triangles
+    tell it about (13.2): wire id -> discs, as ``realize`` collects them.
 
     A wire leaves its pad anywhere in the window of its pad edge. Foreign wires
     passing that pad keep their distance from the point it leaves through, so
     the wires near such points are pulled again once the points are known, and
-    a last time with every such point held where it is. If ``report`` is given,
-    ``report["clamped"]`` lists the ends that press against a corner of their
-    pad edge as (wire, is its start, corner).
+    a last time with every such point held where it is.
+
+    With ``report["detect_only"]`` set, nothing is returned but
+    ``report["clamped"]``: the ends that press against a corner of their pad
+    edge, as (wire, is its start, corner). Otherwise ``report["touched"]`` gets
+    the discs each trace touches: (place among the wire's discs, x, y, radius,
+    side: 1 on its left, -1 on its right, 0 for its two ends, where it comes
+    on, where it goes off).
     """
-    scale = spacing_scale or {}
     pmap = state.map
     d = board.rules.pitch
     order, vxy, edge_v, lens = state.gate_order, pmap.vxy, pmap.edge_v_list, pmap.edge_len_list
@@ -54,8 +58,7 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
         net owe each other nothing: side by side they merge into one trace."""
         if wire_net[w1] == wire_net[w2] and wire_net[w1] >= 0:
             return 0.0
-        gap = d + half[w1] + half[w2]
-        return gap * max(scale.get(w1, 1.0), scale.get(w2, 1.0)) if scale else gap
+        return d + half[w1] + half[w2]
 
     # Corners of each wire's own two pads. A wire owes its own pad no clearance,
     # so it is not held away from them (that would bend it right after the pad).
@@ -162,7 +165,7 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
         out, found = [], False
         done: tuple[set, set] = (set(), set())  # per side: the points guarded since the wire came by them
         for disc in discs:
-            x, y, r, left, vertex, e, k, swept = disc
+            x, y, r, left, vertex, e, k, swept, place = disc
             before, after = [], []
             if vertex not in near:
                 done[left].clear()
@@ -175,18 +178,19 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
                     continue  # the vertex keeps the wire further away already
                 # Round its pad, the point lies before the vertex or after it.
                 turn = (x - cx) * (py - cy) - (y - cy) * (px - cx)
-                (after if (turn > 0) == left else before).append((abs(turn), (px, py, room, left, -1, e, k, swept)))
+                (after if (turn > 0) == left else before).append((abs(turn), (px, py, room, left, -1, e, k, swept, place)))
             found = found or bool(before or after)
             out += [g for _, g in sorted(before, reverse=True)] + [disc] + [g for _, g in sorted(after)]
         return out if found else None
 
     lines: dict[int, Polyline] = {}
+    touch: dict[int, list[tuple]] = {}
     where: dict[int, list[float]] = {}  # per wire: where on its two pad edges it leaves
 
     def pull(todo: dict[int, list[tuple]], held: bool) -> None:
         """Pulls the wires of ``todo`` taut against their discs: fills ``lines``,
         and ``where`` unless the ends are held where they are."""
-        rows, ptr = [], [0]
+        rows, places, ptr = [], [], [0]
         for w, discs in todo.items():
             src, dst = state.wire_path[w][0][0], state.wire_path[w][-1][0]
             if held:
@@ -197,8 +201,9 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
             # A wire that passes a point straight has half a turn of its
             # triangles there: what they sweep beyond that is how far its trace
             # can turn round the point. Round a disc, allow a quarter turn more.
-            rows += [(x, y, r if left else -r, left, max(0.0, swept - math.pi) + math.pi / 2.0) for x, y, r, left, _, _, _, swept in discs]
+            rows += [(x, y, r if left else -r, left, max(0.0, swept - math.pi) + math.pi / 2.0) for x, y, r, left, _, _, _, swept, _ in discs]
             rows.append((*b, 0.0, False, math.pi))
+            places += [-1, *(disc[8] for disc in discs), len(sleeves[w])]
             ptr.append(len(rows))
         if not rows:
             return
@@ -218,6 +223,8 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
             line: Polyline = []
             for j in range(out_ptr[i], out_ptr[i + 1]):
                 line += _arc(rows[touched[j]], come[j], go[j])
+            touch[w] = [(places[q], rows[q][0], rows[q][1], abs(rows[q][2]), (1 if rows[q][3] else -1) if 0 <= places[q] < len(sleeves[w]) else 0, come[j], go[j])
+                        for j, q in ((j, touched[j]) for j in range(out_ptr[i], out_ptr[i + 1]))]
             if held:
                 lines[w] = [centre[ends[w][0]]] + line + [centre[ends[w][1]]]
                 continue
@@ -276,12 +283,23 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
 
     plain = {w: sleeve(w) for w in state.wire_path}
     at = {w: {name(disc[4]): i for i, disc in reversed(list(enumerate(discs))) if disc[4] >= 0} for w, discs in plain.items()}
-    sleeves = {w: widened(w, at) for w in plain}
+    sleeves = {}
+    for w in plain:
+        sleeves[w] = discs = [(*disc, i) for i, disc in enumerate(widened(w, at))]
+        # Discs from the repair loop. Each goes between the two discs the trace touched
+        # either side of the trouble: after the last one on its own side that the
+        # trace passes before it (and never among the window ends, the first two and last two).
+        for place, until, x, y, r, left, ox, oy, dx, dy in sorted((cuts or {}).get(w, {}).values(), reverse=True):
+            i = min(max(place, 1), len(discs) - 3)
+            far = (x - ox) * dx + (y - oy) * dy
+            for j in range(i + 1, min(until, len(discs) - 2)):
+                if discs[j][3] == left and (discs[j][0] - ox) * dx + (discs[j][1] - oy) * dy < far:
+                    i = j
+            discs.insert(i + 1, (x, y, r, left, -1, -1, 0, 1.5 * math.pi, place))
     pull(sleeves, False)
-    if report is not None:
+    if report is not None and report.get("detect_only"):
         report["clamped"] = _clamped(state, lines, where, ends, d)
-        if report.get("detect_only"):
-            return {}
+        return {}
     near = leaving()
     again = {w: g for w, discs in sleeves.items() if (g := guarded(w, discs, near)) is not None}
     if again:
@@ -289,6 +307,8 @@ def relax(state: TopoState, board: Board, spacing_scale: dict[int, float] | None
         near = leaving()
         pull({w: guarded(w, sleeves[w], near) or sleeves[w] for w in again}, True)
 
+    if report is not None:
+        report["touched"] = touch
     result: dict[int, Polyline] = {}
     pressed: list[tuple[int, bool, tuple[float, float]]] = []
     for w, line in lines.items():
@@ -434,29 +454,78 @@ def polyline_length(line: Polyline) -> float:
     return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(line, line[1:]))
 
 
-def realize(state: TopoState, board: Board, repair_rounds: int = 4, **kwargs):  # one layer
-    """Relax, check, and widen spacing locally where DRC still complains (13.2).
+def realize(state: TopoState, board: Board, repair_rounds: int = 4):  # one layer
+    """Relax, check, and where a trace comes out too close to another or to a
+    via, give it the discs it did not know of and pull again (13.2).
 
     Returns (polylines, violations, wire_net).
     """
     pmap = state.map
     wire_net = {w: pmap.pad_net.get(pmap.edge_owner_list[steps[0][0]], -1) for w, steps in state.wire_path.items()}
-    scale: dict[int, float] = {}
+    vias = [p for p in board.pads_on(pmap.layer) if p.is_via]
+    cuts: dict[int, dict] = {}
     best = None
     for _ in range(repair_rounds + 1):
-        lines = relax(state, board, spacing_scale=scale, **kwargs)
+        report: dict = {}
+        lines = relax(state, board, cuts, report)
         violations = drc.check(board, lines, wire_net, pmap.layer)
         key = (len(violations), sum(v.required - v.distance for v in violations))
-        if best is not None and key >= best[2]:
-            break  # wider spacing made it no better (gates with nothing to spare): stop
-        best = (lines, violations, key)
-        # Wider spacing can only mend spacing; but one violation of another
-        # kind somewhere on the layer is no reason to leave those unmended.
-        spaced = [v for v in violations if v.kind == "spacing"]
-        if not spaced:
+        if best is None or key < best[2]:
+            best = (lines, violations, key)
+        touched, more = report.get("touched", {}), False
+        for v in violations:
+            if v.kind == "spacing":
+                # Each of the two keeps clear of what the other is pulled against there.
+                for a, b in (v.wires, v.wires[::-1]):
+                    i, foot, along = _foot(touched[b], v.at)
+                    _, mine, _ = _foot(touched[a], v.at)
+                    side = along[0] * (mine[1] - foot[1]) - along[1] * (mine[0] - foot[0])  # which side of b the wire a is on
+                    for _, x, y, r, on, _, _ in touched[b][i:i + 2]:
+                        if on * side <= 0.0:  # only what lies on the far side of b (or is an end of b)
+                            more |= _cut(cuts, a, touched[a], v.at, x, y, r + v.required)
+            elif v.kind == "clearance":
+                for p in vias:
+                    reach = p.radius / math.cos(math.pi / 16.0) + v.required
+                    if p.net_id != wire_net[v.wires[0]] and math.dist(p.centre, v.at) < reach:
+                        more |= _cut(cuts, v.wires[0], touched[v.wires[0]], v.at, *p.centre, reach)
+        if not more:
             break
-        for v in spaced:
-            factor = min(1.5, 1.05 * v.required / max(v.distance, 1e-6))
-            for w in v.wires:
-                scale[w] = min(2.0, scale.get(w, 1.0) * factor)
     return best[0], best[1], wire_net
+
+
+def _foot(touched, at):
+    """Where a trace is nearest to ``at``: (the disc it touched last before
+    that, the point on the trace, its direction there)."""
+    best = None
+    for i, (_, x, y, r, on, come, go) in enumerate(touched):
+        if r > 0.0:  # on the arc round this disc
+            dx, dy = at[0] - x, at[1] - y
+            n = math.hypot(dx, dy)
+            turn = (math.atan2(dy, dx) - math.atan2(come[1] - y, come[0] - x)) * on % (2.0 * math.pi)
+            span = (math.atan2(go[1] - y, go[0] - x) - math.atan2(come[1] - y, come[0] - x)) * on % (2.0 * math.pi)
+            if n > 0.0 and turn <= span and (best is None or abs(n - r) < best[0]):
+                best = (abs(n - r), i, (x + r * dx / n, y + r * dy / n), (-on * dy, on * dx))
+        if i + 1 < len(touched):  # on the straight run to the next
+            (ax, ay), (bx, by) = go, touched[i + 1][5]
+            dx, dy = bx - ax, by - ay
+            n2 = dx * dx + dy * dy
+            t = 0.0 if n2 == 0.0 else min(1.0, max(0.0, ((at[0] - ax) * dx + (at[1] - ay) * dy) / n2))
+            px, py = ax + t * dx, ay + t * dy
+            gap = math.hypot(at[0] - px, at[1] - py)
+            if best is None or gap < best[0]:
+                best = (gap, i, (px, py), (dx, dy))
+    return best[1:]
+
+
+def _cut(cuts, w: int, touched, at, x: float, y: float, r: float) -> bool:
+    """Gives wire w a disc to keep clear of, by where its trace runs now: after
+    the disc it touched last, on the side the disc's centre lies. False if it
+    had that already."""
+    i, foot, along = _foot(touched, at)
+    left = along[0] * (y - foot[1]) - along[1] * (x - foot[0]) > 0.0
+    known = cuts.setdefault(w, {})
+    key = (round(x, 5), round(y, 5), left)
+    if key in known and known[key][4] >= r - 1e-9:
+        return False
+    known[key] = (touched[i][0], touched[min(i + 1, len(touched) - 1)][0], x, y, r, left, *foot, *along)
+    return True

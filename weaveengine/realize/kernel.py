@@ -94,6 +94,8 @@ def reach(x, y, r, left, most, mine, n, other, m, c, last):
     the way, goes round by that string instead. Afterwards, if c stands in the
     way of ``other``, that string goes by c from there on. (``last``: c is the
     wire's end point, which has no side and is in nobody's way.) Returns both lengths."""
+    if inside(x, y, r, left, c, mine[n - 1]):
+        return n, m  # within the disc the string is on already: never touched
     while n > 1 and lifts(x, y, r, left, most, mine[n - 2], mine[n - 1], c):
         n -= 1
     same = 0  # discs the two strings start with in common
