@@ -24,15 +24,26 @@ class CostParams:
     restarts: int = 3            # ICM random restarts
     h_weight: float = 1.0        # A* heuristic weight; above 1 trades optimality of the estimate for speed
     batch: int = 1               # connections rerouted against one snapshot of the state, in parallel (section 22)
-    via_cost: float = 8.0        # per via (12.4): the detour, in mm, a via is worth
+    via_cost: float = 170.0      # per via (12.7): more than an over-full gate ever costs, see ``pres_cap``
     max_vias: int = 4            # vias one connection may take
+
+    @property
+    def pres_cap(self) -> float:
+        """The most an over-full gate is ever charged: beyond a few crossing
+        penalties a higher price only blunts the A* heuristic."""
+        return 10.0 * self.cross_penalty
 
     @classmethod
     def for_map(cls, pmap: PlanarMap, **overrides) -> "CostParams":
         """Section 20 defaults, scaled by the median pad pitch."""
         pitch = median_pad_pitch(pmap)
-        params = cls(lambda_x=2 * pitch, lambda_sever=50 * pitch, lambda_conf=5 * pitch, cross_penalty=10 * pitch,
-                     via_cost=4 * pitch)
+        params = cls(lambda_x=2 * pitch, lambda_sever=50 * pitch, lambda_conf=5 * pitch, cross_penalty=10 * pitch)
+        # A via is dearer than an over-full gate ever gets. A connection then
+        # stays on one layer while rip-up sorts that layer out, and changes
+        # layer only if its route there is still over-full in several places at
+        # the highest price; with a cheap via it would change layer in the
+        # first round, before anything has been sorted out (12.7).
+        params.via_cost = 1.7 * params.pres_cap
         for k, v in overrides.items():
             if not hasattr(params, k):
                 raise TypeError(f"unknown cost parameter {k!r}")

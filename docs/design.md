@@ -509,12 +509,14 @@ Traced round by round on `blinkSP1` (default settings, no DRC repair):
 | | Routed (of 58) | Vias | On one layer |
 |---|---|---|---|
 | As it is (`via_cost` 3.6 mm) | 48 (41 to 52) | 54 (39 to 63) | 18 (16 to 25) |
-| `via_cost` 150 mm | 48 (45 to 50) | 37 (32 to 48) | 23 (18 to 27) |
-| `via_cost` 89 mm (the highest price an over-full gate reaches) | 47 (42 to 50) | 44 (22 to 57) | 21 (16 to 29) |
+| `via_cost` 133 mm (1.5 x the cap on an over-full gate's price) | 48 (42 to 52) | 37 (28 to 57) | 23 (20 to 27) |
+| `via_cost` 150 mm (1.7 x the cap; **the default since**) | 48 (45 to 50) | 37 (32 to 48) | 24 (18 to 27) |
+| `via_cost` 200 mm (2.25 x the cap) | 48 (44 to 51) | 44 (32 to 61) | 21 (14 to 27) |
+| `via_cost` 89 mm (the cap itself) | 47 (42 to 50) | 44 (22 to 57) | 21 (16 to 29) |
 | A via only if no single-layer route exists at all, however over-full | 46 (43 to 48) | 44 (34 to 57) | 21 (17 to 27) |
 | The file's own routing | 51 | 33 | 31 |
 
-A high price keeps the same number of connections, with a third fewer vias and half the spread. Why it works, from the trace: the price of an over-full gate grows each round up to a cap (about 89 mm on this board). With a via dearer than that, a connection stays on one layer while rip-up sorts out the layer, and only changes layer when its single-layer route is still over-full in several places at the highest price. With a cheap via it changes layer in the first round, before rip-up has sorted anything out. The rule "never, while a single-layer route exists" goes too far the other way: connections that have no legal single-layer route then sit on over-full gates for good (the same six ripped and put back every round), until they are removed at the end.
+A price somewhat above the cap keeps the same number of connections, with a third fewer vias and half the spread. The good range is not wide: at the cap itself and at 2.25 times it the vias are back to 44. `via_cost` is now 1.7 times the cap (`CostParams.pres_cap`), on the strength of this one board. Why it works, from the trace: the price of an over-full gate grows each round up to a cap (about 89 mm on this board). With a via dearer than that, a connection stays on one layer while rip-up sorts out the layer, and only changes layer when its single-layer route is still over-full in several places at the highest price. With a cheap via it changes layer in the first round, before rip-up has sorted anything out. The rule "never, while a single-layer route exists" goes too far the other way: connections that have no legal single-layer route then sit on over-full gates for good (the same six ripped and put back every round), until they are removed at the end.
 
 **Next (M14d).**
 1. Rip-up: find out why it does not settle with a solution available, measuring over a spread of small changes instead of one run. Everything else is unreadable until this is steady.
@@ -700,7 +702,7 @@ Keep a feature only if it improves completion or length ratio without disproport
 | `pres_fac` | 0.5, x1.5 per round | present congestion weight |
 | `hist` increment | 1.0 per overflow unit | history growth |
 | `cross_penalty` (relaxed search) | 10 x median pad pitch | per violated crossing |
-| `via_cost` | 4 x median pad pitch | the detour, in mm, a via is worth. Not settled: on a fine-pitch board the median pad pitch is small (3.6 mm here on blinkSP1), and the result does not follow the price (12.4) |
+| `via_cost` | 1.7 x the cap on an over-full gate's price (the cap is 10 x `cross_penalty`) | what a via costs in the search. Above the cap, so that a connection changes layer only when rip-up has failed to sort out its own layer (12.7). Measured on one board |
 | `max_vias` | 4 | vias one connection may take |
 | Site hole radius | 2 µm | size of a site in the map (12.2). Internal: `sites.SITE_RADIUS`. Not the via's drill, which is a rule (0.3 mm unless the DSN or the settings say otherwise) |
 | Via slide rounds / tolerance | 8 / 1 µm | stop condition of 13.3 |

@@ -28,8 +28,8 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
         ctx.rounds += 1
         ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
 
-        # 1. Raise prices. Capped: beyond a few crossing penalties it only blunts the A* heuristic.
-        params.pres_fac = min(10.0 * params.cross_penalty, params.pres_fac * params.pres_growth)
+        # 1. Raise prices, up to the cap.
+        params.pres_fac = min(params.pres_cap, params.pres_fac * params.pres_growth)
         for layer, e in over:
             layer.state.hist[e] += params.hist_inc * layer.state.overflow(e)
 
