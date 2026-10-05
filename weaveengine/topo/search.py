@@ -61,7 +61,7 @@ class Reach:
 def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, params: CostParams | None = None,
           mode: str = "normal", corridor: set[int] | None = None, penalty: dict[int, float] | None = None,
           congestion: bool = True, hard_cap: bool = False, weight: float = 1.0, seeds=None, reach: bool = False,
-          target: tuple[float, float] | None = None, bound: float = math.inf):
+          target: tuple[float, float] | None = None, bound: float = math.inf, net: int = -1):
     """Cheapest planar path to ``dst_pad`` on this layer, or None.
 
     It starts from ``src_pad`` and/or from ``seeds`` = (triangles, costs, x, y):
@@ -73,7 +73,9 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
           "corridor" - like normal, restricted to the edge set ``corridor``.
     ``penalty`` adds a per-gate cost (candidate diversification). ``hard_cap``
     forbids exceeding capacity instead of pricing it. ``weight`` is the load
-    the wire puts on a gate (1 for a base-width trace).
+    the wire puts on a gate (1 for a base-width trace). ``net``: the wire's
+    net; beside a wire of the same net it is the same trace and costs no room
+    and next to no length (11).
 
     With ``reach``, returns (route or None, Reach). ``target``: where the
     goal is, for a search on a layer the pad itself is not on (it then cannot
@@ -108,12 +110,15 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     banned: list[int] = []
     found, seen = None, None
     tb = None
+    riding = state.beside(net) if net >= 0 else {}
     try:
         for _ in range(MAX_RETRIES):
             tb = pmap.__dict__.get("_kernel_tables")
             if tb is None:
                 tb = pmap.__dict__["_kernel_tables"] = kernel.Tables(pmap)
                 tb.banned[banned] = 1
+            for e, places in riding.items():
+                tb.ride[e] = places
             best[:], best_node[:] = np.inf, -1
             try:
                 goal, cost, touched = search(
@@ -122,7 +127,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     pmap.tri_e, pmap.tri_v, pmap.edge_v, pmap.edge_t,
                     tb.b, tb.nxt, tb.t, tb.k, tb.cue, tb.cub, tb.length, tb.n, tb.kind, tb.owner, tb.mid,
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor",
-                    relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight,
+                    relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
                     tx, ty, radius, params.h_weight, bound, tb.g, tb.parent, tb.parent_tr, tb.banned, tb.touched,
                     tb.heap_f, tb.heap_g, tb.heap_n, best, best_node)
             except Exception as error:  # the compiled kernel itself failed: never crash, fall back for good
@@ -153,8 +158,9 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
         else:
             found = None
     finally:
-        if banned and tb is not None and pmap.__dict__.get("_kernel_tables") is tb:
+        if tb is not None and pmap.__dict__.get("_kernel_tables") is tb:
             tb.banned[banned] = 0
+            tb.ride[list(riding)] = 0
     return (found, seen) if reach else found
 
 

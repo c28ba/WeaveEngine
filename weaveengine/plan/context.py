@@ -179,7 +179,7 @@ class Context:
                 if self.options.demand:
                     # Plain shortest path, congestion off. A connection that may
                     # use several layers spreads its demand over them.
-                    r = route(pmap, layer.state, c.src, c.dst, self.params, congestion=False, weight=c.weight)
+                    r = route(pmap, layer.state, c.src, c.dst, self.params, congestion=False, weight=c.weight, net=c.net_id)
                     c.demand_gates[li] = frozenset(r.gates) if r is not None else frozenset()
                     for g in c.demand_gates[li]:
                         layer.demand[g] += c.weight / len(c.layers)
@@ -202,7 +202,7 @@ class Context:
     def _lay(self, conn: Connection, li: int, steps) -> None:
         """Puts one wire into a layer's state."""
         layer = self.layers[li]
-        layer.state.insert(conn.wire_id, steps, conn.weight)
+        layer.state.insert(conn.wire_id, steps, conn.weight, conn.net_id)
         conn.layer = li
 
     def _laid(self, conn: Connection) -> None:

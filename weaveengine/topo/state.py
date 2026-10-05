@@ -28,6 +28,11 @@ class TopoState:
         self._terminal = [k == 2 for k in kinds]
         self.load = np.zeros(planar_map.num_edges)
         self.weight: dict[int, float] = {}
+        # Wires of one net side by side on a gate are one trace there (11):
+        # they take the room of one. The net of each wire (-1: of no net), and
+        # the wires of each net that are in.
+        self.net: dict[int, int] = {}
+        self.by_net: dict[int, set[int]] = {}
         # Flat mirrors of the usage and corner counts, for the compiled search kernel.
         self.count = np.zeros(planar_map.num_edges, dtype=np.int32)
         self.corner = np.zeros((planar_map.num_triangles, 3), dtype=np.int32)
@@ -56,6 +61,29 @@ class TopoState:
     def usage(self, edge_id: int) -> int:
         return len(self.gate_order[edge_id])
 
+    def tally(self, edge_id: int) -> float:
+        """The load on a gate, from the wires on it: every run of neighbours of
+        one net counts once, as its widest wire."""
+        total, run, last = 0.0, 0.0, -1
+        for w in self.gate_order[edge_id]:
+            net = self.net.get(w, -1)
+            if net < 0 or net != last:
+                total += run
+                run = 0.0
+            run = max(run, self.weight[w])
+            last = net
+        return total + run
+
+    def beside(self, net: int) -> dict[int, int]:
+        """Gate -> the places on it that are beside a wire of ``net`` (bit p set:
+        a wire put in at place p has one as its neighbour)."""
+        places: dict[int, int] = {}
+        for w in self.by_net.get(net, ()):
+            for e, _, _, _ in self.wire_path[w]:
+                p = self.gate_order[e].index(w)
+                places[e] = places.get(e, 0) | (3 << p)
+        return places
+
     def overflow(self, edge_id: int) -> int:
         """Whole base-width wires by which the gate is over capacity."""
         if self._terminal[edge_id] and len(self.gate_order[edge_id]) <= 1:
@@ -77,9 +105,15 @@ class TopoState:
         """No further base-width wire fits (after adding ``extra`` load)."""
         return self.cap[edge_id] - self.load[edge_id] - extra < 1.0 - 1e-9
 
-    def insert(self, wire_id: int, steps: list[Step], weight: float = 1.0) -> None:
+    def insert(self, wire_id: int, steps: list[Step], weight: float = 1.0, net: int | None = None) -> None:
+        """``net`` None: the net this wire had when it was last in (or none)."""
         if wire_id in self.wire_path:
             raise ValueError(f"wire {wire_id} already exists")
+        if net is not None:
+            self.net[wire_id] = net
+        self.weight[wire_id] = weight
+        if self.net.get(wire_id, -1) >= 0:
+            self.by_net.setdefault(self.net[wire_id], set()).add(wire_id)
         gates = [s[0] for s in steps]
         if len(set(gates)) != len(gates):
             raise ValueError("a path must never cross the same gate twice")
@@ -87,23 +121,23 @@ class TopoState:
         # the inserts are independent of each other.
         for edge_id, tri_id, corner_k, slot in steps:
             self.gate_order[edge_id].insert(slot, wire_id)
-            self.load[edge_id] += weight
+            self.load[edge_id] = self.tally(edge_id)
             self.count[edge_id] += 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] += 1
                 self.corner[tri_id, corner_k] += 1
         self.wire_path[wire_id] = list(steps)
-        self.weight[wire_id] = weight
 
     def remove(self, wire_id: int) -> None:
-        weight = self.weight.pop(wire_id)
+        self.by_net.get(self.net.get(wire_id, -1), set()).discard(wire_id)
         for edge_id, tri_id, corner_k, _ in self.wire_path.pop(wire_id):
             self.gate_order[edge_id].remove(wire_id)
-            self.load[edge_id] = self.load[edge_id] - weight if self.gate_order[edge_id] else 0.0
+            self.load[edge_id] = self.tally(edge_id)
             self.count[edge_id] -= 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] -= 1
                 self.corner[tri_id, corner_k] -= 1
+        del self.weight[wire_id]
 
     def snapshot(self):
         return ([list(o) for o in self.gate_order], [list(c) for c in self.corner_cnt],
@@ -117,6 +151,10 @@ class TopoState:
         self.gate_order = [list(o) for o in order]
         self.corner_cnt = [list(c) for c in cnt]
         self.wire_path = {w: list(p) for w, p in paths.items()}
+        self.by_net = {}
+        for w in self.wire_path:
+            if self.net.get(w, -1) >= 0:
+                self.by_net.setdefault(self.net[w], set()).add(w)
 
     def check_invariants(self) -> bool:
         return not self.invariant_errors(limit=1)

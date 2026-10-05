@@ -494,7 +494,7 @@ def _carry_wires(pmap: PlanarMap, state: TopoState, site: Site) -> None:
         first, second = site.spokes[2 * i], site.spokes[2 * i + 1]
         for e in (first, second):  # nearest a_i first, whichever end of the spoke a_i is
             order[e][:] = nested[i] if pmap.edge_v_list[e][0] == a[i] else nested[i][::-1]
-            state.load[e] = sum(state.weight[w] for w in nested[i])
+            state.load[e] = state.tally(e)
             state.count[e] = len(nested[i])
         state.corner_cnt[big[i]][:] = [old[i], old[j], 0]
         state.corner[big[i]] = state.corner_cnt[big[i]]
@@ -639,7 +639,7 @@ def flip(pmap: PlanarMap, state: TopoState, e: int) -> bool:
         steps[:] = out
     pmap.__dict__.setdefault("_moved_wires", set()).update(wires)
     order[e][:] = row
-    state.load[e] = sum(state.weight[w] for w in row)
+    state.load[e] = state.tally(e)
     state.count[e] = len(row)
     _set_capacity(pmap, state, e)
     state.corner_cnt[t1][:] = [c1b + bp_dq, lo, c2d + qb_pd]
@@ -900,7 +900,7 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
     for d, e in diagonals.items():
         row = rows[d]
         order[e][:] = row if pmap.edge_v_list[e][0] == ring[d[0]] else row[::-1]
-        state.load[e] = sum(state.weight[w] for w in row)
+        state.load[e] = state.tally(e)
         state.count[e] = len(row)
         _set_capacity(pmap, state, e)
     new_steps: dict[int, list] = {}

@@ -175,7 +175,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     for layer in ctx.layers:
         if conn.src not in layer.pmap.pad_edges:
             continue
-        r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, weight=conn.weight, reach=True,
+        r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True,
                         target=goal, penalty=penalty.get(layer.index), **how)
         reached[layer.index] = (seen if max_vias else None, None)
         if r is not None and (best is None or r.cost < best[0]):
@@ -188,7 +188,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
             if seeds is None:
                 continue
             tris, cost, pts, source = seeds
-            r, seen = route(layer.pmap, layer.state, None, conn.dst, params, weight=conn.weight, reach=True, target=goal,
+            r, seen = route(layer.pmap, layer.state, None, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, target=goal,
                             seeds=(tris, cost, pts[:, 0], pts[:, 1]), bound=best[0] if best else math.inf,
                             penalty=penalty.get(layer.index), **how)
             reached[layer.index] = (seen if hop < max_vias else None, (pts, source))

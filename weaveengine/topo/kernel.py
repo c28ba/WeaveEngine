@@ -63,6 +63,7 @@ def njit(**options):
     return wrap
 
 SLOTS = 16  # node id = half_edge * 16 + slot
+RIDE = 0.05  # what a length costs beside a wire of the same net: next to nothing (11), but shorter is still better
 
 
 class Tables:
@@ -93,6 +94,7 @@ class Tables:
         self.heap_n = np.zeros(size, dtype=np.int32)
         self.no_penalty = np.zeros(1)
         self.no_corridor = np.zeros(1, dtype=np.uint8)
+        self.ride = np.zeros(e2 // 2 + 1, dtype=np.int64)  # per edge: the places beside a wire of the net being routed
 
     def update(self, pmap, half_edges) -> bool:
         """Copies the transitions of ``half_edges`` and the per-edge tables from
@@ -116,7 +118,7 @@ class Tables:
 def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, edge_v, edge_t,
           tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
-          relaxed, pres, use_hist, cross_pen, hard_cap, weight, tx, ty, rad, hw, bound,
+          relaxed, pres, use_hist, cross_pen, hard_cap, weight, ride, tx, ty, rad, hw, bound,
           g, parent, parent_tr, banned, touched, heap_f, heap_g, heap_n, best, best_node):
     """The one search (design section 8). Cheapest way to ``dst_pad``.
 
@@ -132,6 +134,11 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
     its middle cell was reached and the node where: every triangle a via
     could usefully go in has been reached by the time the goal is. The search
     gives up on anything that cannot cost less than ``bound``.
+
+    ``ride[e]`` has bit p set where place p on edge e is beside a wire of the
+    net being routed. A wire there is the same trace as its neighbour: it puts
+    no load on the gate, and from one such place to the next it adds next to
+    no length.
     """
     n_touched = 0
     size = 0
@@ -163,18 +170,19 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
             over = load[e] + weight - cap[e]
         if n >= SLOTS - 1 or (use_corridor and corridor[e] == 0):
             continue
-        if over > 1e-9:
-            if hard_cap:
-                continue
-            c += pres * (over if over > 1.0 else 1.0)
-        if use_hist:
-            c += hist[e]
         if use_penalty:
             c += penalty[e]
+        apart = c  # the cost at a place that is not beside a wire of this net
+        if over > 1e-9:
+            apart = np.inf if hard_cap else apart + pres * (over if over > 1.0 else 1.0)
+        if use_hist:
+            apart += hist[e]
+        beside = c
         h = np.hypot(mid[e, 0] - tx, mid[e, 1] - ty) - rad
         h = 0.0 if h < 0.0 else h * hw
         for p in range(first, last + 1):
             node = node0 + p
+            c = beside if (ride[e] >> p) & 1 else apart
             if banned[node] or c >= g[node]:
                 continue
             if g[node] == np.inf:
@@ -224,6 +232,7 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
         if (he & 1) == 1 and kind[e] == 2:
             return node, gn, n_touched
         ne = count[e]
+        here = (ride[e] >> p) & 1 == 1
         if tn[he] > 0:
             t = tt[he, 0]
             r = p if tcue[he, 0] else ne - p
@@ -241,23 +250,27 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
                 continue
             r = p if tcue[he, j] else ne - p
             lim = corner[tt[he, j], tk[he, j]]
-            c = gn + tlen[he, j]
+            c = gn
             if r > lim:
                 if not relaxed:
                     continue
                 c += cross_pen * (r - lim)
                 r = lim
             nxt = tnxt[he, j]
-            over = load[b] + weight - cap[b]
-            if over > 1e-9 and (nb > 0 or nxt >= 0):
-                if hard_cap:
-                    continue
-                c += pres * (over if over > 1.0 else 1.0)
-            if use_hist:
-                c += hist[b]
+            pb = r if tcub[he, j] else nb - r
+            if (ride[b] >> pb) & 1:
+                c += tlen[he, j] * (RIDE if here else 1.0)
+            else:
+                c += tlen[he, j]
+                over = load[b] + weight - cap[b]
+                if over > 1e-9 and (nb > 0 or nxt >= 0):
+                    if hard_cap:
+                        continue
+                    c += pres * (over if over > 1.0 else 1.0)
+                if use_hist:
+                    c += hist[b]
             if use_penalty:
                 c += penalty[b]
-            pb = r if tcub[he, j] else nb - r
             nn = (nxt if nxt >= 0 else 2 * b + 1) * SLOTS + pb
             if c < g[nn] and not banned[nn]:
                 if g[nn] == np.inf:

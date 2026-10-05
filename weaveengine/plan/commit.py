@@ -73,7 +73,7 @@ def _place(ctx: Context, conn, chosen: Candidate | None):
         layer = ctx.layers[chosen.layer]
         pmap, state = layer.pmap, layer.state
         gates = set(chosen.path.gates)
-        r = route(pmap, state, conn.src, conn.dst, params, mode="corridor", corridor=gates, weight=conn.weight)
+        r = route(pmap, state, conn.src, conn.dst, params, mode="corridor", corridor=gates, weight=conn.weight, net=conn.net_id)
         if r is not None:
             r.layer = chosen.layer
             return r
@@ -84,7 +84,7 @@ def _place(ctx: Context, conn, chosen: Candidate | None):
             for n in pmap.tri_n[t].tolist():
                 if n >= 0:
                     wide.update(pmap.tri_e_list[n])
-        r = route(pmap, state, conn.src, conn.dst, params, mode="corridor", corridor=wide, weight=conn.weight)
+        r = route(pmap, state, conn.src, conn.dst, params, mode="corridor", corridor=wide, weight=conn.weight, net=conn.net_id)
         if r is not None:
             r.layer = chosen.layer
             return r
