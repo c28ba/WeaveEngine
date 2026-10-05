@@ -446,11 +446,25 @@ So 233 of the 238 crossings can be taken out before any wire is laid, by a choic
 
 The via count (53) is still above the file's routing (33). That routing puts more connections on the top layer at the cost of longer traces. The single-layer ways tried here are all within 50 % of the shortest (`alpha`), so the choice could not make that trade. A via beside a pad shared by all connections of its net was also tried as an explanation and is not one: it would save about 5 vias.
 
-**Plan (M14d).**
-1. Phase 1 makes ways underneath as well as single-layer ways, with the one search; the selection chooses among them as it does now, with `via_cost` in the score.
-2. Phase 2 commits the chosen ways (a way through vias is planned again on the current state with the same layer favoured, since its slots were found on the empty board).
-3. Measure: crossings left after selection, vias, and whether rip-up settles on what remains.
-4. Then the trade between vias and length: single-layer ways with longer detours among the candidates.
+**Built and measured; it does not hold up as it stands.** The plan was: Phase 1 offers ways underneath, the selection chooses, the rest carries the choice out. Three ways of carrying it out were tried on `blinkSP1` (one variant). The code was taken out again; what was learned is below.
+
+| How the choice was carried out | Routed | Vias |
+|---|---|---|
+| No layer choice; vias found during commit and rip-up (12.3, the code as it is) | 52 of 58 | 63 |
+| Layers chosen in the selection; each chosen way planned again when committed | 42 to 45 | about 40 |
+| Layers chosen in the selection; all chosen vias made first, then the pieces routed as ordinary connections | 30 | 64 |
+
+1. **The selection does choose** (24 connections on one layer, 34 through vias, 7 to 25 crossings left depending on the detours allowed), but **what follows does not keep to it**. Of 24 ways chosen on one layer, 4 were committed on the gates chosen. A way through vias cannot be replayed at all: it was found on the map before any via existed, and every via changes the map under the others.
+2. **Making the chosen vias first chokes the board.** 58 vias leave more than 300 gates over-full after the commit phase, most of them beside a via, and rip-up never brings that down. Each way underneath goes down at the nearest legal point to its pad, so the vias crowd round the fine-pitch part and take the room the other pins need to get out.
+3. **What the file's own routing actually does** (measured from the file, correcting a guess made above): it makes 31 connections with top-layer copper alone, which is what this router manages on the top layer too (28 to 32). It does not route more on top. It makes 20 more connections with 33 vias, 1.65 each: multi-pin nets reach the other layer once and branch there (GND: two more pins for one via), and through-hole pads serve as layer changes.
+4. Growing each net as a tree from whichever of its pads are already joined, instead of fixed pad pairs, was tried on the top layer alone, greedily: 22 to 32 connections against 31 for fixed pairs. Not the lever either.
+
+**Where that leaves the question.** The planar part is not what is behind: on one layer the router matches the reference. What is behind is everything about vias, and on this board a via is mostly a matter of *room*: its keep-off is 1.5 mm across beside pins 0.5 mm apart. The search prices a via as a constant and puts it wherever is nearest. Nothing says what it costs the others to have it there, and nothing lets a net reuse a layer change it already has.
+
+**Next (M14d), as hypotheses to test one at a time on `blinkSP1`:**
+1. A via costs what it takes away: priced by the demand (9.2) on the gates round the point, on every layer, so that vias go where there is room.
+2. A net changes layer once and branches: a connection may start from any via or through-hole pad its net already has.
+3. Only then, again: layer choice in the global selection, with ways through vias that can be replayed (their via points fixed, their pieces replayed by corridor).
 
 ### 12.7 Not in scope
 - Blind and buried vias: a site is on every layer.
