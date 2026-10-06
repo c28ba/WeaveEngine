@@ -303,6 +303,21 @@ Not yet: Phase 1 candidates are single-layer (on an empty map a via never pays),
 
 v1: decompose each net into 2-pin connections by a minimum spanning tree over pad positions, then route the connections as independent 2-pin items (each a separate wire id). This loses Steiner-tree optimality, so it is a known limitation. Branches start at pads only. Since realisation, wires of one net owe each other no spacing: where two of them leave a pad the same way they are drawn as one shared trace until they part, which gives the look and the copper of a branching trace without changing the topology (they are still two wires in the state, so capacity is counted conservatively). Later improvement: restart a net's routing as a tree grown from its existing copper, with start states on any gate slot adjacent to an existing branch. That requires splitting the wire at the branch point, so it is deferred.
 
+**Riding (built).** A connection is still a whole wire from pad to pad, but beside a wire of its own net it is the same trace, and is treated as one. The state knows each wire's net and counts a run of same-net neighbours on a gate as one wire (its widest). The search is told the net it is routing; a place directly beside a wire of that net costs no room, and from one such place to the next 5 % of the length (`kernel.RIDE`). So a connection that reaches its net's copper follows it to its pad for next to nothing, and only the branch is new copper. Nothing depends on anything: a rider is a complete wire whatever happens to the wire it rode on.
+
+Measured, one variant, all results clean:
+
+| Board | Without | With riding |
+|---|---|---|
+| ALU (3 runs each) | 409 of 409; 13,390 to 13,585 mm of copper; 7 to 12 vias; 79 to 104 s | 409 of 409; 11,905 to 11,947 mm; 7 vias; 64 to 69 s |
+| RAM Selector Tree | 382 of 400, 255 vias, 12 min | 393 of 400, 258 vias, 24 min |
+| blinkSP1 (18 runs) | 48 (47 to 51) of 58 | 46 (42 to 54) |
+| Word of RAM | 85 of 85 | 85 of 85 |
+
+Little of ALU's saving is copper that coincides (100 to 200 mm): routes come out shorter. RAM Selector Tree takes twice as long because rip-up goes on finding better states (its last improvement comes at 19 minutes instead of 8) and only then stalls. On blinkSP1 rip-up never settles with or without riding (20 to 30 wires ripped up every round to the end), so the result is the best state it happened to pass; riding changes which, not whether. Three things suspected of riding were checked and are not so: a trunk ripped up leaving its rider to overflow (a removal cannot raise a load; a foreign wire going between trunk and rider happens 140 times in 71,000 crossings and never put a gate over), searches being slower (same number and cost), and bad geometry on RAM Selector Tree (a gap in the string kernel, 13.1, since closed).
+
+Not built: places counted between runs rather than wires (a gate holds 15 wires in the search, riders included); riding through the trunk's via; merging coincident segments in the output.
+
 ---
 
 ## 12. Layers and vias
