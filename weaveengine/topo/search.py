@@ -16,7 +16,6 @@ from weaveengine.topo.planar_map import PlanarMap
 from weaveengine.topo.state import Step, TopoState
 
 SLOT_CAP = 15  # node id is half_edge * 16 + slot; a gate with 15 wires is full
-MAX_RETRIES = 12
 _DEFAULT = CostParams()
 _NO_SEEDS = (np.zeros(0, dtype=np.int64), np.zeros(0), np.zeros(0), np.zeros(0))
 
@@ -54,8 +53,7 @@ class Reach:
             return None
         if self._lookup is None:
             self._lookup = dict(zip(self._touched.tolist(), zip(self._parent.tolist(), self._parent_tr.tolist())))
-        found = _read(self._pmap, self._state, node, self._lookup.__getitem__, float(self.best[t]), self._relaxed)
-        return found if isinstance(found, Route) else None
+        return _read(self._pmap, self._state, node, self._lookup.__getitem__, float(self.best[t]), self._relaxed)
 
 
 def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, params: CostParams | None = None,
@@ -107,16 +105,14 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     best = np.full(pmap.num_triangles, np.inf)
     best_node = np.full(pmap.num_triangles, -1, dtype=np.int64)
     search = kernel.astar if kernel.AVAILABLE else kernel.astar_plain
-    banned: list[int] = []
     found, seen = None, None
     tb = None
     riding = state.beside(net) if net >= 0 else {}
     try:
-        for _ in range(MAX_RETRIES):
+        while True:
             tb = pmap.__dict__.get("_kernel_tables")
             if tb is None:
                 tb = pmap.__dict__["_kernel_tables"] = kernel.Tables(pmap)
-                tb.banned[banned] = 1
             for e, places in riding.items():
                 tb.ride[e] = places
             best[:], best_node[:] = np.inf, -1
@@ -128,54 +124,50 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     tb.b, tb.nxt, tb.t, tb.k, tb.cue, tb.cub, tb.length, tb.n, tb.kind, tb.owner, tb.mid,
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor",
                     relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
-                    tx, ty, radius, params.h_weight, bound, tb.g, tb.parent, tb.parent_tr, tb.banned, tb.touched,
+                    tx, ty, radius, params.h_weight, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,
                     tb.heap_f, tb.heap_g, tb.heap_n, best, best_node)
             except Exception as error:  # the compiled kernel itself failed: never crash, fall back for good
+                if search is kernel.astar_plain:
+                    raise
                 from weaveengine import accel
                 accel.failed("search", error)
                 pmap.__dict__.pop("_kernel_tables", None)  # its workspace may be half-used
                 search = kernel.astar_plain
                 continue
             idx = tb.touched[:touched]
-            found = None
             if goal >= 0:
                 chain = np.empty(8192, dtype=np.int64)
                 n, root = (kernel.walk_back if search is kernel.astar else kernel.walk_back_plain)(tb.parent, int(goal), chain)
                 chain = chain[:n]
                 back = dict(zip(chain.tolist(), zip(chain[1:].tolist() + [int(root)], tb.parent_tr[chain].tolist())))
                 found = _read(pmap, state, int(goal), back.__getitem__, float(cost), relaxed) if n < 8192 else None
-            if reach and not isinstance(found, int):
+            if reach:
                 seen = Reach(pmap, state, relaxed, best, best_node, idx.copy(), tb.parent[idx], tb.parent_tr[idx])
             tb.g[idx] = np.inf
             tb.parent[idx] = -1
-            if goal == -2:  # the workspace was too small (many seeds): a larger one, and again
-                size = 4 * len(tb.heap_f)
-                tb.heap_f, tb.heap_g, tb.heap_n = np.zeros(size), np.zeros(size), np.zeros(size, dtype=np.int32)
-                tb.g[:] = np.inf
-                tb.parent[:] = -1
-                continue
-            if isinstance(found, int):
-                tb.banned[found] = 1  # the cheapest path crossed a gate twice (7.3): forbid it, search again
-                banned.append(found)
-                continue
-            break
-        else:
-            found = None
+            if goal != -2:
+                break
+            size = 4 * len(tb.heap_f)  # the workspace was too small (many seeds): a larger one, and again
+            tb.heap_f, tb.heap_g, tb.heap_n = np.zeros(size), np.zeros(size), np.zeros(size, dtype=np.int32)
+            tb.g[:] = np.inf
+            tb.parent[:] = -1
     finally:
         if tb is not None and pmap.__dict__.get("_kernel_tables") is tb:
-            tb.banned[banned] = 0
             tb.ride[list(riding)] = 0
     return (found, seen) if reach else found
 
 
-def _read(pmap: PlanarMap, state: TopoState, node: int, parent_of, cost: float, relaxed: bool) -> "Route | int":
-    """The route that ends at ``node``, or (when it crosses a gate twice) the
-    node id of the repeat crossing. ``parent_of(node)`` gives (parent, which
-    transition led here); a parent below zero ends the walk: -1 at a pad edge,
-    -2 - i at seed i."""
+def _read(pmap: PlanarMap, state: TopoState, node: int, parent_of, cost: float, relaxed: bool) -> Route | None:
+    """The route that ends at ``node``. ``parent_of(node)`` gives (parent,
+    which transition led here); a parent below zero ends the walk: -1 at a pad
+    edge, -2 - i at seed i.
+
+    None if it crosses a gate twice. Such a route runs along one side of a
+    wire, round its end and back along the other: it cannot be inserted (7.3),
+    and what it says is that the wire is in the way. No other route is looked
+    for: the next cheapest go round by the same wire, further out (8.4)."""
     tables = pmap.__dict__["_kernel_tables"]
     rev: list[Step] = []
-    nodes: list[int] = []
     blocking: set[int] = set()
     while True:
         prev, j = parent_of(node)
@@ -184,7 +176,6 @@ def _read(pmap: PlanarMap, state: TopoState, node: int, parent_of, cost: float, 
         he = prev >> 4
         t, k = int(tables.t[he, j]), int(tables.k[he, j])
         rev.append(((node >> 4) >> 1, t, k, node & 15))
-        nodes.append(node)
         if relaxed:
             e, p = he >> 1, prev & 15
             wires = state.gate_order[e]
@@ -194,15 +185,10 @@ def _read(pmap: PlanarMap, state: TopoState, node: int, parent_of, cost: float, 
             blocking.update(wires[state.corner_cnt[t][k]:p])
         node = prev
     rev.append(((node >> 4) >> 1, -1, -1, node & 15))
-    nodes.append(node)
     steps = rev[::-1]
     gates = [s[0] for s in steps]
     if not relaxed and len(set(gates)) != len(gates):
-        seen: set[int] = set()
-        for gate, nid in zip(gates, nodes[::-1]):
-            if gate in seen:
-                return nid
-            seen.add(gate)
+        return None
     mids = pmap.edge_mid_list
     length = sum(math.hypot(mids[a][0] - mids[b][0], mids[a][1] - mids[b][1]) for a, b in zip(gates, gates[1:]))
     return Route(steps, cost, length, blocking, seed=-1 if prev == -1 else -2 - prev)

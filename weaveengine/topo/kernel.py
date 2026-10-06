@@ -86,7 +86,6 @@ class Tables:
         self.g = np.full(nodes, np.inf)
         self.parent = np.full(nodes, -1, dtype=np.int32)
         self.parent_tr = np.zeros(nodes, dtype=np.int8)
-        self.banned = np.zeros(nodes, dtype=np.uint8)
         self.touched = np.zeros(nodes, dtype=np.int32)
         size = max(4 * nodes, 1024)
         self.heap_f = np.zeros(size)
@@ -119,7 +118,7 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
           tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
           relaxed, pres, use_hist, cross_pen, hard_cap, weight, ride, tx, ty, rad, hw, bound,
-          g, parent, parent_tr, banned, touched, heap_f, heap_g, heap_n, best, best_node):
+          g, parent, parent_tr, touched, heap_f, heap_g, heap_n, best, best_node):
     """The one search (design section 8). Cheapest way to ``dst_pad``.
 
     It starts from the pad edges ``starts`` (cost 0) and from seeds: a point in
@@ -183,7 +182,7 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
         for p in range(first, last + 1):
             node = node0 + p
             c = beside if (ride[e] >> p) & 1 else apart
-            if banned[node] or c >= g[node]:
+            if c >= g[node]:
                 continue
             if g[node] == np.inf:
                 touched[n_touched] = node
@@ -272,7 +271,7 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
             if use_penalty:
                 c += penalty[b]
             nn = (nxt if nxt >= 0 else 2 * b + 1) * SLOTS + pb
-            if c < g[nn] and not banned[nn]:
+            if c < g[nn]:
                 if g[nn] == np.inf:
                     touched[n_touched] = nn
                     n_touched += 1
