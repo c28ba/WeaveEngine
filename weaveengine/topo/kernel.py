@@ -374,3 +374,70 @@ def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
         out[i] = found
         if found >= 0:
             cur = found
+
+
+@njit(cache=True, nogil=True)
+def roomy(tri_v, vx, vy, corner, pitch, keep, least, t, x, y):
+    """Whether the point x y really lies in the middle cell of triangle t:
+    ``least`` clear of the triangle's edges, and far enough from each corner
+    for the via's keep-off and the wires that cut that corner."""
+    for k in range(3):
+        a, b = tri_v[t, k], tri_v[t, (k + 1) % 3]
+        if np.hypot(vx[a] - x, vy[a] - y) - keep < (corner[t, k] - 1) * pitch:
+            return False
+        ex, ey = vx[b] - vx[a], vy[b] - vy[a]
+        if (ex * (y - vy[a]) - ey * (x - vx[a])) / max(np.hypot(ex, ey), 1e-12) < least:
+            return False
+    return True
+
+
+@njit(cache=True, nogil=True)
+def rooms(tri_v, vx, vy, corner, pitch, keep, least, tris, px, py):
+    """``roomy`` for each point in its triangle."""
+    out = np.zeros(tris.shape[0], dtype=np.bool_)
+    for i in range(tris.shape[0]):
+        out[i] = roomy(tri_v, vx, vy, corner, pitch, keep, least, tris[i], px[i], py[i])
+    return out
+
+
+@njit(cache=True, nogil=True)
+def via_points(best, extra, bound, gx, gy, tri_v, vx, vy, corner, pitch, keep, least, legal, x0, y0, cell):
+    """Where a search may change layer (12.3). ``best[t]`` is the cost at which
+    it reached the middle of triangle t. Five points are tried in each triangle
+    reached: the incentre, the centroid, and one towards each corner. A point
+    is kept if a via may be there (``legal``, a grid of cells from x0 y0), it
+    has room (``roomy``), and its cost, ``best[t] + extra``, plus the straight
+    line on to gx gy stays under ``bound``.
+    Returns (x, y, cost, triangle) of the points kept."""
+    nx, ny = legal.shape
+    n = 0
+    for t in range(best.shape[0]):
+        if best[t] + extra < bound:
+            n += 5
+    px, py, cost, tri = np.empty(n), np.empty(n), np.empty(n), np.empty(n, dtype=np.int64)
+    n = 0
+    for t in range(best.shape[0]):
+        c = best[t] + extra
+        if not c < bound:
+            continue
+        a, b, d = tri_v[t, 0], tri_v[t, 1], tri_v[t, 2]
+        sa = np.sqrt((vx[b] - vx[d]) * (vx[b] - vx[d]) + (vy[b] - vy[d]) * (vy[b] - vy[d]))  # the side opposite each corner
+        sb = np.sqrt((vx[d] - vx[a]) * (vx[d] - vx[a]) + (vy[d] - vy[a]) * (vy[d] - vy[a]))
+        sd = np.sqrt((vx[a] - vx[b]) * (vx[a] - vx[b]) + (vy[a] - vy[b]) * (vy[a] - vy[b]))
+        ix = (vx[a] * sa + vx[b] * sb + vx[d] * sd) / (sa + sb + sd)
+        iy = (vy[a] * sa + vy[b] * sb + vy[d] * sd) / (sa + sb + sd)
+        for k in range(5):
+            if k == 0:
+                x, y = ix, iy
+            elif k == 1:
+                x, y = (vx[a] + vx[b] + vx[d]) / 3.0, (vy[a] + vy[b] + vy[d]) / 3.0
+            else:
+                x, y = (vx[tri_v[t, k - 2]] + ix) / 2.0, (vy[tri_v[t, k - 2]] + iy) / 2.0
+            i, j = int((x - x0) / cell), int((y - y0) / cell)
+            i, j = min(max(i, 0), nx - 1), min(max(j, 0), ny - 1)
+            if not legal[i, j] or not c + np.hypot(x - gx, y - gy) < bound:
+                continue
+            if roomy(tri_v, vx, vy, corner, pitch, keep, least, t, x, y):
+                px[n], py[n], cost[n], tri[n] = x, y, c, t
+                n += 1
+    return px[:n], py[:n], cost[:n], tri[:n]

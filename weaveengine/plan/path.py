@@ -81,37 +81,8 @@ class Legal:
         for region in self.regions:
             self.grid &= shapely.contains_xy(region, gx, gy)
 
-    def roughly(self, pts: np.ndarray) -> np.ndarray:
-        ix = np.clip(((pts[:, 0] - self.x0) / GRID).astype(np.int64), 0, self.grid.shape[0] - 1)
-        iy = np.clip(((pts[:, 1] - self.y0) / GRID).astype(np.int64), 0, self.grid.shape[1] - 1)
-        return self.grid[ix, iy]
-
     def exactly(self, x: float, y: float) -> bool:
         return all(shapely.contains_xy(region, x, y) for region in self.regions)
-
-
-def _points(pmap: PlanarMap, tris: np.ndarray) -> np.ndarray:
-    """Points inside each triangle where a site might go: the incentre, the
-    centroid, and one towards each corner. [len(tris), 5, 2]"""
-    xy = np.stack([pmap.vx[pmap.tri_v[tris]], pmap.vy[pmap.tri_v[tris]]], axis=2)   # [n, 3, 2]
-    cen = xy.mean(axis=1)
-    side = np.linalg.norm(xy[:, [1, 2, 0]] - xy[:, [2, 0, 1]], axis=2)             # length opposite each corner
-    inc = (xy * side[:, :, None]).sum(axis=1) / side.sum(axis=1)[:, None]
-    return np.concatenate([inc[:, None], cen[:, None], (xy + inc[:, None]) / 2.0], axis=1)
-
-
-def _has_room(layer, tris: np.ndarray, pts: np.ndarray, keep: float) -> np.ndarray:
-    """Whether each point really lies in the middle cell of its triangle: clear
-    of the triangle's edges, and far enough from each corner for the via's
-    keep-off and the wires that cut that corner."""
-    pmap, state = layer.pmap, layer.state
-    xy = np.stack([pmap.vx[pmap.tri_v[tris]], pmap.vy[pmap.tri_v[tris]]], axis=2)       # [n, 3, 2]
-    d = np.hypot(xy[:, :, 0] - pts[:, None, 0], xy[:, :, 1] - pts[:, None, 1])
-    ok = (d - keep >= (state.corner[tris] - 1) * pmap.pitch).all(axis=1)
-    a, b = xy, xy[:, [1, 2, 0]]
-    cross = (b[:, :, 0] - a[:, :, 0]) * (pts[:, None, 1] - a[:, :, 1]) - (b[:, :, 1] - a[:, :, 1]) * (pts[:, None, 0] - a[:, :, 0])
-    height = cross / np.maximum(np.hypot(b[:, :, 0] - a[:, :, 0], b[:, :, 1] - a[:, :, 1]), 1e-12)
-    return ok & (height.min(axis=1) >= sites.MIN_ROOM * sites.SITE_RADIUS)
 
 
 def _taken(ctx, struck):
@@ -128,19 +99,16 @@ def _via_points(ctx, la: int, seen, goal, bound: float, taken):
     each at its cost so far plus a via. Points that cannot lead to a route
     cheaper than ``bound`` are left out. Returns (points, costs, where each
     came from as (layer, triangle)), or None."""
-    params, rules = ctx.params, ctx.board.rules
-    spacing = rules.via_diameter + rules.clearance + 0.02
-    tris = np.nonzero(seen.best + params.via_cost < bound)[0]
-    if not len(tris):
-        return None
-    p = _points(ctx.layers[la].pmap, tris).reshape(-1, 2)
-    tris = np.repeat(tris, 5)
-    c = seen.best[tris] + params.via_cost
-    at = np.nonzero(ctx.legal.roughly(p) & (c + np.hypot(p[:, 0] - goal[0], p[:, 1] - goal[1]) < bound))[0]
-    if taken is not None:
-        at = at[taken.query(p[at], distance_upper_bound=spacing)[0] > spacing]
-    at = at[_has_room(ctx.layers[la], tris[at], p[at], sites.keep_off(rules))]
-    return p[at], c[at], np.stack([np.full(len(at), la), tris[at]], axis=1)
+    rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
+    x, y, cost, tris = kernel.via_points(seen.best, ctx.params.via_cost, bound, goal[0], goal[1], pmap.tri_v, pmap.vx, pmap.vy,
+                                         ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
+                                         legal.grid, legal.x0, legal.y0, GRID)
+    pts = np.stack([x, y], axis=1)
+    if taken is not None and len(pts):
+        spacing = rules.via_diameter + rules.clearance + 0.02
+        ok = taken.query(pts, distance_upper_bound=spacing)[0] > spacing
+        pts, cost, tris = pts[ok], cost[ok], tris[ok]
+    return (pts, cost, np.stack([np.full(len(tris), la), tris], axis=1)) if len(pts) else None
 
 
 def _seeds(ctx, sources: dict, onto, goal, bound: float):
@@ -152,9 +120,11 @@ def _seeds(ctx, sources: dict, onto, goal, bound: float):
     if not parts:
         return None
     pts, cost, source = (np.concatenate(x) for x in zip(*parts))
-    tris = locate(onto.pmap, pts)
+    pmap = onto.pmap
+    tris = locate(pmap, pts)
     at = np.nonzero((tris >= 0) & (cost + np.hypot(pts[:, 0] - goal[0], pts[:, 1] - goal[1]) < bound))[0]
-    at = at[_has_room(onto, tris[at], pts[at], sites.keep_off(ctx.board.rules))]
+    at = at[kernel.rooms(pmap.tri_v, pmap.vx, pmap.vy, onto.state.corner, pmap.pitch, sites.keep_off(ctx.board.rules),
+                         sites.MIN_ROOM * sites.SITE_RADIUS, tris[at], np.ascontiguousarray(pts[at, 0]), np.ascontiguousarray(pts[at, 1]))]
     return (tris[at], cost[at], pts[at], source[at]) if len(at) else None
 
 
