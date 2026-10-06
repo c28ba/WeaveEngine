@@ -19,18 +19,20 @@ class Candidate:
     route_weight: float = 1.0  # gate load of the connection
 
 
-def generate(ctx: Context, conn: Connection, k: int | None = None) -> list[Candidate]:
+def generate(ctx: Context, conn: Connection, k: int | None = None, first: dict | None = None) -> list[Candidate]:
     """Up to K topologically distinct routes per usable layer on the current
     state (9.3): route, penalise every gate of the result, search again.
 
     Layers are searched at the same time: each has its own map, state and
     search workspace, and the compiled kernel does not hold the interpreter lock.
+    ``first``, if given, is filled per layer with the outcome of the plain
+    search there, as ``find`` takes it.
     """
     k = ctx.params.K if k is None else k
     if _use_threads(ctx, conn):
-        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k), conn.layers))
+        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k, first), conn.layers))
     else:
-        found = [_layer_routes(ctx, conn, li, k) for li in conn.layers]
+        found = [_layer_routes(ctx, conn, li, k, first) for li in conn.layers]
     cands: list[Candidate] = []
     for li, routes in zip(conn.layers, found):
         pmap = ctx.layers[li].pmap
@@ -70,11 +72,14 @@ def _threads():
     return _pool
 
 
-def _layer_routes(ctx: Context, conn: Connection, li: int, k: int) -> list[Route]:
+def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict | None = None) -> list[Route]:
     params = ctx.params
     layer = ctx.layers[li]
     pmap, state = layer.pmap, layer.state
-    first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id)
+    if plain is None:
+        first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id)
+    else:
+        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True)
     if first is None:
         return []
     found = {first.gates: first}
@@ -184,12 +189,13 @@ def plain_route(ctx: Context, conn: Connection, **kwargs) -> Route | None:
 def best_route(ctx: Context, conn: Connection) -> Path | None:
     """Best route on the current state: on one layer under the full cost model
     (the lookahead terms of section 9), or through vias if that is cheaper."""
+    first = {} if ctx.vias else None  # the plain search on each layer: both ways start with it
     if ctx.options.lookahead or ctx.options.demand:
-        cands = generate(ctx, conn, ctx.params.K_reroute)
+        cands = generate(ctx, conn, ctx.params.K_reroute, first)
         direct = cands[0].route if cands else None
     else:
         direct = plain_route(ctx, conn)
-    through = find(ctx, conn) if ctx.vias else None
+    through = find(ctx, conn, first=first) if ctx.vias else None
     if through is not None and through.vias and (direct is None or through.cost < direct.cost):
         return through
     return Path.on_one_layer(direct) if direct is not None else through
