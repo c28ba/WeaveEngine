@@ -124,7 +124,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     starts, np.ascontiguousarray(tris, dtype=np.int64), np.ascontiguousarray(costs, dtype=np.float64),
                     np.ascontiguousarray(xs, dtype=np.float64), np.ascontiguousarray(ys, dtype=np.float64), dst_pad,
                     pmap.tri_e, pmap.tri_v, pmap.edge_v, pmap.edge_t,
-                    tb.b, tb.nxt, tb.t, tb.k, tb.cue, tb.cub, tb.length, tb.n, pmap.edge_kind, pmap.edge_owner, pmap.edge_mid,
+                    tb.tr, tb.length, tb.n, pmap.edge_kind, pmap.edge_owner, pmap.edge_mid,
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor",
                     relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
                     tx, ty, radius, params.h_weight, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,
@@ -177,7 +177,7 @@ def _read(pmap: PlanarMap, state: TopoState, node: int, parent_of, cost: float, 
         if prev < 0:
             break
         he = prev >> 4
-        t, k = int(tables.t[he, j]), int(tables.k[he, j])
+        t, k = int(tables.tr[he, j, 2]), int(tables.tr[he, j, 3])
         rev.append(((node >> 4) >> 1, t, k, node & 15))
         if relaxed:
             e, p = he >> 1, prev & 15

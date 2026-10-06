@@ -55,7 +55,7 @@ def map_errors(pmap) -> list[str]:
     if tables is not None:
         fresh = kernel.Tables(pmap)
         size = 2 * pmap.num_edges
-        for name in ("b", "nxt", "t", "k", "cue", "cub", "length"):
+        for name in ("tr", "length"):
             mine, theirs = getattr(tables, name)[:size], getattr(fresh, name)[:size]
             used = np.arange(2)[None, :] < fresh.n[:size, None]
             if not np.array_equal(tables.n[:size], fresh.n[:size]) or not np.array_equal(mine[used], theirs[used]):

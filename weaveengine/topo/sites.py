@@ -231,8 +231,9 @@ def _repoint(pmap: PlanarMap, edge: int, nbr: int, was: int, now: int) -> None:
 
 
 def _refresh(pmap: PlanarMap, edges) -> None:
-    """The transitions of both sides of these edges are out of date."""
+    """These edges have changed: what the map derives from them is out of date."""
     pmap.stale.update(edges)
+    pmap.moved = True
 
 
 def _register(pmap: PlanarMap, site: Site, hole_xy) -> None:

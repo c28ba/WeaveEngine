@@ -92,6 +92,7 @@ class PlanarMap:
         """
         self.trans = [self.transitions(h) for h in range(2 * self.num_edges)]
         self.stale: set[int] = set()  # edges changed since the transitions were last brought up to date
+        self.moved = True             # triangles changed since the grid for locating points was filled
 
     def catch_up(self) -> None:
         """Brings the transitions, and the compiled search's copy of them, up

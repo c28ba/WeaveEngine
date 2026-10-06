@@ -73,12 +73,9 @@ class Tables:
         # Room for more half-edges than the map has: via sites add edges, and
         # the workspace below is too large to copy every time one does.
         e2 = self.room = 2 * pmap.num_edges + max(256, pmap.num_edges // 4)
-        self.b = np.zeros((e2, 2), dtype=np.int32)
-        self.nxt = np.zeros((e2, 2), dtype=np.int32)
-        self.t = np.zeros((e2, 2), dtype=np.int32)
-        self.k = np.zeros((e2, 2), dtype=np.int32)
-        self.cue = np.zeros((e2, 2), dtype=np.uint8)
-        self.cub = np.zeros((e2, 2), dtype=np.uint8)
+        # Per half-edge, its (up to two) transitions side by side, as the search reads them:
+        # exit edge, next half-edge, triangle, corner, corner at the u end of this edge, of the exit edge.
+        self.tr = np.zeros((e2, 2, 6), dtype=np.int32)
         self.length = np.zeros((e2, 2), dtype=np.float64)
         self.n = np.zeros(e2, dtype=np.int32)
         self.update(pmap, range(2 * pmap.num_edges))
@@ -105,15 +102,15 @@ class Tables:
         for he in half_edges:
             row = trans[he]
             self.n[he] = len(row)
-            for j, (b, nxt, t, k, cue, cub, length) in enumerate(row):
-                self.b[he, j], self.nxt[he, j], self.t[he, j], self.k[he, j] = b, nxt, t, k
-                self.cue[he, j], self.cub[he, j], self.length[he, j] = cue, cub, length
+            for j, row_j in enumerate(row):
+                self.tr[he, j] = row_j[:6]
+                self.length[he, j] = row_j[6]
         return True
 
 
 @njit(cache=True, nogil=True)
 def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, edge_v, edge_t,
-          tb, tnxt, tt, tk, tcue, tcub, tlen, tn, kind, owner, mid,
+          tr, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
           relaxed, pres, use_hist, cross_pen, hard_cap, weight, ride, tx, ty, rad, hw, bound,
           g, parent, parent_tr, touched, heap_f, heap_g, heap_n, best, best_node):
@@ -231,13 +228,13 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
         ne = count[e]
         here = (ride[e] >> p) & 1 == 1
         if tn[he] > 0:
-            t = tt[he, 0]
-            r = p if tcue[he, 0] else ne - p
-            if r == corner[t, tk[he, 0]] and gn < best[t]:
+            t = tr[he, 0, 2]
+            r = p if tr[he, 0, 4] else ne - p
+            if r == corner[t, tr[he, 0, 3]] and gn < best[t]:
                 best[t] = gn
                 best_node[t] = node
         for j in range(tn[he]):
-            b = tb[he, j]
+            b = tr[he, j, 0]
             if kind[b] == 2 and owner[b] != dst_pad:
                 continue
             if use_corridor and corridor[b] == 0:
@@ -245,16 +242,16 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
             nb = count[b]
             if nb >= SLOTS - 1:
                 continue
-            r = p if tcue[he, j] else ne - p
-            lim = corner[tt[he, j], tk[he, j]]
+            r = p if tr[he, j, 4] else ne - p
+            lim = corner[tr[he, j, 2], tr[he, j, 3]]
             c = gn
             if r > lim:
                 if not relaxed:
                     continue
                 c += cross_pen * (r - lim)
                 r = lim
-            nxt = tnxt[he, j]
-            pb = r if tcub[he, j] else nb - r
+            nxt = tr[he, j, 1]
+            pb = r if tr[he, j, 5] else nb - r
             if (ride[b] >> pb) & 1:
                 c += tlen[he, j] * (RIDE if here else 1.0)
             else:
@@ -335,10 +332,10 @@ def near(tri_v, vx, vy, hint, x0, y0, cell):
 @njit(cache=True, nogil=True)
 def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
     """Triangle containing each point (-1 if none). The search walks from the
-    triangle ``hint`` gives for the point's cell (``near``), then from the
-    triangle of the point before, and scans every triangle only where both
-    walks run into a wall. So the hint may be out of date: it costs time, not
-    the answer."""
+    triangle ``hint`` gives for the point's cell (``near``), and scans every
+    triangle only where the walk runs into a wall. A hint out of date gives
+    the same answer but runs into walls: measured on RAM Selector Tree, a grid
+    filled once made this four times slower than filling it at every change."""
     n_tri = tri_v.shape[0]
     nx, ny = hint.shape
     cur = 0
@@ -349,23 +346,19 @@ def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
         t = cur
         if 0 <= ci < nx and 0 <= cj < ny and hint[ci, cj] >= 0:
             t = hint[ci, cj]
-        for start in range(2):
-            for _ in range(n_tri):
-                move = -1
-                for k in range(3):
-                    a, b = tri_v[t, (k + 1) % 3], tri_v[t, (k + 2) % 3]
-                    if (vx[b] - vx[a]) * (y - vy[a]) - (vy[b] - vy[a]) * (x - vx[a]) < -1e-12:
-                        move = k
-                        break
-                if move < 0:
-                    found = t
+        for _ in range(n_tri):
+            move = -1
+            for k in range(3):
+                a, b = tri_v[t, (k + 1) % 3], tri_v[t, (k + 2) % 3]
+                if (vx[b] - vx[a]) * (y - vy[a]) - (vy[b] - vy[a]) * (x - vx[a]) < -1e-12:
+                    move = k
                     break
-                t = tri_n[t, move]
-                if t < 0:
-                    break
-            if found >= 0 or t == cur:
+            if move < 0:
+                found = t
                 break
-            t = cur  # the hint led nowhere (its triangle has moved since): from where the point before was
+            t = tri_n[t, move]
+            if t < 0:
+                break
         if found < 0:
             for t in range(n_tri):
                 inside = True
