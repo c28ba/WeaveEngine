@@ -73,6 +73,7 @@ class BoardView(QGraphicsView):
         self.trace_items: list = []     # (item, width in mm, colour)
         self.detail_items: list = []    # teardrops: only worth drawing when zoomed in
         self._thin = None               # whether traces are currently drawn as hairlines
+        self.gpu = False                # drawing with the graphics card (``draw_on_gpu``)
         self.viewport().grabGesture(Qt.PinchGesture)
         self.board = None
         self.visible: dict[int, bool] = {}
@@ -146,6 +147,42 @@ class BoardView(QGraphicsView):
         self._level_of_detail(force=True)
 
     # -- drawing speed ------------------------------------------------------------
+    def draw_on_gpu(self, on: bool) -> str:
+        """Draws the picture with the graphics card (OpenGL), or with the
+        ordinary painter. Returns "" if it is now as asked, else why the
+        ordinary painter is in use. Never raises: a machine without usable
+        OpenGL just keeps the ordinary painter."""
+        why = ""
+        if on:
+            try:
+                from PySide6.QtGui import QOffscreenSurface, QOpenGLContext, QSurfaceFormat
+                from PySide6.QtOpenGLWidgets import QOpenGLWidget
+                wanted = QSurfaceFormat()
+                wanted.setSamples(4)  # smooth edges: the card's own, in place of the painter's
+                # Ask for a context before trusting a widget to get one: a widget that
+                # gets none shows nothing at all.
+                context, surface = QOpenGLContext(), QOffscreenSurface()
+                context.setFormat(wanted)
+                surface.setFormat(wanted)
+                surface.create()
+                if not (context.create() and context.makeCurrent(surface)):
+                    raise RuntimeError("this machine gave no OpenGL context")
+                context.doneCurrent()
+                widget = QOpenGLWidget()
+                widget.setFormat(wanted)
+            except Exception as error:  # no module, no driver, a remote desktop, ...
+                why, on = f"{type(error).__name__}: {error}", False
+        if on:
+            self.setViewport(widget)
+            self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)  # the card redraws everything anyway
+        elif self.gpu:
+            self.setViewport(QWidget())
+            self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+        self.gpu = on
+        self.viewport().grabGesture(Qt.PinchGesture)  # a new viewport has none of the old one's settings
+        self.viewport().update()
+        return why
+
     def _level_of_detail(self, force: bool = False) -> None:
         """Match what is drawn to the zoom: detail too small to see costs time and adds nothing."""
         scale = self.transform().m11()          # pixels per millimetre
@@ -627,6 +664,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.view)
         self._build_actions()
         self._build_panel()
+        self._apply_gpu()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.pump)
@@ -733,6 +771,42 @@ class MainWindow(QMainWindow):
 
     def say(self, text: str) -> None:
         self.log.appendPlainText(text)
+
+    def _apply_gpu(self) -> None:
+        """Turns graphics-card drawing on or off as the settings say, safely.
+        A bad driver can take the whole program down the moment it draws, where
+        nothing can be caught. So a marker file beside the settings says "being
+        tried" until a few seconds of drawing have gone by; found at start, the
+        last try did not survive, and the setting is switched off with a note."""
+        settings, marker = self.settings, self.settings_path + ".gpu-being-tried"
+
+        def mark(on: bool) -> None:
+            try:
+                if on:
+                    open(marker, "w").close()
+                elif os.path.exists(marker):
+                    os.remove(marker)
+            except OSError:
+                pass
+
+        if settings.gpu_drawing and os.path.exists(marker):
+            settings.gpu_drawing = False
+            try:
+                settings.save(self.settings_path)
+            except OSError:
+                pass
+            self.say("Drawing with the graphics card was switched off: the program did not survive the last attempt.")
+        mark(False)
+        if not settings.gpu_drawing:
+            self.view.draw_on_gpu(False)
+            return
+        mark(True)
+        why = self.view.draw_on_gpu(True)
+        if why:
+            mark(False)
+            self.say(f"Drawing with the graphics card is not available here ({why}); using the ordinary drawing.")
+        else:
+            QTimer.singleShot(3000, lambda: mark(False))
 
     def _toggle_outlines(self, on: bool) -> None:
         self.view.set_outlines_visible(on)
@@ -1018,6 +1092,7 @@ class MainWindow(QMainWindow):
             try:
                 self.settings.save(self.settings_path)
                 self.say(f"Settings saved to {self.settings_path}")
+                self._apply_gpu()
             except OSError as error:
                 QMessageBox.critical(self, "Could not save the settings", str(error))
 
@@ -1027,14 +1102,36 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float = 900.0) -> int:
+def picture(window: "MainWindow"):
+    """The window as an image. A view drawn by the graphics card comes back
+    empty from an ordinary grab, so its part is drawn again the ordinary way
+    and put in place. (Asking the screen instead would need the user's
+    permission to record it.)"""
+    shot = window.grab()
+    view = window.view
+    if view.gpu:
+        painter = QPainter(shot)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        corner = view.viewport().mapTo(window, view.viewport().rect().topLeft())
+        view.render(painter, QRectF(corner.x(), corner.y(), view.viewport().width(), view.viewport().height()), view.viewport().rect())
+        painter.end()
+    return shot
+
+
+def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float = 900.0, gpu: bool = False) -> int:
     """Drives the window without a person: open, route, export, check. Used to
     test the application, including a packaged build:
 
-        main.py --self-test board.dsn [--ses out.ses] [--screenshot out.png]
+        main.py --self-test board.dsn [--ses out.ses] [--screenshot out.png] [--gpu]
+
+    ``--gpu``: with graphics-card drawing switched on for this run (the settings file is left alone).
     """
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = MainWindow()
+    if gpu:
+        why = window.view.draw_on_gpu(True)
+        print("self-test: graphics-card drawing", "on" if window.view.gpu else f"refused ({why})")
     window.interactive = False
     window.show()
     if not window.open(dsn):
@@ -1057,7 +1154,7 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
         app.processEvents()
         live_frames += window.view.last is not None and window.shown_variant is not None and before is None
         if live_shot and window.shown_variant is not None and time.time() - started > live_after:
-            window.grab().save(live_shot)
+            picture(window).save(live_shot)
             print("self-test: live screenshot", live_shot, "at", round(time.time() - started, 1), "s")
             live_shot = None
         time.sleep(0.01)
@@ -1116,11 +1213,11 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
         print("self-test: selected", {k: v for k, v in (info or {}).items() if k not in ("outline", "trace", "pad", "layer index")})
     app.processEvents()
     if screenshot:
-        window.grab().save(screenshot)
+        picture(window).save(screenshot)
         print("self-test: screenshot", screenshot)
         view.zoom_at(view.mapFromScene(QPointF(mid[0], -mid[1])), 6.0)
         app.processEvents()
-        window.grab().save(os.path.splitext(screenshot)[0] + "_zoom.png")
+        picture(window).save(os.path.splitext(screenshot)[0] + "_zoom.png")
         dialog = SettingsDialog(window.settings, window.settings_path, window)
         dialog.show()
         tabs = dialog.findChild(QTabWidget)
@@ -1145,7 +1242,8 @@ def main(argv: list[str] | None = None) -> int:
     if "--self-test" in argv:
         i = argv.index("--self-test")
         get = lambda flag: argv[argv.index(flag) + 1] if flag in argv else None
-        return self_test(argv[i + 1], get("--ses"), get("--screenshot"))
+        return self_test(argv[i + 1], get("--ses"), get("--screenshot"), gpu="--gpu" in argv)
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)  # needed for a view to change to graphics-card drawing and back
     app = QApplication(argv[:1])
     app.setApplicationName("WeaveEngine")
     window = MainWindow()

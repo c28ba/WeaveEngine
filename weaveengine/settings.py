@@ -39,6 +39,8 @@ DESCRIPTIONS = {
     "ignore_keepouts": ("Ignore keepout areas", "Drop the DSN's keepouts", "Rules"),
     "show_outlines": ("Component outlines", "Draw the outline of every part", "View"),
     "show_names": ("Component names", "Draw every part's reference", "View"),
+    "gpu_drawing": ("Draw with the graphics card", "Much faster on large boards. If this machine cannot do it, or it once failed, "
+                    "the ordinary drawing is used instead", "View"),
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
     "teardrops": ("Teardrops", "Add teardrops where traces meet pads and vias", "Teardrops"),
     "teardrops_in_ses": ("Write teardrops to the SES", "As fans of ordinary traces (SES has no filled shapes)", "Teardrops"),
@@ -89,6 +91,7 @@ class Settings:
     smooth_corners: bool = True
     show_outlines: bool = True
     show_names: bool = True
+    gpu_drawing: bool = False
     teardrops: bool = True
     teardrops_in_ses: bool = True
     teardrop_max_length: float = 1.0

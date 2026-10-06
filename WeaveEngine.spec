@@ -20,7 +20,8 @@ a = Analysis(
     ["main.py"],
     datas=datas,
     binaries=binaries,
-    hiddenimports=hidden + ["scipy.sparse.csgraph", "scipy.spatial", "scipy._lib.array_api_compat.numpy.fft"],
+    hiddenimports=hidden + ["scipy.sparse.csgraph", "scipy.spatial", "scipy._lib.array_api_compat.numpy.fft",
+                            "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets"],  # graphics-card drawing (imported only when switched on)
     excludes=["tkinter", "matplotlib", "IPython", "pytest", "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick",
               "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf"],
 )
