@@ -105,6 +105,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     best = np.full(pmap.num_triangles, np.inf)
     best_node = np.full(pmap.num_triangles, -1, dtype=np.int64)
     search = kernel.astar if kernel.AVAILABLE else kernel.astar_plain
+    pmap.catch_up()
     found, seen = None, None
     tb = None
     riding = state.beside(net) if net >= 0 else {}
@@ -121,7 +122,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     starts, np.ascontiguousarray(tris, dtype=np.int64), np.ascontiguousarray(costs, dtype=np.float64),
                     np.ascontiguousarray(xs, dtype=np.float64), np.ascontiguousarray(ys, dtype=np.float64), dst_pad,
                     pmap.tri_e, pmap.tri_v, pmap.edge_v, pmap.edge_t,
-                    tb.b, tb.nxt, tb.t, tb.k, tb.cue, tb.cub, tb.length, tb.n, tb.kind, tb.owner, tb.mid,
+                    tb.b, tb.nxt, tb.t, tb.k, tb.cue, tb.cub, tb.length, tb.n, pmap.edge_kind, pmap.edge_owner, pmap.edge_mid,
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor",
                     relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
                     tx, ty, radius, params.h_weight, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,

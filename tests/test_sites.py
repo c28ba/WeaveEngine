@@ -21,6 +21,7 @@ from weaveengine.topo.state import TopoState
 def map_errors(pmap) -> list[str]:
     """Checks the map's tables against each other after it has been changed."""
     errors = []
+    pmap.catch_up()
     idle_edges = {e for slot in sites.free_slots(pmap) for e in slot[1]}
     idle_tris = {t for slot in sites.free_slots(pmap) for t in slot[2]}
     for t in range(pmap.num_triangles):
@@ -274,6 +275,7 @@ def test_hand_placed_via_realises_clean(via_at):
 def fingerprint(pmap):
     """Everything in the map a site changes, in a form that can be compared.
     Slots that hold no site are left out (the tables never shrink)."""
+    pmap.catch_up()
     idle_edges = {e for slot in sites.free_slots(pmap) for e in slot[1]}
     idle_tris = {t for slot in sites.free_slots(pmap) for t in slot[2]}
     tris = [t for t in range(pmap.num_triangles) if t not in idle_tris]

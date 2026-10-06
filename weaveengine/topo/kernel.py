@@ -96,8 +96,9 @@ class Tables:
         self.ride = np.zeros(e2 // 2 + 1, dtype=np.int64)  # per edge: the places beside a wire of the net being routed
 
     def update(self, pmap, half_edges) -> bool:
-        """Copies the transitions of ``half_edges`` and the per-edge tables from
-        the map. Returns False if the map has outgrown the room: build anew."""
+        """Copies the transitions of ``half_edges`` from the map (its per-edge
+        tables the search reads directly). Returns False if the map has
+        outgrown the room: build anew."""
         if 2 * pmap.num_edges > self.room:
             return False
         trans = pmap.trans
@@ -107,9 +108,6 @@ class Tables:
             for j, (b, nxt, t, k, cue, cub, length) in enumerate(row):
                 self.b[he, j], self.nxt[he, j], self.t[he, j], self.k[he, j] = b, nxt, t, k
                 self.cue[he, j], self.cub[he, j], self.length[he, j] = cue, cub, length
-        self.kind = pmap.edge_kind.astype(np.int8)
-        self.owner = pmap.edge_owner.astype(np.int32)
-        self.mid = np.ascontiguousarray(pmap.edge_mid, dtype=np.float64)
         return True
 
 

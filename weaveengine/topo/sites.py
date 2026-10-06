@@ -231,16 +231,8 @@ def _repoint(pmap: PlanarMap, edge: int, nbr: int, was: int, now: int) -> None:
 
 
 def _refresh(pmap: PlanarMap, edges) -> None:
-    """Transitions (and the compiled search's copy) of both sides of these edges."""
-    touched = [2 * e + side for e in edges for side in (0, 1)]
-    for h in touched:
-        pmap.trans[h] = pmap.transitions(h)
-    _sync_tables(pmap, touched)
-    cache = pmap.__dict__.get("_wall_need_cache")
-    if cache:
-        gone = set(edges)
-        for key in [key for key in cache if key[0] in gone]:
-            del cache[key]
+    """The transitions of both sides of these edges are out of date."""
+    pmap.stale.update(edges)
 
 
 def _register(pmap: PlanarMap, site: Site, hole_xy) -> None:
@@ -349,12 +341,6 @@ def log(pmap: PlanarMap) -> list:
     site created and per edge flipped, each holding what is needed to undo it
     (``rewind``) or to do it again on another copy of the map (``replay``)."""
     return pmap.__dict__.setdefault("_site_log", [])
-
-
-def _sync_tables(pmap: PlanarMap, half_edges) -> None:
-    tables = pmap.__dict__.get("_kernel_tables")
-    if tables is not None and not tables.update(pmap, half_edges):
-        del pmap.__dict__["_kernel_tables"]  # outgrown: built again, with room, at the next search
 
 
 def rewind(pmap: PlanarMap, length: int) -> None:

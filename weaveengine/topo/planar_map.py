@@ -91,6 +91,22 @@ class PlanarMap:
            corner is u-end of e, corner is u-end of b, midpoint-to-midpoint length)
         """
         self.trans = [self.transitions(h) for h in range(2 * self.num_edges)]
+        self.stale: set[int] = set()
+
+    def catch_up(self) -> None:
+        """Brings the transitions, and the compiled search's copy of them, up
+        to date with the edges changed since (``stale``: a via site coming or
+        going changes a dozen edges several times over, and nothing reads the
+        transitions in between)."""
+        if not self.stale:
+            return
+        touched = [2 * e + side for e in self.stale for side in (0, 1)]
+        for h in touched:
+            self.trans[h] = self.transitions(h)
+        tables = self.__dict__.get("_kernel_tables")
+        if tables is not None and not tables.update(self, touched):
+            del self.__dict__["_kernel_tables"]  # outgrown: built again, with room, at the next search
+        self.stale.clear()
 
     def transitions(self, h: int) -> tuple:
         """The successor tuples of one half-edge, from the tables as they stand."""
