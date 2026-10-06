@@ -58,15 +58,14 @@ def cross_count(pmap: PlanarMap, a: GatePath, b: GatePath) -> int:
     shared gate is nearer that endpoint). The run is one crossing when both
     ends are determined and the orders are opposite.
     """
-    ga, gb, posb = a.gates, b.gates, b.pos
-    na, nb = len(ga), len(gb)
+    ga, posa, posb = a.gates, a.pos, b.pos
+    na = len(ga)
     count = 0
-    i = 0
-    while i < na:
-        j = posb.get(ga[i])
-        if j is None:
-            i += 1
-            continue
+    done = -1
+    for i in sorted(posa[g] for g in posa.keys() & posb.keys()):
+        if i <= done:
+            continue  # within the run before
+        j = posb[ga[i]]
         i_end, j_end, step = i, j, 0
         while i_end + 1 < na:
             jn = posb.get(ga[i_end + 1])
@@ -78,7 +77,7 @@ def cross_count(pmap: PlanarMap, a: GatePath, b: GatePath) -> int:
         last = _b_left(pmap, a, b, i_end, j_end, +1)
         if first is not None and last is not None and first != last:
             count += 1
-        i = i_end + 1
+        done = i_end
     return count
 
 

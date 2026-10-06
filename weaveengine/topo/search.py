@@ -43,7 +43,7 @@ class Reach:
         self.best, self._node = best, node
         self._pmap, self._state, self._relaxed = pmap, state, relaxed
         self._touched, self._parent, self._parent_tr = touched, parent, parent_tr
-        self._lookup = None
+        self._at = None
 
     def route_to(self, t: int) -> Route | None:
         """The way to the middle of triangle ``t`` (its last step crosses into
@@ -51,9 +51,11 @@ class Reach:
         node = int(self._node[t])
         if node < 0:
             return None
-        if self._lookup is None:
-            self._lookup = dict(zip(self._touched.tolist(), zip(self._parent.tolist(), self._parent_tr.tolist())))
-        return _read(self._pmap, self._state, node, self._lookup.__getitem__, float(self.best[t]), self._relaxed)
+        if self._at is None:  # where each node the search touched stands in its record
+            self._at = np.zeros(int(self._touched.max()) + 1, dtype=np.int64)
+            self._at[self._touched] = np.arange(len(self._touched))
+        at, parent, parent_tr = self._at, self._parent, self._parent_tr
+        return _read(self._pmap, self._state, node, lambda n: (int(parent[at[n]]), int(parent_tr[at[n]])), float(self.best[t]), self._relaxed)
 
 
 def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, params: CostParams | None = None,

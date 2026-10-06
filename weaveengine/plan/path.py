@@ -49,8 +49,13 @@ def locate(pmap: PlanarMap, pts: np.ndarray) -> np.ndarray:
         x0, y0, x1, y1 = pmap.free_space.free.bounds
         cell = max(x1 - x0, y1 - y0, 1e-6) / 256.0
         hint = pmap.__dict__["_locate_hint"] = (np.zeros((int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1), dtype=np.int64), cell, x0, y0)
+        pmap.moved = True
+    grid, cell, x0, y0 = hint
+    if pmap.moved:
+        kernel.near(pmap.tri_v, pmap.vx, pmap.vy, grid, x0, y0, cell)
+        pmap.moved = False
     kernel.locate(pmap.tri_v, pmap.tri_n, pmap.vx, pmap.vy, np.ascontiguousarray(pts[:, 0]), np.ascontiguousarray(pts[:, 1]), out,
-                  hint[0], hint[2], hint[3], hint[1])
+                  grid, x0, y0, cell)
     return out
 
 

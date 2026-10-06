@@ -312,11 +312,9 @@ astar_plain = getattr(astar, "py_func", astar)  # the same search as plain Pytho
 
 
 @njit(cache=True, nogil=True)
-def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
-    """Triangle containing each point (-1 if none). ``hint`` is a grid of
-    cells (side ``cell``, origin x0 y0) that this call fills with a triangle
-    near each cell; the search walks from there, and scans every triangle only
-    where the walk runs into a wall."""
+def near(tri_v, vx, vy, hint, x0, y0, cell):
+    """Fills ``hint``, a grid of cells (side ``cell``, origin x0 y0), with a
+    triangle near each cell, for ``locate`` to start from."""
     n_tri = tri_v.shape[0]
     nx, ny = hint.shape
     hint[:, :] = -1
@@ -332,6 +330,15 @@ def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
             for i in range(max(i0, 0), min(i1, nx - 1) + 1):
                 for j in range(max(j0, 0), min(j1, ny - 1) + 1):
                     hint[i, j] = t
+
+
+@njit(cache=True, nogil=True)
+def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
+    """Triangle containing each point (-1 if none). The search walks from the
+    triangle ``hint`` gives for the point's cell (``near``), and scans every
+    triangle only where the walk runs into a wall."""
+    n_tri = tri_v.shape[0]
+    nx, ny = hint.shape
     cur = 0
     for i in range(px.shape[0]):
         x, y = px[i], py[i]
