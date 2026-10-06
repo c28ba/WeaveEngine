@@ -641,6 +641,32 @@ def test_raced_variants_hand_their_vias_back():
     for layer in result.layers:
         assert layer.state.check_invariants()
         assert len(layer.pmap.sites) == result.stats["via_sites"]
+    # Vias that were moved (13.3) stand on the parent's maps where the variant's traces end.
+    assert all(net_is_connected(result, net) for net in range(4))
+    for via in result.vias:
+        ends = [result.polylines[w][0 if c.src == via.pad_id else -1] for w, c in result.connections.items()
+                if via.pad_id in (c.src, c.dst) and w in result.polylines]
+        assert len(ends) == 2 and all(math.dist(p, via.centre) < 1e-6 for p in ends)
+        assert all(math.dist(layer.pmap.sites[via.pad_id].centre, via.centre) < 1e-9 for layer in result.layers)
+
+
+def test_vias_slide_to_where_their_traces_run_straighter():
+    """M15: with sliding the same connections and vias, shorter copper, a clean check, every trace still on its via."""
+    board = crossing_board()
+    fixed = route_board(board, options=Options(portfolio=1, slide=False), workers=1)
+    slid = route_board(board, options=Options(portfolio=1), workers=1)
+    assert_clean(board, slid)
+    assert slid.stats["routed"] == fixed.stats["routed"] == 4 and slid.stats["vias"] == fixed.stats["vias"]
+    before = {v.pad_id: v.centre for v in fixed.vias}
+    moved = [math.dist(v.centre, before[v.pad_id]) for v in slid.vias]
+    assert max(moved) > 0.05 and slid.stats["length"] < fixed.stats["length"] - 0.05
+    assert all(net_is_connected(slid, net) for net in range(4))
+    for via in slid.vias:
+        ends = [slid.polylines[w][0 if c.src == via.pad_id else -1] for w, c in slid.connections.items()
+                if via.pad_id in (c.src, c.dst) and w in slid.polylines]
+        assert len(ends) == 2 and all(math.dist(p, via.centre) < 1e-6 for p in ends)
+    for layer in slid.layers:
+        assert layer.state.check_invariants()
 
 
 def fine_pitch_board() -> Board:

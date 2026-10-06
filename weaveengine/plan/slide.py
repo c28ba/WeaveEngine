@@ -15,11 +15,11 @@ import math
 
 from shapely.geometry import LineString, Point
 
-ROUNDS = 4                        # a via travels a part of its triangles per round
+ROUNDS = 3                        # a via travels a part of its triangles per round
 STEPS = (1.0, 0.5, 0.25, 0.125)   # of the way to where it wants to be: the furthest that is allowed
 SMALL = 0.02                      # mm: nearer than this to where it wants to be, it stays
 STRAIGHT = math.radians(2.0)      # a run is straight while it turns by less than this
-NEAR = 4.0                        # via pitches round a violation within which the vias moved are taken back
+TAKE_BACK = 3                     # times the check may object to a round before the whole round is undone
 
 
 def slide(ctx, lines: dict, violations: list, wire_net: dict, realize):
@@ -29,11 +29,12 @@ def slide(ctx, lines: dict, violations: list, wire_net: dict, realize):
     wire_net) of the result."""
     legs = {pad: (conn.pieces[i], conn.pieces[i + 1])
             for conn in ctx.conns.values() if conn.parent is None for i, pad in enumerate(conn.sites)}
-    rules = ctx.board.rules
-    reach = NEAR * (rules.via_diameter + rules.clearance)
+    held: set[int] = set()   # vias the check has sent back once: they stay
     for _ in range(ROUNDS if legs else 0):
         was: dict[int, tuple[float, float]] = {}
         for pad, (a, b) in legs.items():
+            if pad in held:
+                continue
             here = ctx.pad_centre(pad)
             want = _wanted(here, lines.get(a), lines.get(b))
             if want is not None and any(ctx.move_via(pad, (here[0] + part * (want[0] - here[0]), here[1] + part * (want[1] - here[1])))
@@ -42,11 +43,16 @@ def slide(ctx, lines: dict, violations: list, wire_net: dict, realize):
         if not was:
             break
         new = realize(ctx)
-        if len(new[1]) > len(violations):
-            # Take back the vias next to what the check found, and look again.
-            back = [pad for pad in was if any(math.dist(ctx.pad_centre(pad), v.at) < reach for v in new[1])]
-            for pad in back:
+        for _ in range(TAKE_BACK):
+            if len(new[1]) <= len(violations) or not was:
+                break
+            # Take back the vias that the traces the check names go past (or,
+            # failing that, the nearest), and look again.
+            back = [pad for pad in was if any(_beside(ctx, pad, legs[pad]).intersection(v.wires) for v in new[1])]
+            back = back or [min(was, key=lambda pad: math.dist(ctx.pad_centre(pad), v.at)) for v in new[1]]
+            for pad in set(back):
                 ctx.move_via(pad, was.pop(pad), sure=True)
+                held.add(pad)
             new = realize(ctx)
         if len(new[1]) > len(violations) or _copper(new[0]) > _copper(lines) - 1e-6:
             for pad, point in was.items():   # this round has not helped: as before it, and no further
@@ -54,6 +60,11 @@ def slide(ctx, lines: dict, violations: list, wire_net: dict, realize):
             return realize(ctx) if was else new
         lines, violations, wire_net = new
     return lines, violations, wire_net
+
+
+def _beside(ctx, pad: int, legs) -> set[int]:
+    """The wires a via's place matters to: its own two, and those that cross a gate at it on any layer."""
+    return set(legs).union(w for layer in ctx.layers for e in layer.pmap.sites[pad].spokes for w in layer.state.gate_order[e])
 
 
 def _copper(lines: dict) -> float:
