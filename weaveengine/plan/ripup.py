@@ -201,16 +201,6 @@ def via_worth(ctx: Context) -> float:
     return len(ctx.layers) * (rules.via_diameter + 2.0 * rules.clearance + rules.base_width)
 
 
-def _length(ctx: Context, conn) -> float:
-    """A routed connection's length through the middles of its gates."""
-    total = 0.0
-    for w in conn.pieces or (conn.wire_id,):
-        layer = ctx.layers[ctx.conns[w].layer]
-        mids, gates = layer.pmap.edge_mid_list, layer.paths[w].gates
-        total += sum(math.dist(mids[a], mids[b]) for a, b in zip(gates, gates[1:]))
-    return total
-
-
 def _planned(ctx: Context, plan) -> float:
     """A plan's length as ``_length`` will measure it once it is in: through
     the middles of its gates, and to and from each via."""
@@ -225,24 +215,34 @@ def _replan(ctx: Context, conn, was: float) -> bool:
     """Plans one connection through vias again, with no more vias than it has,
     and keeps the new plan if, once it is in, the connection is better off:
     shorter, counting each via at ``via_worth``. So a via goes where a trace
-    would do. The connection is lifted for the search and put back exactly;
-    only if the plan is better is it taken out for good and the plan put in,
-    and should that not fit after all, the routing is restored from a snapshot."""
+    would do. The connection is lifted for this; if no plan is better, or
+    none fits, it is put back exactly."""
     vias, worth = len(conn.sites), via_worth(ctx)
     was += worth * vias - ctx.layers[0].pmap.pitch   # better by a pitch at least: less is not worth moving anything for
     needs = 0 if any(conn.src in l.pmap.pad_edges and conn.dst in l.pmap.pad_edges for l in ctx.layers) else 1
     if conn.air_len + worth * needs >= was:
         return False  # as good as any route could be: the straight line, with the vias its pads force
-    how = dict(hard_cap=True, congestion=False, max_vias=vias, via_cost=worth)
+
+    def better(pieces) -> bool:
+        """Asked by ``commit`` with the plan in: is it what it promised, and is no gate over-full?"""
+        length = 0.0
+        for piece in pieces:
+            layer = ctx.layers[piece.layer]
+            mids, gates = layer.pmap.edge_mid_list, [step[0] for step in layer.state.wire_path[piece.wire_id]]
+            length += sum(math.dist(mids[a], mids[b]) for a, b in zip(gates, gates[1:]))
+        return length + worth * (len(pieces) - 1) < was and not any(layer.state.overflowed_gates() for layer in ctx.layers)
+
     saved = ctx.lift(conn)
-    plan = find(ctx, conn, bound=was, **how)   # (a search's cost is never more than the length it stands for)
+    # With the fewest vias first: the search's cheapest plan is not always the
+    # one that does best once it is in, and a plan without a via is the one wanted.
+    for most in range(needs, vias + 1):
+        struck: list = []
+        for _ in range(2):  # a via that does not fit where it was planned is struck out, and the plan made again
+            plan = find(ctx, conn, bound=was, struck=struck, hard_cap=True, congestion=False, max_vias=most, via_cost=worth)
+            if plan is None or not _planned(ctx, plan) + worth * len(plan.vias) < was:
+                break  # (a search's cost is never more than the length it stands for, so the bound loses nothing)
+            if ctx.commit(conn, plan, within=better if plan.vias else None):
+                return True
+            struck += plan.vias
     ctx.put_back(conn, saved)
-    if plan is None or not _planned(ctx, plan) + worth * len(plan.vias) < was:
-        return False
-    before = ctx.snapshot()
-    ctx.rip(conn.wire_id)
-    if (place(ctx, conn, plan, **how) and len(conn.sites) <= vias and _length(ctx, conn) + worth * len(conn.sites) < was
-            and not any(layer.state.overflowed_gates() for layer in ctx.layers)):
-        return True
-    ctx.restore(before)
     return False

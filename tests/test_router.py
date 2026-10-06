@@ -761,32 +761,45 @@ def test_a_connection_lifted_is_put_back_exactly():
     through = [c for c in ctx.conns.values() if c.parent is None and c.sites]
     assert len(through) >= 2
 
+    sizes = [(l.pmap.num_edges, l.pmap.num_triangles) for l in ctx.layers]
+
     def everything():
-        for layer in ctx.layers:
-            layer.pmap.catch_up()
-        # (A step's stored place on its gate is the one it was put in at, and says nothing later: left out.)
-        return ([(l.state.snapshot()[:2], {w: [step[:3] for step in steps] for w, steps in l.state.wire_path.items()},
-                  l.state.cap[:l.pmap.num_edges].round(9).tolist(), l.state.load[:l.pmap.num_edges].round(9).tolist(),
-                  l.pmap.tri_v_list, l.pmap.edge_v_list, l.pmap.edge_t_list, [round(x, 9) for x in l.pmap.edge_len_list], l.pmap.trans,
-                  {pad: (s.centre, s.net, s.keep, sorted(s.spokes)) for pad, s in l.pmap.sites.items()},
-                  {w: p.gates for w, p in l.paths.items()}) for l in ctx.layers],
-                {w: (c.layer, c.pieces, c.sites, c.parent, c.src, c.dst) for w, c in ctx.conns.items()}, sorted(ctx.unrouted))
+        """All that a connection's coming and going touches. (The tables keep the room a refused plan made them
+        take, empty: compared as far as they went before. A step's stored place on its gate is the one it was put
+        in at, and says nothing later: left out.)"""
+        out = []
+        for l, (edges, tris) in zip(ctx.layers, sizes):
+            l.pmap.catch_up()
+            orders, corners = l.state.snapshot()[:2]
+            assert not any(orders[edges:]) and not any(any(c) for c in corners[tris:])
+            out.append((orders[:edges], corners[:tris], {w: [step[:3] for step in steps] for w, steps in l.state.wire_path.items()},
+                        l.state.cap[:edges].round(9).tolist(), l.state.load[:edges].round(9).tolist(),
+                        l.pmap.tri_v_list[:tris], l.pmap.edge_v_list[:edges], l.pmap.edge_t_list[:edges],
+                        [round(x, 9) for x in l.pmap.edge_len_list[:edges]], l.pmap.trans[:2 * edges],
+                        {pad: (s.centre, s.net, s.keep, sorted(s.spokes)) for pad, s in l.pmap.sites.items()},
+                        {w: p.gates for w, p in l.paths.items()}))
+        return out, {w: (c.layer, c.pieces, c.sites, c.parent, c.src, c.dst) for w, c in ctx.conns.items()}, sorted(ctx.unrouted)
 
     for layer in ctx.layers:   # capacities at the vias as they are worked out afresh
         for pad in layer.pmap.sites:
             sites.refresh(layer.pmap, layer.state, pad)
     before = everything()
+    tried = 0
     for conn in through:
         # Lifted and put straight back.
         saved = ctx.lift(conn)
         assert not conn.routed and everything() != before
         ctx.put_back(conn, saved)
         assert everything() == before
-        # Searching while it is out changes nothing either.
+        # Searching while it is out changes nothing either; nor does a plan put in and refused once it is in.
         saved = ctx.lift(conn)
-        find(ctx, conn, hard_cap=True, congestion=False)
+        plan = find(ctx, conn, hard_cap=True, congestion=False)
+        asked = []
+        assert plan is not None and not ctx.commit(conn, plan, within=lambda pieces: asked.append(len(pieces)) or False)
+        tried += bool(asked)
         ctx.put_back(conn, saved)
         assert everything() == before
+    assert tried >= 2   # the plans did go in, with their vias, before they were refused
     for layer in ctx.layers:
         assert layer.state.check_invariants()
 

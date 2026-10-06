@@ -249,7 +249,7 @@ class Context:
         path = layer.paths[conn.wire_id] = path_from_steps(layer.pmap, layer.state.wire_path[conn.wire_id])
         self._weld(layer, conn, path)
 
-    def commit(self, conn: Connection, how) -> bool:
+    def commit(self, conn: Connection, how, within=None) -> bool:
         """Routes the connection as ``how`` says: a ``Route`` on one layer, or a
         ``Path``, which may go through vias. The vias' sites are made in the
         maps of every layer and the pieces put in exactly as planned.
@@ -257,6 +257,8 @@ class Context:
         Returns False, with nothing changed, if a via turns out not to fit
         where it was planned: a trace may over-fill a gate for the rip-up to
         sort out, but a via is copper that has to fit among the wires beside it.
+        ``within``: asked, with the pieces in and the vias settled, whether the
+        result will do; if it says no, that too leaves nothing changed.
         """
         routes, vias = (how.routes, how.vias) if hasattr(how, "routes") else ([how], [])
         if not vias:
@@ -318,6 +320,8 @@ class Context:
                     sites.legalise(l.pmap, l.state, site)
             if any(l.state.overflow(e) for here in made for l, site in zip(self.layers, here) for e in site.spokes):
                 raise ValueError("a gate beside the via would be over-full")
+            if within is not None and not within(pieces):
+                raise ValueError("not what was asked for")
         except ValueError:
             # Take everything out again, in the reverse of the order it went in:
             # the settling of the sites' edges, then each piece and the site made for it.
