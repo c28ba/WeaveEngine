@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 
 import numpy as np
+import shapely
 from scipy.sparse.csgraph import minimum_spanning_tree
 
 from weaveengine import parallel
@@ -58,6 +59,20 @@ class Layer:
         self.air_index: dict[int, set[int]] = {}
         self.barrier = Barrier()
         self.paths: dict[int, GatePath] = {}
+
+
+DRAWN = 0.004  # mm: how far a drawn trace may be from the real one
+ROUGH = 0.5    # of a pitch: the same for the rough picture while routing
+
+
+def thin(lines: list, tolerance: float) -> list[list[tuple[float, float]]]:
+    """The polylines with the points left out that matter less than ``tolerance`` (for drawing only)."""
+    if not lines:
+        return []
+    sizes = [len(line) for line in lines]
+    flat = np.array([p for line in lines for p in line], dtype=np.float64)
+    geoms = shapely.simplify(shapely.linestrings(flat, indices=np.repeat(np.arange(len(lines)), sizes)), tolerance, preserve_topology=False)
+    return [[(round(x, 3), round(y, 3)) for x, y in g.coords] for g in geoms]
 
 
 def spanning_pairs(pads: list[int], centre: dict[int, tuple[float, float]]) -> list[tuple[int, int, float]]:
@@ -412,7 +427,7 @@ class Context:
         if not force and now - self._last_snapshot < 0.4:
             return
         self._last_snapshot = now
-        wires = []
+        wires, shapes = [], []
         for layer in self.layers:
             mids, centre = layer.pmap.edge_mid_list, layer.pmap.pad_centre
             for w, path in layer.paths.items():
@@ -421,7 +436,12 @@ class Context:
                     pts = lines[w]
                 else:
                     pts = [centre[conn.src]] + [mids[g] for g in path.gates] + [centre[conn.dst]]
-                wires.append((layer.index, conn.net_id, [(round(x, 3), round(y, 3)) for x, y in pts]))
+                if len(pts) > 1:
+                    wires.append((layer.index, conn.net_id))
+                    shapes.append(pts)
+        # A picture needs far fewer points than a route has gates (or an arc has
+        # steps): drop those that move the line by less than can be seen.
+        wires = [(layer, net, pts) for (layer, net), pts in zip(wires, thin(shapes, DRAWN if lines is not None else ROUGH * self.board.rules.pitch))]
         centre = self.pad_centre
         total = sum(1 for c in self.conns.values() if c.parent is None)
         self.events({

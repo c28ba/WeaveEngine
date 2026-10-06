@@ -25,6 +25,7 @@ from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
 from weaveengine.progress import ProgressBar, clock
 from weaveengine.session import Job
+from weaveengine.plan.context import DRAWN, thin
 from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, Settings, default_path
 from weaveengine.viz.svg import export_result
 
@@ -188,12 +189,19 @@ class BoardView(QGraphicsView):
         if not live:
             item.setVisible(self._pad_shown(pad))
             self.pad_items.append((item, pad))
-        if pad.is_via:
-            r = self.board.rules.via_drill / 2.0
+        if pad.is_via or pad.layers is None:
+            # The hole. A via's drill is a rule. A through-hole pad's is not in a
+            # DSN file at all, so it is drawn at half the pad's smaller side: a
+            # sign that there is a hole, not its size.
+            x0, y0, x1, y1 = pad.shape.bounds
+            r = self.board.rules.via_drill / 2.0 if pad.is_via else 0.25 * min(x1 - x0, y1 - y0)
             x, y = pad.centre
             hole = self.scene().addEllipse(QRectF(x - r, -y - r, 2 * r, 2 * r), QPen(Qt.NoPen), QBrush(QColor(BACKGROUND)))
             hole.setZValue(51)
             (self.live_items if live else self.static_items).append(hole)
+            if not live:
+                hole.setVisible(self._pad_shown(pad))
+                self.pad_items.append((hole, pad))
 
     # -- moving around ----------------------------------------------------------
     def fit(self) -> None:
@@ -389,9 +397,8 @@ class BoardView(QGraphicsView):
         rules = self.board.rules
         self.trace_items, self.detail_items = [], []
         layers = len(self.board.layers)
-        for layer, net, pts in wires:
-            if not self.visible.get(layer, True) or len(pts) < 2:
-                continue
+        shown = [w for w in wires if self.visible.get(w[0], True) and len(w[2]) >= 2]
+        for (layer, net, _), pts in zip(shown, thin([w[2] for w in shown], DRAWN)):  # (arcs come in finer steps than a screen shows)
             path = QPainterPath()
             path.moveTo(pts[0][0], -pts[0][1])
             for x, y in pts[1:]:
@@ -401,7 +408,9 @@ class BoardView(QGraphicsView):
             item = scene.addPath(path)
             item.setZValue(10 + (layers - layer))     # back layers below, the front on top
             self.live_items.append(item)
-            self.trace_items.append((item, rules.width(net), color))
+            # The rough picture while routing is redrawn twice a second: always as
+            # hairlines, which draw 25 times faster than traces at their width.
+            self.trace_items.append((item, 0.0 if rough else rules.width(net), color))
         if changed:
             glow = QPainterPath()
             for layer, _, pts in changed:
