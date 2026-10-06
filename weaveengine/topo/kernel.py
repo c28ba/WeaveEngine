@@ -309,70 +309,59 @@ astar_plain = getattr(astar, "py_func", astar)  # the same search as plain Pytho
 
 
 @njit(cache=True, nogil=True)
-def near(tri_v, vx, vy, hint, x0, y0, cell):
-    """Fills ``hint``, a grid of cells (side ``cell``, origin x0 y0), with a
-    triangle near each cell, for ``locate`` to start from."""
+def cells(tri_v, vx, vy, x0, y0, cell, nx, ny, start, items):
+    """Sorts the triangles into a grid of nx by ny cells (side ``cell``, origin
+    x0 y0): the triangles whose bounding box meets cell c are
+    items[start[c]:start[c + 1]]. Returns how many entries that takes; if
+    ``items`` is shorter, nothing is written to it."""
     n_tri = tri_v.shape[0]
-    nx, ny = hint.shape
-    hint[:, :] = -1
-    for big in (1, 0):  # large triangles first, so that small ones, which say more, are kept
+    start[:] = 0
+    for fill in range(2):
         for t in range(n_tri):
             a, b, c = tri_v[t, 0], tri_v[t, 1], tri_v[t, 2]
-            i0 = int((min(vx[a], vx[b], vx[c]) - x0) / cell)
-            i1 = int((max(vx[a], vx[b], vx[c]) - x0) / cell)
-            j0 = int((min(vy[a], vy[b], vy[c]) - y0) / cell)
-            j1 = int((max(vy[a], vy[b], vy[c]) - y0) / cell)
-            if ((i1 - i0 + 1) * (j1 - j0 + 1) > 16) != (big == 1):
-                continue
-            for i in range(max(i0, 0), min(i1, nx - 1) + 1):
-                for j in range(max(j0, 0), min(j1, ny - 1) + 1):
-                    hint[i, j] = t
+            i0 = max(int(np.floor((min(vx[a], vx[b], vx[c]) - x0) / cell)), 0)
+            i1 = min(int(np.floor((max(vx[a], vx[b], vx[c]) - x0) / cell)), nx - 1)
+            j0 = max(int(np.floor((min(vy[a], vy[b], vy[c]) - y0) / cell)), 0)
+            j1 = min(int(np.floor((max(vy[a], vy[b], vy[c]) - y0) / cell)), ny - 1)
+            for i in range(i0, i1 + 1):
+                for j in range(j0, j1 + 1):
+                    if fill:
+                        items[start[i * ny + j]] = t
+                    start[i * ny + j] += 1
+        if fill:  # each start now stands at its cell's end: the start of the next
+            for c in range(nx * ny, 0, -1):
+                start[c] = start[c - 1]
+            start[0] = 0
+        else:
+            total = 0
+            for c in range(nx * ny):
+                total, start[c] = total + start[c], total
+            start[nx * ny] = total
+            if total > items.shape[0]:
+                return total
+    return start[nx * ny]
 
 
 @njit(cache=True, nogil=True)
-def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
-    """Triangle containing each point (-1 if none). The search walks from the
-    triangle ``hint`` gives for the point's cell (``near``), and scans every
-    triangle only where the walk runs into a wall. A hint out of date gives
-    the same answer but runs into walls: measured on RAM Selector Tree, a grid
-    filled once made this four times slower than filling it at every change."""
-    n_tri = tri_v.shape[0]
-    nx, ny = hint.shape
-    cur = 0
-    for i in range(px.shape[0]):
-        x, y = px[i], py[i]
-        found = -1
-        ci, cj = int((x - x0) / cell), int((y - y0) / cell)
-        t = cur
-        if 0 <= ci < nx and 0 <= cj < ny and hint[ci, cj] >= 0:
-            t = hint[ci, cj]
-        for _ in range(n_tri):
-            move = -1
+def locate(tri_v, vx, vy, px, py, out, x0, y0, cell, nx, ny, start, items):
+    """Triangle containing each point (-1 if none), from the grid ``cells`` made."""
+    for n in range(px.shape[0]):
+        x, y = px[n], py[n]
+        out[n] = -1
+        i, j = int(np.floor((x - x0) / cell)), int(np.floor((y - y0) / cell))
+        if i < 0 or j < 0 or i >= nx or j >= ny:
+            continue
+        for q in range(start[i * ny + j], start[i * ny + j + 1]):
+            t = items[q]
+            inside = True
             for k in range(3):
                 a, b = tri_v[t, (k + 1) % 3], tri_v[t, (k + 2) % 3]
                 if (vx[b] - vx[a]) * (y - vy[a]) - (vy[b] - vy[a]) * (x - vx[a]) < -1e-12:
-                    move = k
+                    inside = False
                     break
-            if move < 0:
-                found = t
+            if inside:
+                out[n] = t
                 break
-            t = tri_n[t, move]
-            if t < 0:
-                break
-        if found < 0:
-            for t in range(n_tri):
-                inside = True
-                for k in range(3):
-                    a, b = tri_v[t, (k + 1) % 3], tri_v[t, (k + 2) % 3]
-                    if (vx[b] - vx[a]) * (y - vy[a]) - (vy[b] - vy[a]) * (x - vx[a]) < -1e-12:
-                        inside = False
-                        break
-                if inside:
-                    found = t
-                    break
-        out[i] = found
-        if found >= 0:
-            cur = found
 
 
 @njit(cache=True, nogil=True)

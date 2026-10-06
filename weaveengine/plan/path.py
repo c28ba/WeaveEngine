@@ -42,19 +42,22 @@ class Path:
 def locate(pmap: PlanarMap, pts: np.ndarray) -> np.ndarray:
     """Triangle of the map containing each point (-1 = none)."""
     out = np.zeros(len(pts), dtype=np.int64)
-    hint = pmap.__dict__.get("_locate_hint")
-    if hint is None:
-        # The board's extent, not the tables': unused slots are parked far away.
+    grid = pmap.__dict__.get("_locate_grid")
+    if grid is None:
+        # The triangles sorted into cells, about two cells to a triangle. The
+        # board's extent, not the tables': unused slots are parked far away.
         x0, y0, x1, y1 = pmap.free_space.free.bounds
-        cell = max(x1 - x0, y1 - y0, 1e-6) / 512.0
-        hint = pmap.__dict__["_locate_hint"] = (np.zeros((int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1), dtype=np.int32), cell, x0, y0)
+        cell = max(x1 - x0, y1 - y0, 1e-6) / max(16.0, math.sqrt(2.0 * pmap.num_triangles))
+        nx, ny = int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1
+        grid = pmap.__dict__["_locate_grid"] = [x0, y0, cell, nx, ny, np.zeros(nx * ny + 1, dtype=np.int64), np.zeros(0, dtype=np.int32)]
         pmap.moved = True
-    grid, cell, x0, y0 = hint
     if pmap.moved:
-        kernel.near(pmap.tri_v, pmap.vx, pmap.vy, grid, x0, y0, cell)
+        need = kernel.cells(pmap.tri_v, pmap.vx, pmap.vy, *grid)
+        if need > len(grid[6]):
+            grid[6] = np.zeros(2 * need, dtype=np.int32)
+            kernel.cells(pmap.tri_v, pmap.vx, pmap.vy, *grid)
         pmap.moved = False
-    kernel.locate(pmap.tri_v, pmap.tri_n, pmap.vx, pmap.vy, np.ascontiguousarray(pts[:, 0]), np.ascontiguousarray(pts[:, 1]), out,
-                  grid, x0, y0, cell)
+    kernel.locate(pmap.tri_v, pmap.vx, pmap.vy, np.ascontiguousarray(pts[:, 0]), np.ascontiguousarray(pts[:, 1]), out, *grid)
     return out
 
 
