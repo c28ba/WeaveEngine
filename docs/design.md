@@ -672,6 +672,32 @@ Anything else of the kind is found by the check and repaired (13.2). (For a shor
 - The stub from a pad centre to the ring used to be assumed clear (12.4, finding 3). Fixed in 13.1 step 4.
 - (Until M14e, repair widened the spacing of the wires involved. With traces drawn as in 13.1 that helped in 1 of 14 realisations that had a violation, and it is gone.)
 
+### 13.2a Vias where a trace would do (`ripup.replan`, `router._route_once`)
+
+**What was seen.** A via between two pads that a plain trace could join; a via just before a pad; two vias taking a trace to the other layer and back with nothing crossing in between. Counted on the finished boards by taking each connection through vias out and planning it with fewer: about 5 of 25 on blinkSP1, none on ulx3s, 31 on RAM Selector Tree at the same length or shorter.
+
+**Why.** (1) Nothing looked at the vias again after design-rule repair, which moves things. (2) A via went only if the route came out strictly shorter, and a route through vias measures short, because the way to and from the via inside its triangle was not counted. (3) The search's cheapest plan is not always the one that does best once it is in, so a plain trace lost to a plan through vias that was then refused.
+
+**What is done.**
+- *A via has a worth* when a routing is tidied: the track it takes away, which is the width it keeps clear on every layer (`ripup.via_worth`; about 3 mm on blinkSP1). A route is better without a via if that makes it no more than this much longer. This is not the price of a via during negotiation (9), which would trade a via for a detour of many times its size, as was measured when that price was first used here.
+- *Each connection through vias is planned again with the fewest vias first*: as many as its pads force, then one more, up to what it has. A plan is measured as it will be once in (to and from each via counted), must be better by a pitch, and is skipped altogether if the connection is already within a pitch of the straight line with the vias its pads force. Repeated while any connection comes out better (three times at most): one that moves leaves room for another.
+- *After repair the routing is settled once more.* If the check then objects, it is done again from where it stood, leaving alone the connections whose traces the check names (three times at most, then left as repair had it).
+- *No copy of the board per attempt.* The connection is lifted (`Context.lift`: its pieces with their places on every gate, its vias, the marks of the maps' logs) and put back exactly (`Context.put_back`) if nothing better is found. A plan that is put in can be refused from inside `commit` (`within`), which then undoes itself as it does for a via that does not fit. Before this, every attempt took a snapshot of the whole board and most restored it: 48 of 73 s on RAM Selector Tree.
+- Found by the test of the exact put-back: deleting a site emptied the journal of what it had done to the wires whenever nobody else had written in it, so that it could never be undone. The journal is now emptied once a round by the planner. Also seen there and not yet traced: the stored capacity of a gate between two vias can be one wire too low (it errs on the safe side).
+
+**Measured** against the program before (medians over perturbed runs; RAM Selector Tree one run):
+
+| Board | Vias | Copper | Time |
+|---|---|---|---|
+| RAM Selector Tree | 207 to 130 | 24,967 to 23,497 mm | 129 to 123 s |
+| blinkSP1 | 44 to 42 | 962 to 973 mm | 5.9 to 7.2 s |
+| ulx3s | 42 to 40 | 1557 to 1592 mm | 8.0 to 8.3 s |
+| ALU | 19 to 16 | 11,436 to 11,361 mm | 13.1 to 14.2 s |
+
+No violation in any run; the same connections routed; the check from the written file clean on the four boards with vias. Copper rises a little where a via was given up for a slightly longer trace. Left: three connections on RAM Selector Tree that could still lose a via at no cost in length (not traced), and the small boards pay 1 to 2 s for settling again after repair.
+
+Tried on the way and dropped: planning the vias again only in the last settle (RAM Selector Tree came out worse than before, 211 vias, because the check refused the whole tidy and nothing of it was kept); requiring only "shorter" (leaves the vias the complaint was about).
+
 ### 13.3 Sliding vias (planned, M15)
 
 **Where bad vias come from (measured before building anything).** On blinkSP1 the two traces at a via meet at under 90 degrees at 40 % of the vias (30 to 45 over perturbed runs) and at under 45 degrees at 14 %; on ulx3s 43 % and 22 %. Causes, each checked:
