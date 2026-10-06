@@ -296,6 +296,21 @@ def astar(starts, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, ed
     return -1, 0.0, n_touched
 
 
+@njit(cache=True, nogil=True)
+def walk_back(parent, node, out):
+    """The nodes from ``node`` back to where its search started, into ``out``;
+    returns how many, and the parent (below zero) of the last."""
+    n = 0
+    while True:
+        out[n] = node
+        n += 1
+        prev = parent[node]
+        if prev < 0 or n == out.shape[0]:
+            return n, prev
+        node = prev
+
+
+walk_back_plain = getattr(walk_back, "py_func", walk_back)
 astar_plain = getattr(astar, "py_func", astar)  # the same search as plain Python: the fallback if the compiled one fails
 
 

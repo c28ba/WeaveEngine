@@ -119,9 +119,14 @@ class TopoState:
             raise ValueError("a path must never cross the same gate twice")
         # Slots come from one pre-insertion snapshot; gates are distinct, so
         # the inserts are independent of each other.
+        nets, mine = self.net, self.net.get(wire_id, -1)
         for edge_id, tri_id, corner_k, slot in steps:
-            self.gate_order[edge_id].insert(slot, wire_id)
-            self.load[edge_id] = self.tally(edge_id)
+            row = self.gate_order[edge_id]
+            row.insert(slot, wire_id)
+            if mine >= 0 and ((slot and nets.get(row[slot - 1], -1) == mine) or (slot + 1 < len(row) and nets.get(row[slot + 1], -1) == mine)):
+                self.load[edge_id] = self.tally(edge_id)  # beside one of its own net
+            else:
+                self.load[edge_id] += weight
             self.count[edge_id] += 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] += 1
@@ -130,9 +135,21 @@ class TopoState:
 
     def remove(self, wire_id: int) -> None:
         self.by_net.get(self.net.get(wire_id, -1), set()).discard(wire_id)
+        nets, mine, weight = self.net, self.net.get(wire_id, -1), self.weight[wire_id]
         for edge_id, tri_id, corner_k, _ in self.wire_path.pop(wire_id):
-            self.gate_order[edge_id].remove(wire_id)
-            self.load[edge_id] = self.tally(edge_id)
+            row = self.gate_order[edge_id]
+            i = row.index(wire_id)
+            del row[i]
+            # Its two neighbours now meet. Only if one of them is of its net, or
+            # they are of one net themselves, is there a run to count again.
+            a = nets.get(row[i - 1], -1) if i else -1
+            b = nets.get(row[i], -1) if i < len(row) else -1
+            if not row:
+                self.load[edge_id] = 0.0
+            elif (mine >= 0 and (a == mine or b == mine)) or (a >= 0 and a == b):
+                self.load[edge_id] = self.tally(edge_id)
+            else:
+                self.load[edge_id] -= weight
             self.count[edge_id] -= 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] -= 1

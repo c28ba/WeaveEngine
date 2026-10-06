@@ -139,7 +139,11 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
             idx = tb.touched[:touched]
             found = None
             if goal >= 0:
-                found = _read(pmap, state, int(goal), lambda n: (int(tb.parent[n]), int(tb.parent_tr[n])), float(cost), relaxed)
+                chain = np.empty(8192, dtype=np.int64)
+                n, root = (kernel.walk_back if search is kernel.astar else kernel.walk_back_plain)(tb.parent, int(goal), chain)
+                chain = chain[:n]
+                back = dict(zip(chain.tolist(), zip(chain[1:].tolist() + [int(root)], tb.parent_tr[chain].tolist())))
+                found = _read(pmap, state, int(goal), back.__getitem__, float(cost), relaxed) if n < 8192 else None
             if reach and not isinstance(found, int):
                 seen = Reach(pmap, state, relaxed, best, best_node, idx.copy(), tb.parent[idx], tb.parent_tr[idx])
             tb.g[idx] = np.inf
