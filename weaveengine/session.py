@@ -6,7 +6,9 @@ responsive and can stop the run. Events arrive through ``Job.poll()`` as dicts:
     {"type": "status", "compiled": bool, "message": str, "warning": str}   compiled-kernel check
     {"type": "note", "text": str}                                           rules in use, planes skipped, ...
     {"type": "board", "design": Design}                                     the board as it will be routed
-    {"type": "progress", "pass", "variant", "phase", "done", "total"}
+    {"type": "progress", "pass", "variant", "phase", "done", "total"}       and, for the estimate of the time left
+                                                                            (weaveengine.progress): "round", "quiet",
+                                                                            "most" with rip-up; "complete" with finished
     {"type": "snapshot", "pass", "variant", "final", "wires", "open", "vias",
      "routed", "total", "overflow", "rounds", "length", "per_layer"}        the routing as it stands
     {"type": "pass", "pass", "open", "connections", "vias"}                 a pass has finished

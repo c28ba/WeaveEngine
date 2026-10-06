@@ -29,7 +29,11 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
         if (not over and not open_conns) or stall >= (STALL_LIMIT if over else QUIET_STALL_LIMIT) or ctx.rounds >= max_rounds:
             break
         ctx.rounds += 1
-        ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
+        # For the estimate of the time left: the rounds still to run, this one
+        # included, if none of them improves on the best; and at most.
+        most = max_rounds - ctx.rounds + 1
+        ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations, round=ctx.rounds,
+                   quiet=min((STALL_LIMIT if over else QUIET_STALL_LIMIT) - stall, most), most=most)
 
         # 1. Raise prices, up to the cap.
         params.pres_fac = min(params.pres_cap, params.pres_fac * params.pres_growth)
@@ -62,7 +66,6 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
             conn = ctx.conns[w]
             if not place(ctx, conn, r):
                 conn.fails += 1
-        ctx.report("rip-up", first_violations - min(first_violations, best_key[0]), first_violations)
 
     if best_snap is not None and (ctx.violations(), ctx.estimated_length()) > best_key:
         ctx.restore(best_snap)

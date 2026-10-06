@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio)
     bar = None if args.quiet else ProgressBar()
     result = route_board(design.board, options=options, seed=args.seed,
-                         workers=args.workers, progress=bar)
+                         workers=args.workers, events=bar.event if bar else None)
     if bar:
         bar.finish()
     stats = result.stats

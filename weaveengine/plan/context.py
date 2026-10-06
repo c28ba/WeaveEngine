@@ -406,14 +406,16 @@ class Context:
                 self._waiting(c, True)
         self.rebuild_barrier()
 
-    def report(self, phase: str, done: float = 0.0, total: float = 1.0) -> None:
+    def report(self, phase: str, done: float = 0.0, total: float = 1.0, **more) -> None:
+        """Says where the work stands. ``more`` goes to the live events only:
+        what an estimate of the time left needs (``weaveengine.progress``)."""
         if self.stop is not None and self.stop.is_set():
             raise parallel.Stopped()
         if self.progress is not None:
             self.progress(phase, done, total)
         if self.events is not None:
             self.events({"type": "progress", "pass": self.pass_index, "variant": self.variant,
-                         "phase": phase, "done": done, "total": total})
+                         "phase": phase, "done": done, "total": total, **more})
             self.emit_snapshot()
 
     def emit_snapshot(self, force: bool = False, lines: dict | None = None) -> None:

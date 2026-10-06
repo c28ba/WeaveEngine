@@ -932,3 +932,35 @@ A simple GUI started from `main.py` at the repository root (`weaveengine/app.py`
 **Drawing speed.** While routing, the picture is sent with the points left out that move a line by less than half a pitch (RAM Selector Tree: 12,000 points instead of 49,000) and drawn as hairlines; final traces are thinned to 4 µm for drawing only. One item per trace: one path per layer was tried and is four times slower. *Draw with the graphics card* (View settings, off by default) puts the view on OpenGL, with the card's own edge smoothing. It is built not to be able to lock anyone out: a context is asked for before the view is trusted to one, and a refusal (no driver, a remote desktop) leaves the ordinary drawing with a note; a marker file beside the settings is there while it is being tried, so a driver that takes the program down gets the setting switched off at the next start. The app's own screenshots draw the view the ordinary way, since a grab of an OpenGL view is empty. Checked on one Mac only; `--self-test ... --gpu` is there to check a packaged build elsewhere.
 
 **Open**: the window has only been exercised through the self-test, not by hand; Windows and Linux builds are untried (without fork the router runs single-process there).
+
+---
+
+## 24. The time left (`weaveengine/progress.py`)
+
+**What was wrong.** The old figure took fixed shares per phase, measured once on ALU, and extrapolated the time so far. It was nearly always too small, for three reasons found by recording the events of real runs: (1) rip-up's "progress" was the share of violations cleared, which reaches 90 % in the first few rounds and then crawls for most of the run; (2) repairs after the check were not counted; (3) when no raced variant connects everything, a second heat of four variants runs, about as long as the first, and the timer followed only variant 0, which is not in it.
+
+**What can be known.** A run's length is open in three places, each a stop rule: rip-up ends some rounds after the last improvement; repair repeats while the check finds something (four times at most); another heat follows if no variant of this one connected everything. Tested on the recordings (29 variants on five boards) whether anything the run reports predicts the rip-up that is left: the rounds the stop rule still allows times the recent round time is the best single predictor, and the truth lies between 0.4 and 3.5 times it in eight cases of ten. Extrapolating the decay of violations was tried and is no better (0.15 to 1.9). So a first run cannot be timed closely, and the estimate says so.
+
+**What is shown.**
+- **A middle figure with its range**: "about 1:30 left (0:36 to 3:50)". The low end is the run if nothing more happens (no round improves, one repair); the high end adds the improvements still likely (nine runs in ten stay under 24 extra rounds at the start, halving every 8 rounds), up to three repairs, and rounds a third longer. Every duration is one the run has measured itself as soon as there is one (a round, the geometry, a repair, a heat); before that, shares of the time its variant took to reach rip-up.
+- **The next heat in words**, not folded into the range: "and about 2:10 more if no variant connects everything". It is dropped the moment a variant does.
+- **Nothing** before commit is under way: there is nothing to go on, and a figure then was the worst of the old ones.
+- **The time the same run took before**, when there is one: the board file's contents and the settings name a run, and its duration is kept in `timings.json` beside the settings. Routing is deterministic, so this is the one close estimate there is (within about a tenth); it is used until the run outlasts it.
+- The bar is the time gone over the time gone plus the middle figure (with half of a possible heat), and never moves back.
+
+The router's events carry what this needs and nothing else was added to the router: each round of rip-up says which round it is, how many are still to run if none improves, and how many at most; a variant says when it has finished and whether it connected everything. The console bar reads the same events.
+
+**Measured** by playing the recordings back through the estimator (judged on the heat that is running, which is what the range claims):
+
+| Board | Run | Truth inside the range | Truth / middle figure (10 %, median, 90 %) |
+|---|---|---|---|
+| RAM Selector Tree | 148 s | 98 % of the time | 0.56, 0.86, 1.29 |
+| blinkSP1 | 24 s | 93 % | 1.24, 1.66, 3.39 |
+| ulx3s | 17 s | 100 % | 0.49, 0.84, 1.55 |
+| ALU | 13 s | 98 % | 0.11, 0.41, 1.27 |
+| Word of RAM | 1.7 s | 100 % | 0.15, 0.66, 0.66 |
+
+Over all of them the middle figure is right in the median (0.96) and within a factor of about two in eight cases of ten outside the short runs. It is still low on blinkSP1, whose rip-up goes on improving a little for longer than most, and high on ALU, whose rounds get ten times shorter as it goes. The constants are fitted to these five boards and were not checked on a board outside them, except that RAM Selector Tree was recorded after they were chosen. With a run on record: "about 0:21 left" from the second second of a 21 s run.
+
+**Open.** The middle figure hardly moves while rip-up keeps improving (on RAM Selector Tree it stays near 1:35 for a minute while the truth falls from 1:55 to 0:55): each improvement puts back the rounds the stop rule allows. A second heat doubles a run and is only known at the end of the first.
+

@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import asdict
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from shapely.geometry import Point
@@ -23,7 +24,7 @@ from weaveengine import accel
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
-from weaveengine.progress import ProgressBar, clock
+from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
 from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, Settings, default_path
@@ -718,6 +719,7 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
         self.time_label = QLabel("")
+        self.time_label.setWordWrap(True)
         for w in (self.pass_label, self.progress, self.phase_label, self.time_label):
             col.addWidget(w)
 
@@ -913,8 +915,15 @@ class MainWindow(QMainWindow):
         self.result = None
         self.variants, self.shown_variant, self.previous = {}, None, {}
         self.snapshots_seen = 0
-        self.tracker = ProgressBar(io.StringIO())
+        # The time this board took with these settings before, if it is on record: the best estimate there is.
+        self.timings = Timings(os.path.join(os.path.dirname(os.path.abspath(self.settings_path)), "timings.json"))
+        try:
+            self.run_key = Timings.key(self.dsn_path, {k: v for k, v in asdict(self.settings).items()
+                                                       if k not in ("show_outlines", "show_names", "gpu_drawing")})
+        except OSError:
+            self.run_key = None
         self.started = time.time()
+        self.tracker = Estimator(self.started, self.timings.last(self.run_key) if self.run_key else None)
         self.job = Job(self.dsn_path, self.settings)
         self.job.start()
         self.say("Routing started")
@@ -956,11 +965,9 @@ class MainWindow(QMainWindow):
             elif kind == "board":
                 self.routed_design = event["design"]
             elif kind == "progress":
-                if event["variant"] <= 0:
-                    self.tracker(f"pass {event['pass']}: {event['phase']}", event["done"], event["total"])
-                    self.pass_label.setText(f"Pass {event['pass']}")
-                    self.phase_label.setText(event["phase"])
+                self.tracker.event(event)
             elif kind == "snapshot":
+                self.tracker.event(event)
                 self.snapshots_seen += 1
                 if event["variant"] >= 0:
                     self.variants = {v: s for v, s in self.variants.items() if s["pass"] == event["pass"]}
@@ -972,6 +979,7 @@ class MainWindow(QMainWindow):
                 else:
                     draw = event
             elif kind == "pass":
+                self.tracker.event(event)
                 self.say(f"Pass {event['pass']} finished: {event['open']} of {event['connections']} connections open, {event['vias']} vias")
                 self.variants = {}
             elif kind == "done":
@@ -986,10 +994,13 @@ class MainWindow(QMainWindow):
         if draw is not None:
             self._draw_snapshot(draw)
         if self.job.running():
-            self.progress.setValue(int(1000 * self.tracker.fraction))
-            left = self.tracker.remaining()
-            self.time_label.setText(f"elapsed {clock(time.time() - self.started)}"
-                                    + (f"   about {clock(left)} left in this pass" if left is not None else ""))
+            now = time.time()
+            self.progress.setValue(int(1000 * self.tracker.progress(now)))
+            self.pass_label.setText("Routing")
+            self.phase_label.setText(self.tracker.status())
+            left = phrase(self.tracker.left(now), self.tracker.more(now))
+            self.time_label.setText(f"elapsed {clock(now - self.started)}" + (f"   {left}" if left else "")
+                                    + (", as it took last time" if self.tracker.as_before(now) else ""))
 
     def _draw_snapshot(self, snap: dict) -> None:
         # Wires that are new or have moved since the last picture of this variant.
@@ -1040,6 +1051,8 @@ class MainWindow(QMainWindow):
         self.pass_label.setText("Finished")
         self.phase_label.setText(f"{stats['routed']} of {stats['connections']} connections routed")
         self.time_label.setText(f"took {clock(event['seconds'])}")
+        if self.run_key:
+            self.timings.record(self.run_key, time.time() - self.started)
         self.say(f"Finished: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "
                  f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
         self._idle()
@@ -1149,10 +1162,13 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
     live_after = float(get("--live-after") or 3.0)
     started = time.time()
     deadline = time.time() + timeout
+    said: list[str] = []  # what the timer showed, every few seconds
     while window.result is None and window.job is not None and not window.job.finished and time.time() < deadline:
         before = window.shown_variant
         app.processEvents()
         live_frames += window.view.last is not None and window.shown_variant is not None and before is None
+        if time.time() - started > len(said) * 3.0 + 2.0 and window.time_label.text():
+            said.append(f"{window.phase_label.text()} | {window.time_label.text()}")
         if live_shot and window.shown_variant is not None and time.time() - started > live_after:
             picture(window).save(live_shot)
             print("self-test: live screenshot", live_shot, "at", round(time.time() - started, 1), "s")
@@ -1161,6 +1177,9 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
     for _ in range(20):
         app.processEvents()
         time.sleep(0.01)
+    for line in said:
+        print("self-test: timer:", line)
+    print("self-test: timer at the end:", window.time_label.text())
     if window.result is None:
         print("self-test: routing did not finish:", window.phase_label.text())
         print(window.log.toPlainText()[-2000:])

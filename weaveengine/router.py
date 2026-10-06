@@ -251,6 +251,7 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
                 ctx.rip(w)
         lines, violations, wire_net = _realize(ctx)
     ctx.emit_snapshot(force=True, lines=lines)
+    ctx.report("finished", complete=not ctx.unrouted and not violations)
     return lines, violations, wire_net
 
 

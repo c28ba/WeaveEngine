@@ -8,3 +8,4 @@ build/
 dist/
 settings.json
 dist-vias/
+timings.json
