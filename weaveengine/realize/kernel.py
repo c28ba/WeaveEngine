@@ -42,15 +42,21 @@ def blocked(x, y, r, a, c, q, on_left):
     """Whether disc q, to be passed on the left (``on_left``) or on the right,
     stands in the way of the string from disc a to disc c. Only the string
     itself counts, from where it leaves a to where it lands on c: a disc it
-    would meet beyond that is passed later, on the way round c. (Between
+    would meet beyond that is passed later, on the way round c (unless the
+    string lands inside it). (Between
     points this is the funnel's usual test of which side of the line q lies on.)"""
     hx, hy = heading(x, y, r, a, c)
     ax, ay = x[a] + r[a] * hy, y[a] - r[a] * hx
     run = (x[c] + r[c] * hy - ax) * hx + (y[c] - r[c] * hx - ay) * hy
     qx, qy = x[q] - ax, y[q] - ay
     along = qx * hx + qy * hy
-    if along < 0.0 or (hx == 0.0 and hy == 0.0):  # behind the string; or a and c are one point: no string
+    if hx == 0.0 and hy == 0.0:  # a and c are one point: no string
         return False
+    if along < 0.0:
+        # Behind the string. It counts only if it reaches over the string's start from the
+        # same side as a: then the trace would leave a inside it. (From the other
+        # side, the two overlap: an over-full gate, which is for the check to report.)
+        return (r[a] > 0.0) == on_left and r[a] != 0.0 and qx * qx + qy * qy < r[q] * r[q] - 1e-12
     if along > run:
         qx, qy = qx - run * hx, qy - run * hy
         return qx * qx + qy * qy < r[q] * r[q] - 1e-12
