@@ -198,7 +198,7 @@ From node `(h, p)` in triangle `t`, for each of the two other edges `b` of `t`:
 - Priority queue: `heapq` with `(f, counter, node)`. Costs are floats; `counter` breaks ties.
 - Reuse `dict`s per search; clear instead of reallocating.
 - Return the gate/slot sequence, or `None`.
-- **A cheapest path that crosses a gate twice is no route, and nothing else is looked for.** Such a path runs along one side of a wire, round its end and back along the other side, crossing again every gate the wire crosses. It cannot be inserted (7.3). Until M17 the search then forbade the node of the repeat crossing and ran again, up to 12 times. Measured on ALU: 80 % of all nodes the search touched were in those repeats (92 of 114 million), 95 searches used all 12 and still found nothing, and what the others found were longer ways round the same wire (a first path of 140 gates and 85 mm became, six runs later, one of 433 gates and 197 mm). Without the repeats, over perturbed runs: ALU 409 of 409 in every run in 15 to 18 s (24 s before), ulx3s 201 (196 to 202) of 203 in 24 s (41 s), blinkSP1 49 (46 to 53) of 58 (46, 40 to 52). The connection is left to a via or to rip-up of the wire in the way, which is what the path was saying. The `banned` table and the retry loop are gone.
+- **A cheapest path that crosses a gate twice is no route, and nothing else is looked for.** Such a path runs along one side of a wire, round its end and back along the other side, crossing again every gate the wire crosses. It cannot be inserted (7.3). Until M17 the search then forbade the node of the repeat crossing and ran again, up to 12 times. Measured on ALU: 80 % of all nodes the search touched were in those repeats (92 of 114 million), 95 searches used all 12 and still found nothing, and what the others found were longer ways round the same wire (a first path of 140 gates and 85 mm became, six runs later, one of 433 gates and 197 mm). Without the repeats, over perturbed runs: ALU 409 (408 to 409) of 409 in 18 s (24 s before), ulx3s 201 (196 to 202) of 203 in 24 s (41 s), blinkSP1 49 (46 to 53) of 58 (46, 40 to 52). The connection is left to a via or to rip-up of the wire in the way, which is what the path was saying. The `banned` table and the retry loop are gone.
 - What such a search reached on the way is still reported (8.6), so the connection may go through a via from there. Leaving that out as well was measured, since it is what the first trial did by accident: the same completion within the spread (ALU 409 in all six runs, ulx3s 201 (200 to 203), blinkSP1 50 (41 to 53)), fewer vias (ALU 0 instead of 19, ulx3s 34 instead of 43, blinkSP1 34 instead of 45) and 4 to 5 % more copper on ALU and ulx3s. It was not kept, because it is a special case (a search that finds no path at all does report its reach), but it says something about the open question of 12.8: there the choice between a via and moving the wire in the way went to the priced, relaxed search instead of to "any legal route first", and nothing was lost.
 
 ### 8.5 Relaxed search (used for rip-up decisions)
@@ -735,6 +735,34 @@ Targets to validate with measurements (these are guesses, not results):
 2. Relaxation is exact in one pass per wire since M14e (13.1); there is no iteration to converge.
 3. (Until M14e: the clearance solve along a wall was cached per map. There is no such solve now.)
 
+**Speed pass (M17).** Measured first, per phase and per caller of the search, on all five boards (one variant, one process). Each step below either leaves the routing identical (checked by a fingerprint of every trace) or is a change of behaviour measured as a spread.
+
+| Board | Before | After | Routed before | Routed after |
+|---|---|---|---|---|
+| RAM Selector Tree | 1041 s | 104 s | 398 of 400 | 399 (397 to 400) |
+| ALU | 29 s | 11 s | 409 of 409 | 409 (408 to 409) |
+| ulx3s | 41 s | 6 s | 199 to 202 of 203 | 201 (196 to 202) |
+| blinkSP1 | 10 s | 5.3 s | 46 (40 to 52) of 58 | 49 (46 to 53) |
+| Word of RAM | 1.9 s | 1.6 s | 85 of 85 | 85 of 85 |
+
+What did it, largest first:
+1. **No second search when the cheapest path crosses a gate twice** (8.4). The only change of behaviour. It was 80 % of the search work on ALU and most of RAM Selector Tree's (54,000 searches of 35,000 nodes became 22,600 of 16,600).
+2. **Via points once per layer and hop.** The points where a search may change layer were worked out again for every layer it might change to. On ulx3s (four layers) that was 25 s of 36.
+3. **One plain search per layer** serves both the candidates on that layer and the start of the route through vias; they were two identical searches.
+4. **Via points in one compiled pass** (`kernel.via_points`): the five points per triangle, the legality grid, the bound, the room and the spacing from other vias, with no arrays in between.
+5. **Points located in a grid of the triangles** (`kernel.cells`, `kernel.locate`), about two cells to a triangle: exact, with no walk. The walk from a hint scanned every triangle whenever it ran into a wall, which is what a point inside a pad on the other layer does.
+6. **Transitions brought up to date when a search needs them** (`PlanarMap.catch_up`), not at each of the dozen flips a via site causes; the search reads the map's edge tables instead of a copy made at every change.
+7. Crossing counts walk the gates two paths share, not the whole of one path; a reach reads its paths through an index array instead of a dictionary of every node; the selection loop of Phase 1 works on one number per gate and plain lists (half its time).
+
+Tried and not kept, with the reason:
+- **Filling the location grid once** and letting hints go stale: locating went from 13 s to 49 s on RAM Selector Tree (stale hints walk into walls). I had committed it on the strength of small boards; a clean run of the large one showed it.
+- **Heap entries side by side in one array**, **a plain square root in place of `hypot`**, **not queueing nodes over the bound**: no measurable change. The search costs 30 to 60 ns a node on an empty map and about 110 ns in a real run, where its workspace (16 places per half-edge) does not stay in the cache.
+- **Heuristic weight** 1.1, 1.25, 1.5: the mean number of nodes falls by a third at most, because it is set by the searches that flood: those that find no route, and those that start from thousands of via points.
+
+Measured for the rip-up question (12.8), nothing changed: wires ripped up rarely come back by the route they had (blinkSP1 7 of 581, ALU 32 of 253), so ripping is not wasted in that sense. The exception is the tail of a run that has stalled (ulx3s: the last rounds rip three wires and get the same three routes back, until the stall limit ends it).
+
+Where the time is now (RAM Selector Tree, 104 s): the search kernel 41 s, flips of via sites 15 s, candidate selection 7 s, realisation 6.5 s. Not done: the reading of routes back and the rest of the selection loop are plain Python (about 8 s together); flips make two shapely points per edge written.
+
 Techniques: per-half-edge precomputed successor tuples; integer node ids; `dict` visited sets; a stamp-free design (clearing small dicts per search); inverted indexes for `cross_count`; parallel candidate generation; optional A* landmark heuristic. Re-profile after every milestone and record numbers in `bench/results.md`.
 
 ---
@@ -793,6 +821,7 @@ Keep a feature only if it improves completion or length ratio without disproport
 | M14c | One search across layers for every phase (12.5 step 3) | blinkSP1: at least 51 of 59 with no more than about 40 vias and zero violations; `complete` and the between-passes code deleted. **Partly met.** 52 of 58 with zero violations, and the old code is gone (the tree is about 740 lines shorter); but 63 vias, and the result swings with small changes (12.4). Other boards not re-measured except Word of RAM (85 of 85, now with 6 vias) |
 | M14d | The open questions of 12.5 step 4, on blinkSP1; then RAM Selector Tree, ALU, Word of RAM, ulx3s | blinkSP1 within reach of the file's own routing (51 or more connections, about 40 vias or fewer), steadily; the M14 criterion above; boards that need no via take none or nearly none |
 | M14e | Realisation as the rubber band with thickness (12.8, 13.1, 13.2) | The saved RAM Selector Tree routing realises with no violation; RAM Selector Tree end to end improves; other boards no worse. **Done.** Saved state: 82 violations to 0. End to end: 360 to 368 of 400 in 9 minutes instead of 18, with no repair round needed (393 when rip-up is given more rounds: 12.8); blinkSP1, ALU, ulx3s and Word of RAM as before or slightly better, all clean (table in 12.8). `realize/` lost about 100 lines over it (relax, kernel and funnel: 800 lines; relax and kernel now: 700). Not done: the connections RAM Selector Tree still leaves open |
+| M17 | Speed pass (16) | Every board faster with routing identical or better over perturbed runs; each step measured. **Done**: table in 16. |
 | M15 | Sliding vias (13.3) | Total length on RAM Selector Tree and ALU drops against M14 with the check still clean; added geometry time recorded |
 | M16 | Via reduction in Phase 4; flips while sliding (the flip itself exists since M13) if M15 shows vias pinned | Fewer vias at equal or shorter length on the benchmark boards |
 

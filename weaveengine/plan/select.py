@@ -34,38 +34,39 @@ def select(ctx: Context, cands: dict[int, list[Candidate]]) -> dict[int, int]:
                     conflict.setdefault(a, {})[b] = n
                     conflict.setdefault(b, {})[a] = n
 
-    states = [layer.state for layer in ctx.layers]
+    # Gates as one number over all layers, and what each holds before this selection.
+    width = max(layer.pmap.num_edges for layer in ctx.layers)
+    held = [x for layer in ctx.layers for x in layer.state.load[:layer.pmap.num_edges].tolist() + [0.0] * (width - layer.pmap.num_edges)]
+    cap = [x for layer in ctx.layers for x in layer.state.cap[:layer.pmap.num_edges].tolist() + [0.0] * (width - layer.pmap.num_edges)]
+    keys = {w: [[c.layer * width + g for g in c.path.gates] for c in cands[w]] for w in ids}
     weight = {w: ctx.conns[w].weight for w in ids}
-
-    def keys(c: Candidate):
-        return [(c.layer, g) for g in c.path.gates]
+    no_conflict: dict = {}
 
     def marginal(w: int, ci: int, sel: dict[int, int], load: dict) -> float:
-        cost = cands[w][ci].score
-        crossings = sum(n for (w2, cj), n in conflict.get((w, ci), {}).items() if sel.get(w2) == cj)
-        overflow = 0.0
-        for li, g in keys(cands[w][ci]):
-            over = states[li].load[g] + load.get((li, g), 0.0) + weight[w] - states[li].cap[g]
+        crossings = sum(n for (w2, cj), n in conflict.get((w, ci), no_conflict).items() if sel.get(w2) == cj)
+        overflow, mine = 0.0, weight[w]
+        for key in keys[w][ci]:
+            over = held[key] + load.get(key, 0.0) + mine - cap[key]
             if over > 1e-9:
                 overflow += over
-        return cost + params.lambda_conf * (crossings + overflow)
+        return cands[w][ci].score + params.lambda_conf * (crossings + overflow)
 
     def run(sel: dict[int, int]) -> float:
-        load: dict[tuple[int, int], float] = {}
+        load: dict[int, float] = {}
         for w, ci in sel.items():
-            for key in keys(cands[w][ci]):
+            for key in keys[w][ci]:
                 load[key] = load.get(key, 0.0) + weight[w]
         for _ in range(30):
             changed = False
             visit = ids[:]
             rng.shuffle(visit)
             for w in visit:
-                for key in keys(cands[w][sel[w]]):
+                for key in keys[w][sel[w]]:
                     load[key] -= weight[w]
                 best = min(range(len(cands[w])), key=lambda ci: marginal(w, ci, sel, load))
                 changed |= best != sel[w]
                 sel[w] = best
-                for key in keys(cands[w][best]):
+                for key in keys[w][best]:
                     load[key] = load.get(key, 0.0) + weight[w]
             if not changed:
                 break
@@ -73,7 +74,7 @@ def select(ctx: Context, cands: dict[int, list[Candidate]]) -> dict[int, int]:
         total = sum(cands[w][ci].score for w, ci in sel.items())
         pair = sum(n for a, row in conflict.items() if sel[a[0]] == a[1]
                    for b, n in row.items() if sel[b[0]] == b[1]) / 2
-        over = sum(max(0.0, states[li].load[g] + n - states[li].cap[g]) for (li, g), n in load.items())
+        over = sum(max(0.0, held[key] + n - cap[key]) for key, n in load.items())
         return total + params.lambda_conf * (pair + over)
 
     best_sel, best_cost = None, None
