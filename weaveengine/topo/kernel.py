@@ -335,8 +335,10 @@ def near(tri_v, vx, vy, hint, x0, y0, cell):
 @njit(cache=True, nogil=True)
 def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
     """Triangle containing each point (-1 if none). The search walks from the
-    triangle ``hint`` gives for the point's cell (``near``), and scans every
-    triangle only where the walk runs into a wall."""
+    triangle ``hint`` gives for the point's cell (``near``), then from the
+    triangle of the point before, and scans every triangle only where both
+    walks run into a wall. So the hint may be out of date: it costs time, not
+    the answer."""
     n_tri = tri_v.shape[0]
     nx, ny = hint.shape
     cur = 0
@@ -347,19 +349,23 @@ def locate(tri_v, tri_n, vx, vy, px, py, out, hint, x0, y0, cell):
         t = cur
         if 0 <= ci < nx and 0 <= cj < ny and hint[ci, cj] >= 0:
             t = hint[ci, cj]
-        for _ in range(n_tri):
-            move = -1
-            for k in range(3):
-                a, b = tri_v[t, (k + 1) % 3], tri_v[t, (k + 2) % 3]
-                if (vx[b] - vx[a]) * (y - vy[a]) - (vy[b] - vy[a]) * (x - vx[a]) < -1e-12:
-                    move = k
+        for start in range(2):
+            for _ in range(n_tri):
+                move = -1
+                for k in range(3):
+                    a, b = tri_v[t, (k + 1) % 3], tri_v[t, (k + 2) % 3]
+                    if (vx[b] - vx[a]) * (y - vy[a]) - (vy[b] - vy[a]) * (x - vx[a]) < -1e-12:
+                        move = k
+                        break
+                if move < 0:
+                    found = t
                     break
-            if move < 0:
-                found = t
+                t = tri_n[t, move]
+                if t < 0:
+                    break
+            if found >= 0 or t == cur:
                 break
-            t = tri_n[t, move]
-            if t < 0:
-                break
+            t = cur  # the hint led nowhere (its triangle has moved since): from where the point before was
         if found < 0:
             for t in range(n_tri):
                 inside = True
@@ -401,13 +407,14 @@ def rooms(tri_v, vx, vy, corner, pitch, keep, least, tris, px, py):
 
 
 @njit(cache=True, nogil=True)
-def via_points(best, extra, bound, gx, gy, tri_v, vx, vy, corner, pitch, keep, least, legal, x0, y0, cell):
+def via_points(best, extra, bound, gx, gy, tri_v, vx, vy, corner, pitch, keep, least, legal, x0, y0, cell, tx, ty, apart):
     """Where a search may change layer (12.3). ``best[t]`` is the cost at which
     it reached the middle of triangle t. Five points are tried in each triangle
     reached: the incentre, the centroid, and one towards each corner. A point
     is kept if a via may be there (``legal``, a grid of cells from x0 y0), it
-    has room (``roomy``), and its cost, ``best[t] + extra``, plus the straight
-    line on to gx gy stays under ``bound``.
+    has room (``roomy``), it is more than ``apart`` from the vias there are
+    (tx ty, in order of x), and its cost, ``best[t] + extra``, plus the
+    straight line on to gx gy stays under ``bound``.
     Returns (x, y, cost, triangle) of the points kept."""
     nx, ny = legal.shape
     n = 0
@@ -437,7 +444,16 @@ def via_points(best, extra, bound, gx, gy, tri_v, vx, vy, corner, pitch, keep, l
             i, j = min(max(i, 0), nx - 1), min(max(j, 0), ny - 1)
             if not legal[i, j] or not c + np.hypot(x - gx, y - gy) < bound:
                 continue
-            if roomy(tri_v, vx, vy, corner, pitch, keep, least, t, x, y):
+            if not roomy(tri_v, vx, vy, corner, pitch, keep, least, t, x, y):
+                continue
+            free = True
+            for q in range(np.searchsorted(tx, x - apart), tx.shape[0]):
+                if tx[q] > x + apart:
+                    break
+                if np.hypot(tx[q] - x, ty[q] - y) <= apart:
+                    free = False
+                    break
+            if free:
                 px[n], py[n], cost[n], tri[n] = x, y, c, t
                 n += 1
     return px[:n], py[:n], cost[:n], tri[:n]

@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import shapely
-from scipy.spatial import cKDTree
 
 from weaveengine.topo import kernel, sites
 from weaveengine.topo.planar_map import PlanarMap
@@ -45,15 +44,14 @@ def locate(pmap: PlanarMap, pts: np.ndarray) -> np.ndarray:
     out = np.zeros(len(pts), dtype=np.int64)
     hint = pmap.__dict__.get("_locate_hint")
     if hint is None:
+        # A triangle near each cell of a grid, to start from. It is filled once:
+        # sites move triangles only a little, and a hint need not be right.
         # The board's extent, not the tables': unused slots are parked far away.
         x0, y0, x1, y1 = pmap.free_space.free.bounds
-        cell = max(x1 - x0, y1 - y0, 1e-6) / 256.0
-        hint = pmap.__dict__["_locate_hint"] = (np.zeros((int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1), dtype=np.int64), cell, x0, y0)
-        pmap.moved = True
+        cell = max(x1 - x0, y1 - y0, 1e-6) / 512.0
+        hint = pmap.__dict__["_locate_hint"] = (np.zeros((int((x1 - x0) / cell) + 1, int((y1 - y0) / cell) + 1), dtype=np.int32), cell, x0, y0)
+        kernel.near(pmap.tri_v, pmap.vx, pmap.vy, hint[0], x0, y0, cell)
     grid, cell, x0, y0 = hint
-    if pmap.moved:
-        kernel.near(pmap.tri_v, pmap.vx, pmap.vy, grid, x0, y0, cell)
-        pmap.moved = False
     kernel.locate(pmap.tri_v, pmap.tri_n, pmap.vx, pmap.vy, np.ascontiguousarray(pts[:, 0]), np.ascontiguousarray(pts[:, 1]), out,
                   grid, x0, y0, cell)
     return out
@@ -85,12 +83,12 @@ class Legal:
         return all(shapely.contains_xy(region, x, y) for region in self.regions)
 
 
-def _taken(ctx, struck):
+def _taken(ctx, struck) -> np.ndarray:
     """The points a new via must keep its distance from: the vias there are,
-    and ``struck``. An index of them, or None if there are none."""
+    and ``struck``. In order of x."""
     pts = np.array([s.centre for s in ctx.layers[0].pmap.sites.values() if s.active]
-                   + [p.centre for p in ctx.board.pads if p.is_via] + list(struck)).reshape(-1, 2)
-    return cKDTree(pts) if len(pts) else None
+                   + [p.centre for p in ctx.board.pads if p.is_via] + list(struck), dtype=float).reshape(-1, 2)
+    return pts[np.argsort(pts[:, 0], kind="stable")]
 
 
 def _via_points(ctx, la: int, seen, goal, bound: float, taken):
@@ -102,13 +100,9 @@ def _via_points(ctx, la: int, seen, goal, bound: float, taken):
     rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
     x, y, cost, tris = kernel.via_points(seen.best, ctx.params.via_cost, bound, goal[0], goal[1], pmap.tri_v, pmap.vx, pmap.vy,
                                          ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
-                                         legal.grid, legal.x0, legal.y0, GRID)
-    pts = np.stack([x, y], axis=1)
-    if taken is not None and len(pts):
-        spacing = rules.via_diameter + rules.clearance + 0.02
-        ok = taken.query(pts, distance_upper_bound=spacing)[0] > spacing
-        pts, cost, tris = pts[ok], cost[ok], tris[ok]
-    return (pts, cost, np.stack([np.full(len(tris), la), tris], axis=1)) if len(pts) else None
+                                         legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[:, 0]),
+                                         np.ascontiguousarray(taken[:, 1]), rules.via_diameter + rules.clearance + 0.02)
+    return (np.stack([x, y], axis=1), cost, np.stack([np.full(len(tris), la), tris], axis=1)) if len(x) else None
 
 
 def _seeds(ctx, sources: dict, onto, goal, bound: float):
