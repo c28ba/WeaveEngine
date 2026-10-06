@@ -95,14 +95,14 @@ def _taken(ctx, struck) -> np.ndarray:
     return pts[np.argsort(pts[:, 0], kind="stable")]
 
 
-def _via_points(ctx, la: int, seen, goal, bound: float, taken):
+def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float):
     """Where a route that the search ``seen`` brought this far on layer ``la``
     may change layer: the points it reached where a via is legal and fits,
     each at its cost so far plus a via. Points that cannot lead to a route
     cheaper than ``bound`` are left out. Returns (points, costs, where each
     came from as (layer, triangle)), or None."""
     rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
-    x, y, cost, tris = kernel.via_points(seen.best, ctx.params.via_cost, bound, goal[0], goal[1], pmap.tri_v, pmap.vx, pmap.vy,
+    x, y, cost, tris = kernel.via_points(seen.best, via_cost, bound, goal[0], goal[1], pmap.tri_v, pmap.vx, pmap.vy,
                                          ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
                                          legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[:, 0]),
                                          np.ascontiguousarray(taken[:, 1]), rules.via_diameter + rules.clearance + 0.02)
@@ -141,14 +141,16 @@ def place(ctx, conn, path: "Path | None", **how) -> bool:
 
 
 def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None = None, first: dict | None = None,
-         **how) -> Path | None:
+         via_cost: float | None = None, **how) -> Path | None:
     """Cheapest route for the connection, changing layer at most ``max_vias``
     times (default: as many as the parameters allow). ``how`` goes to every
     search (``mode``, ``hard_cap``, ``congestion``); ``penalty`` is per layer.
     ``struck``: points where a via has been found not to fit. ``first``: per
     layer, the outcome of the search from the connection's own pad, where the
-    caller has made it already."""
+    caller has made it already. ``via_cost``: what a via costs, if not what
+    the parameters say."""
     params = ctx.params
+    via_cost = params.via_cost if via_cost is None else via_cost
     if max_vias is None:
         max_vias = params.max_vias if ctx.vias else 0
     goal = ctx.pad_centre(conn.dst)
@@ -169,7 +171,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     hops = [reached]
     taken = _taken(ctx, struck) if max_vias else None
     for hop in range(1, max_vias + 1):
-        sources = {la: _via_points(ctx, la, seen, goal, best[0] if best else math.inf, taken)
+        sources = {la: _via_points(ctx, la, seen, goal, best[0] if best else math.inf, taken, via_cost)
                    for la, (seen, _) in reached.items() if seen is not None}
         reached = {}
         for layer in ctx.layers:
