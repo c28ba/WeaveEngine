@@ -330,8 +330,6 @@ class Context:
                     back_to(before[n])
             self._maps_changed()
             return False
-        for l in self.layers:
-            sites.journal(l.state).clear()
         self._maps_changed()
         self.next_wire += len(pieces)
         self.next_pad += len(vias)
@@ -366,6 +364,44 @@ class Context:
         conn.layer, conn.pieces, conn.sites = None, (), ()
         self._waiting(conn, True)
 
+    def lift(self, conn: Connection) -> dict:
+        """Takes a routed connection out (``rip``) and returns what ``put_back``
+        needs to have it exactly as it was: its pieces with their places on
+        every gate, its vias, and how far the maps' logs had got."""
+        pieces = []
+        for w in conn.pieces or (conn.wire_id,):
+            piece = self.conns[w]
+            state = self.layers[piece.layer].state
+            order = state.gate_order
+            # Stored slots are those at insertion time; other wires have come
+            # and gone since, so read the wire's present position on each gate.
+            pieces.append((piece, piece.layer, [(e, t, k, order[e].index(w)) for e, t, k, _ in state.wire_path[w]]))
+        site = self.layers[0].pmap.sites
+        saved = {"pieces": pieces, "of": (conn.layer, conn.pieces, conn.sites),
+                 "vias": [(pad, site[pad].net, site[pad].keep) for pad in conn.sites],
+                 "marks": [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]}
+        self.rip(conn.wire_id)
+        return saved
+
+    def put_back(self, conn: Connection, saved: dict) -> None:
+        """Undoes ``lift``: the connection, its vias and every other wire are
+        as they were. Nothing may have been put in since (searching is fine)."""
+        for layer, mark in zip(self.layers, saved["marks"]):
+            for w in sites.undo(layer.pmap, layer.state, *mark):
+                if w in layer.state.wire_path:
+                    layer.paths[w] = path_from_steps(layer.pmap, layer.state.wire_path[w])
+            layer.pmap.__dict__.pop("_moved_wires", None)
+        for piece, li, steps in saved["pieces"]:
+            self.conns[piece.wire_id] = piece
+            piece.layer = li
+            self.layers[li].state.insert(piece.wire_id, steps, piece.weight, piece.net_id)
+            self.layers[li].paths[piece.wire_id] = path_from_steps(self.layers[li].pmap, steps)
+        for pad, net, keep in saved["vias"]:
+            for layer in self.layers:
+                sites.set_net(layer.pmap, layer.state, layer.pmap.sites[pad], net, keep)
+        conn.layer, conn.pieces, conn.sites = saved["of"]
+        self._waiting(conn, False)
+
     def _weld(self, layer: Layer, conn: Connection, path: GatePath) -> None:
         pmap, state = layer.pmap, layer.state
         layer.barrier.weld(pmap.pad_obs[conn.src], pmap.pad_obs[conn.dst], path)
@@ -376,6 +412,7 @@ class Context:
 
     def rebuild_barrier(self) -> None:
         for layer in self.layers:
+            sites.journal(layer.state).clear()  # nothing looks back past a round
             layer.barrier = Barrier()
             for wire_id, path in layer.paths.items():
                 self._weld(layer, self.conns[wire_id], path)

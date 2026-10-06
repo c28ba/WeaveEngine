@@ -144,6 +144,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
 # Search settings of the raced variants: (heuristic weight). Variant 0 is the plain configuration.
 VARIANTS = (1.0, 1.5, 1.25, 1.75, 1.0, 2.0, 1.5, 1.25)
 HEAT = 4
+SETTLE_AGAIN = 3  # times the routing is settled after repair before it is left as repair had it
 
 
 def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool):
@@ -224,19 +225,21 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
     # Phase 3: negotiated rip-up and reroute.
     if opts.ripup:
         negotiate(ctx)
-    # Phase 4: topology refinement, and what still fits.
-    settle(ctx)
+    # Phase 4: topology refinement, what still fits, and vias where a trace would do.
+    settle(ctx, vias=True)
 
     # Realisation, with DRC feedback into Phase 3 (13.2).
     ctx.report("geometry")
     lines, violations, wire_net = _realize(ctx)
     ctx.emit_snapshot(force=True, lines=lines)
+    disturbed = False  # whether anything has moved since the routing was settled
     for fix in range(drc_rounds):
         if not violations:
             break
         if not _penalise(ctx, violations):
             break
         ctx.report("design-rule repair", fix, drc_rounds)
+        disturbed = True
         if opts.ripup:
             negotiate(ctx, max_rounds=ctx.rounds + 5)
         legalise(ctx)
@@ -250,7 +253,23 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
         for w in dropped:
             if w in ctx.conns:  # not a piece of a connection ripped up a moment ago
                 ctx.rip(w)
+        disturbed = True
         lines, violations, wire_net = _realize(ctx)
+    if opts.refine and disturbed:
+        # Repair has moved things since the routing was settled: it may have
+        # left room for a connection that is open, or a via where a trace
+        # would now do. Settle once more, and keep that if the check agrees.
+        before, hold = ctx.snapshot(), set()
+        for _ in range(SETTLE_AGAIN):
+            settle(ctx, hold, vias=True)
+            again = _realize(ctx)
+            if len(again[1]) <= len(violations):
+                lines, violations, wire_net = again
+                break
+            # The check objects: once more from where it stood, leaving alone
+            # the connections whose traces it names.
+            hold |= {ctx.conns[w].parent or w for v in again[1] for w in v.wires if w in ctx.conns}
+            ctx.restore(before)
     if opts.vias and opts.slide:
         ctx.report("straightening vias")
         lines, violations, wire_net = slide(ctx, lines, violations, wire_net, _realize)

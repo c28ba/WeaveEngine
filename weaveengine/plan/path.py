@@ -141,14 +141,15 @@ def place(ctx, conn, path: "Path | None", **how) -> bool:
 
 
 def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None = None, first: dict | None = None,
-         via_cost: float | None = None, **how) -> Path | None:
+         via_cost: float | None = None, bound: float = math.inf, **how) -> Path | None:
     """Cheapest route for the connection, changing layer at most ``max_vias``
     times (default: as many as the parameters allow). ``how`` goes to every
     search (``mode``, ``hard_cap``, ``congestion``); ``penalty`` is per layer.
     ``struck``: points where a via has been found not to fit. ``first``: per
     layer, the outcome of the search from the connection's own pad, where the
     caller has made it already. ``via_cost``: what a via costs, if not what
-    the parameters say."""
+    the parameters say. ``bound``: only a route cheaper than this is of
+    interest (the searches stop short of anything else)."""
     params = ctx.params
     via_cost = params.via_cost if via_cost is None else via_cost
     if max_vias is None:
@@ -164,23 +165,23 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
             r, seen = first[layer.index]
         else:
             r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True,
-                            target=goal, penalty=penalty.get(layer.index), **how)
+                            target=goal, penalty=penalty.get(layer.index), bound=bound, **how)
         reached[layer.index] = (seen if max_vias else None, None)
         if r is not None and (best is None or r.cost < best[0]):
             best = (r.cost, 0, layer.index, r)
     hops = [reached]
     taken = _taken(ctx, struck) if max_vias else None
     for hop in range(1, max_vias + 1):
-        sources = {la: _via_points(ctx, la, seen, goal, best[0] if best else math.inf, taken, via_cost)
+        sources = {la: _via_points(ctx, la, seen, goal, best[0] if best else bound, taken, via_cost)
                    for la, (seen, _) in reached.items() if seen is not None}
         reached = {}
         for layer in ctx.layers:
-            seeds = _seeds(ctx, sources, layer, goal, best[0] if best else math.inf)
+            seeds = _seeds(ctx, sources, layer, goal, best[0] if best else bound)
             if seeds is None:
                 continue
             tris, cost, pts, source = seeds
             r, seen = route(layer.pmap, layer.state, None, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, target=goal,
-                            seeds=(tris, cost, pts[:, 0], pts[:, 1]), bound=best[0] if best else math.inf,
+                            seeds=(tris, cost, pts[:, 0], pts[:, 1]), bound=best[0] if best else bound,
                             penalty=penalty.get(layer.index), **how)
             reached[layer.index] = (seen if hop < max_vias else None, (pts, source))
             if r is not None and (best is None or r.cost < best[0]):

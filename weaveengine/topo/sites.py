@@ -946,10 +946,9 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
             return False  # a wire would cross this edge twice; or no slots left
         rows[d] = row
 
-    notes = journal(state)
-    outermost = not notes
+    notes = journal(state)  # whoever may want this undone says how far back (``undo``); the planner empties it every round
     notes.append(("wires", {w: list(state.wire_path[w]) for w in wires}))
-    for e in site.spokes:
+    for e in (*site.spokes, *site.hole):
         notes.append(("gate", e, list(order[e]), float(state.load[e]), float(state.cap[e])))
     for t in round_hole:
         notes.append(("cnt", t, list(state.corner_cnt[t])))
@@ -1007,8 +1006,6 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
         far = pmap.tri_v_list[t2][_apex(pmap, t2, e)]
         if _in_circle(*(pmap.vxy[v] for v in pmap.tri_v_list[t1]), pmap.vxy[far]) and flip(pmap, state, e):
             pending += [x for t in pmap.edge_t_list[e] for x in pmap.tri_e_list[t] if x in inner and x != e]
-    if outermost:
-        notes.clear()  # nothing else is waiting to be undone
     return True
 
 

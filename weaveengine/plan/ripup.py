@@ -90,7 +90,7 @@ def legalise(ctx: Context) -> None:
     fill(ctx)
 
 
-def fill(ctx: Context) -> int:
+def fill(ctx: Context, hold=frozenset()) -> int:
     """Places every open connection that fits with no gate over capacity,
     shortest first, until a pass places none (one placed can be what another
     was waiting for: its vias are new places to change layer). Nothing is
@@ -102,28 +102,29 @@ def fill(ctx: Context) -> int:
     placed = 0
     while True:
         before = len(ctx.unrouted)
-        for w in sorted(ctx.unrouted, key=lambda w: (ctx.conns[w].air_len, w)):
+        for w in sorted(ctx.unrouted.difference(hold), key=lambda w: (ctx.conns[w].air_len, w)):
             place(ctx, ctx.conns[w], find(ctx, ctx.conns[w], hard_cap=True), hard_cap=True)
         if len(ctx.unrouted) == before:
             return placed
         placed += before - len(ctx.unrouted)
 
 
-def settle(ctx: Context) -> None:
+def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
     """From whatever negotiation left to a legal routing with nothing more to
     add: no gate over capacity, routes shortened (Phase 4), and every open
     connection that fits placed. Shorter routes leave room, so filling and
-    shortening alternate while filling places anything. Last, with the others
-    in their final places, each connection through vias is planned again."""
+    shortening alternate while filling places anything. With ``vias``, each
+    connection through vias is then planned again, the others being in their
+    final places. The connections in ``hold`` are left exactly as they are."""
     legalise(ctx)
     if ctx.options.refine:
         ctx.report("refinement")
-        refine(ctx)
-        while fill(ctx):
-            refine(ctx)
-        if replan(ctx):
-            refine(ctx)
-            fill(ctx)
+        refine(ctx, hold=hold)
+        while fill(ctx, hold):
+            refine(ctx, hold=hold)
+        if vias and replan(ctx, hold=hold):
+            refine(ctx, hold=hold)
+            fill(ctx, hold)
 
 
 def _lengths(ctx: Context) -> dict[int, float]:
@@ -138,7 +139,7 @@ def _lengths(ctx: Context) -> dict[int, float]:
     return lengths
 
 
-def refine(ctx: Context, passes: int = 2) -> int:
+def refine(ctx: Context, passes: int = 2, hold=frozenset()) -> int:
     """Phase 4 (topology refinement): take each wire out and put it back by the
     cheapest legal route, longest detours first. A wire only moves when that
     shortens it, so the total never grows. Returns the number of wires moved.
@@ -149,7 +150,7 @@ def refine(ctx: Context, passes: int = 2) -> int:
         lengths = _lengths(ctx)
         for w in sorted(lengths, key=lambda w: ctx.conns[w].air_len - lengths[w]):
             conn = ctx.conns[w]
-            if conn.sites:
+            if conn.sites or w in hold:
                 continue
             layer = ctx.layers[conn.layer]
             # Stored slots are those at insertion time; other wires have come
@@ -172,33 +173,75 @@ def refine(ctx: Context, passes: int = 2) -> int:
     return moved
 
 
-def replan(ctx: Context) -> int:
+def replan(ctx: Context, passes: int = 3, hold=frozenset()) -> int:
     """Plans each connection through vias again as a whole, vias and all,
     longest detours first: where it changes layer was decided under the prices
     of the moment it was routed, often long before the board looked as it does
-    now. Returns the number that came out better."""
-    lengths = _lengths(ctx)
-    through = [w for w in lengths if ctx.conns[w].sites]
-    return sum(_replan(ctx, ctx.conns[w], lengths[w]) for w in sorted(through, key=lambda w: ctx.conns[w].air_len - lengths[w]))
+    now. One that moves leaves room for another, so this is done again while
+    any does. Returns the number of times a connection came out better."""
+    moved = 0
+    for _ in range(passes):
+        lengths = _lengths(ctx)
+        through = [w for w in lengths if ctx.conns[w].sites and w not in hold]
+        changed = sum(_replan(ctx, ctx.conns[w], lengths[w]) for w in sorted(through, key=lambda w: ctx.conns[w].air_len - lengths[w]))
+        moved += changed
+        if not changed:
+            break
+    return moved
+
+
+def via_worth(ctx: Context) -> float:
+    """What a via is worth in length of trace when a routing is tidied: the
+    track it takes away, which is the width it keeps clear, on every layer. A
+    route is better without a via if that makes it no more than this much
+    longer. (Not the price of a via while the board is negotiated (9): that
+    one decides who gets a layer, and would trade a via for a detour of many
+    times its size.)"""
+    rules = ctx.board.rules
+    return len(ctx.layers) * (rules.via_diameter + 2.0 * rules.clearance + rules.base_width)
+
+
+def _length(ctx: Context, conn) -> float:
+    """A routed connection's length through the middles of its gates."""
+    total = 0.0
+    for w in conn.pieces or (conn.wire_id,):
+        layer = ctx.layers[ctx.conns[w].layer]
+        mids, gates = layer.pmap.edge_mid_list, layer.paths[w].gates
+        total += sum(math.dist(mids[a], mids[b]) for a, b in zip(gates, gates[1:]))
+    return total
+
+
+def _planned(ctx: Context, plan) -> float:
+    """A plan's length as ``_length`` will measure it once it is in: through
+    the middles of its gates, and to and from each via."""
+    total = plan.length
+    for via, before, after in zip(plan.vias, plan.routes, plan.routes[1:]):
+        total += math.dist(ctx.layers[before.layer].pmap.edge_mid_list[before.steps[-1][0]], via)
+        total += math.dist(via, ctx.layers[after.layer].pmap.edge_mid_list[after.steps[0][0]])
+    return total
 
 
 def _replan(ctx: Context, conn, was: float) -> bool:
     """Plans one connection through vias again, with no more vias than it has,
-    and keeps the new plan if, once it is in, the connection is shorter.
-    Otherwise, or if anything about it does not fit, everything is put back as
-    it was: taking a via out changes the maps, so that is done from a
-    snapshot, not by hand.
-
-    A via is priced at one pitch here, not at what it costs while the board is
-    being negotiated (9): that price is for deciding who gets a layer, and it
-    would trade a via for a detour of many times its size."""
-    vias = len(conn.sites)
+    and keeps the new plan if, once it is in, the connection is better off:
+    shorter, counting each via at ``via_worth``. So a via goes where a trace
+    would do. The connection is lifted for the search and put back exactly;
+    only if the plan is better is it taken out for good and the plan put in,
+    and should that not fit after all, the routing is restored from a snapshot."""
+    vias, worth = len(conn.sites), via_worth(ctx)
+    was += worth * vias - ctx.layers[0].pmap.pitch   # better by a pitch at least: less is not worth moving anything for
+    needs = 0 if any(conn.src in l.pmap.pad_edges and conn.dst in l.pmap.pad_edges for l in ctx.layers) else 1
+    if conn.air_len + worth * needs >= was:
+        return False  # as good as any route could be: the straight line, with the vias its pads force
+    how = dict(hard_cap=True, congestion=False, max_vias=vias, via_cost=worth)
+    saved = ctx.lift(conn)
+    plan = find(ctx, conn, bound=was, **how)   # (a search's cost is never more than the length it stands for)
+    ctx.put_back(conn, saved)
+    if plan is None or not _planned(ctx, plan) + worth * len(plan.vias) < was:
+        return False
     before = ctx.snapshot()
     ctx.rip(conn.wire_id)
-    how = dict(hard_cap=True, congestion=False, max_vias=vias, via_cost=ctx.layers[0].pmap.pitch)
-    plan = find(ctx, conn, **how)
-    if (plan is not None and plan.length < was - 1e-6 and place(ctx, conn, plan, **how) and len(conn.sites) <= vias
-            and _lengths(ctx).get(conn.wire_id, math.inf) < was - 1e-6
+    if (place(ctx, conn, plan, **how) and len(conn.sites) <= vias and _length(ctx, conn) + worth * len(conn.sites) < was
             and not any(layer.state.overflowed_gates() for layer in ctx.layers)):
         return True
     ctx.restore(before)

@@ -653,8 +653,9 @@ def test_raced_variants_hand_their_vias_back():
 def test_vias_slide_to_where_their_traces_run_straighter():
     """M15: with sliding the same connections and vias, shorter copper, a clean check, every trace still on its via."""
     board = crossing_board()
-    fixed = route_board(board, options=Options(portfolio=1, slide=False), workers=1)
-    slid = route_board(board, options=Options(portfolio=1), workers=1)
+    # Without Phase 4, so that the vias are where the negotiation left them.
+    fixed = route_board(board, options=Options(portfolio=1, slide=False, refine=False), workers=1)
+    slid = route_board(board, options=Options(portfolio=1, refine=False), workers=1)
     assert_clean(board, slid)
     assert slid.stats["routed"] == fixed.stats["routed"] == 4 and slid.stats["vias"] == fixed.stats["vias"]
     before = {v.pad_id: v.centre for v in fixed.vias}
@@ -743,3 +744,49 @@ def test_a_via_plan_that_does_not_fit_leaves_no_trace(monkeypatch):
     assert split.wire_id in ctx.unrouted and not any(w in ctx.conns for w in pieces)
     assert all(pad not in layer.pmap.sites for pad in pads for layer in layers)
     assert all(layer.state.invariant_errors() == [] for layer in layers)
+
+
+def test_a_connection_lifted_is_put_back_exactly():
+    """Phase 4 tries another plan for a connection through vias and, if it is no better, has everything as it was."""
+    from weaveengine import parallel, router
+    from weaveengine.plan.context import Context, Layer, decompose
+    from weaveengine.plan.path import find
+    from weaveengine.topo import sites
+    from weaveengine.topo.costs import CostParams
+    board = crossing_board(6)
+    layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(board.layers, parallel.run(router._build_task, board, range(2), 1)))]
+    pairs, _ = decompose(board, layers)
+    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap), Options(portfolio=1, slide=False), 0, 1, None, None)
+    router._route_once(ctx, 4, True)
+    through = [c for c in ctx.conns.values() if c.parent is None and c.sites]
+    assert len(through) >= 2
+
+    def everything():
+        for layer in ctx.layers:
+            layer.pmap.catch_up()
+        # (A step's stored place on its gate is the one it was put in at, and says nothing later: left out.)
+        return ([(l.state.snapshot()[:2], {w: [step[:3] for step in steps] for w, steps in l.state.wire_path.items()},
+                  l.state.cap[:l.pmap.num_edges].round(9).tolist(), l.state.load[:l.pmap.num_edges].round(9).tolist(),
+                  l.pmap.tri_v_list, l.pmap.edge_v_list, l.pmap.edge_t_list, [round(x, 9) for x in l.pmap.edge_len_list], l.pmap.trans,
+                  {pad: (s.centre, s.net, s.keep, sorted(s.spokes)) for pad, s in l.pmap.sites.items()},
+                  {w: p.gates for w, p in l.paths.items()}) for l in ctx.layers],
+                {w: (c.layer, c.pieces, c.sites, c.parent, c.src, c.dst) for w, c in ctx.conns.items()}, sorted(ctx.unrouted))
+
+    for layer in ctx.layers:   # capacities at the vias as they are worked out afresh
+        for pad in layer.pmap.sites:
+            sites.refresh(layer.pmap, layer.state, pad)
+    before = everything()
+    for conn in through:
+        # Lifted and put straight back.
+        saved = ctx.lift(conn)
+        assert not conn.routed and everything() != before
+        ctx.put_back(conn, saved)
+        assert everything() == before
+        # Searching while it is out changes nothing either.
+        saved = ctx.lift(conn)
+        find(ctx, conn, hard_cap=True, congestion=False)
+        ctx.put_back(conn, saved)
+        assert everything() == before
+    for layer in ctx.layers:
+        assert layer.state.check_invariants()
+
