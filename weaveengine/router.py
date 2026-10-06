@@ -13,6 +13,7 @@ from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
+from weaveengine.plan.slide import slide
 from weaveengine.realize.relax import polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.teardrop import teardrops as make_teardrops
@@ -250,6 +251,9 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
             if w in ctx.conns:  # not a piece of a connection ripped up a moment ago
                 ctx.rip(w)
         lines, violations, wire_net = _realize(ctx)
+    if opts.vias and opts.slide:
+        ctx.report("straightening vias")
+        lines, violations, wire_net = slide(ctx, lines, violations, wire_net, _realize)
     ctx.emit_snapshot(force=True, lines=lines)
     ctx.report("finished", complete=not ctx.unrouted and not violations)
     return lines, violations, wire_net

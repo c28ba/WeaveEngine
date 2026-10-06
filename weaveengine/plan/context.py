@@ -108,6 +108,7 @@ class Options:
     ripup: bool = True              # Phase 3 (E5)
     refine: bool = True             # Phase 4: reroute each wire once, keep it if shorter
     vias: bool = True               # routes may change layer through vias (12.3)
+    slide: bool = True              # move each via to where its traces run straighter (13.3)
     smooth: bool = True             # round sharp corners where the design rules leave room
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
@@ -172,6 +173,28 @@ class Context:
         have = {p.pad_id for p in self.board.pads}
         board.pads = self.board.pads + [p for p in sites.via_pads(self.layers[0].pmap, self.board.rules) if p.pad_id not in have]
         return board
+
+    def move_via(self, pad: int, point: tuple[float, float], sure: bool = False) -> bool:
+        """Moves a via to ``point`` on every layer (13.3): nothing about any
+        wire changes but where it will be drawn. Returns False, with nothing
+        changed, if the via may not stand there (fixed copper, the board edge,
+        another via) or a map refuses the move (``sites.move``). ``sure``: no
+        test, to put a via back where it was."""
+        rules = self.board.rules
+        if not sure:
+            if not self.legal.exactly(*point):
+                return False
+            spacing = rules.via_diameter + rules.clearance + 0.02
+            others = [s.centre for s in self.layers[0].pmap.sites.values() if s.active and s.pad != pad]
+            if any(math.dist(point, c) < spacing for c in others + [p.centre for p in self.board.pads if p.is_via]):
+                return False
+        marks = [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]
+        for n, layer in enumerate(self.layers):
+            if not sites.move(layer.pmap, layer.state, layer.pmap.sites[pad], point, sure):
+                for done, mark in zip(self.layers[:n], marks):
+                    sites.undo(done.pmap, done.state, *mark)
+                return False
+        return True
 
     def _maps_changed(self) -> None:
         """After via sites came or went: sizes of the per-gate tables, and the
