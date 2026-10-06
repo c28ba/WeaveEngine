@@ -109,40 +109,47 @@ def _has_room(layer, tris: np.ndarray, pts: np.ndarray, keep: float) -> np.ndarr
     return ok & (height.min(axis=1) >= sites.MIN_ROOM * sites.SITE_RADIUS)
 
 
-def _seeds(ctx, reached: dict, onto, goal, bound: float, struck):
-    """Where the next search, on layer ``onto``, may start: the points the
-    searches before it reached on other layers where a via is legal and fits,
+def _taken(ctx, struck):
+    """The points a new via must keep its distance from: the vias there are,
+    and ``struck``. An index of them, or None if there are none."""
+    pts = np.array([s.centre for s in ctx.layers[0].pmap.sites.values() if s.active]
+                   + [p.centre for p in ctx.board.pads if p.is_via] + list(struck)).reshape(-1, 2)
+    return cKDTree(pts) if len(pts) else None
+
+
+def _via_points(ctx, la: int, seen, goal, bound: float, taken):
+    """Where a route that the search ``seen`` brought this far on layer ``la``
+    may change layer: the points it reached where a via is legal and fits,
     each at its cost so far plus a via. Points that cannot lead to a route
-    cheaper than ``bound`` are left out. Returns (triangles on ``onto``, costs,
-    points, where each came from as (layer, triangle))."""
+    cheaper than ``bound`` are left out. Returns (points, costs, where each
+    came from as (layer, triangle)), or None."""
     params, rules = ctx.params, ctx.board.rules
-    keep = sites.keep_off(rules)
     spacing = rules.via_diameter + rules.clearance + 0.02
-    taken = np.array([s.centre for s in ctx.layers[0].pmap.sites.values() if s.active]
-                     + [p.centre for p in ctx.board.pads if p.is_via] + list(struck)).reshape(-1, 2)
-    pts, cost, source = [], [], []
-    for la, (seen, _) in reached.items():
-        if la == onto.index or seen is None:
-            continue
-        tris = np.nonzero(np.isfinite(seen.best))[0]
-        if not len(tris):
-            continue
-        p = _points(ctx.layers[la].pmap, tris).reshape(-1, 2)
-        c = np.repeat(seen.best[tris], 5) + params.via_cost
-        ok = ctx.legal.roughly(p) & (c + np.hypot(p[:, 0] - goal[0], p[:, 1] - goal[1]) < bound)
-        if len(taken):
-            ok &= cKDTree(taken).query(p, distance_upper_bound=spacing)[0] > spacing
-        at = np.nonzero(ok)[0]
-        at = at[_has_room(ctx.layers[la], np.repeat(tris, 5)[at], p[at], keep)]
-        pts.append(p[at])
-        cost.append(c[at])
-        source.append(np.stack([np.full(len(at), la), np.repeat(tris, 5)[at]], axis=1))
-    if not pts or not sum(len(p) for p in pts):
+    tris = np.nonzero(seen.best + params.via_cost < bound)[0]
+    if not len(tris):
         return None
-    pts, cost, source = np.concatenate(pts), np.concatenate(cost), np.concatenate(source)
+    p = _points(ctx.layers[la].pmap, tris).reshape(-1, 2)
+    tris = np.repeat(tris, 5)
+    c = seen.best[tris] + params.via_cost
+    at = np.nonzero(ctx.legal.roughly(p) & (c + np.hypot(p[:, 0] - goal[0], p[:, 1] - goal[1]) < bound))[0]
+    if taken is not None:
+        at = at[taken.query(p[at], distance_upper_bound=spacing)[0] > spacing]
+    at = at[_has_room(ctx.layers[la], tris[at], p[at], sites.keep_off(rules))]
+    return p[at], c[at], np.stack([np.full(len(at), la), tris[at]], axis=1)
+
+
+def _seeds(ctx, sources: dict, onto, goal, bound: float):
+    """Where the next search, on layer ``onto``, may start: the via points of
+    the other layers (``sources``, per layer) that have room on this one too
+    and can still lead to a route cheaper than ``bound``. Returns (triangles
+    on ``onto``, costs, points, where each came from)."""
+    parts = [found for la, found in sources.items() if la != onto.index and found is not None]
+    if not parts:
+        return None
+    pts, cost, source = (np.concatenate(x) for x in zip(*parts))
     tris = locate(onto.pmap, pts)
-    at = np.nonzero(tris >= 0)[0]
-    at = at[_has_room(onto, tris[at], pts[at], keep)]
+    at = np.nonzero((tris >= 0) & (cost + np.hypot(pts[:, 0] - goal[0], pts[:, 1] - goal[1]) < bound))[0]
+    at = at[_has_room(onto, tris[at], pts[at], sites.keep_off(ctx.board.rules))]
     return (tris[at], cost[at], pts[at], source[at]) if len(at) else None
 
 
@@ -187,10 +194,13 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
         if r is not None and (best is None or r.cost < best[0]):
             best = (r.cost, 0, layer.index, r)
     hops = [reached]
+    taken = _taken(ctx, struck) if max_vias else None
     for hop in range(1, max_vias + 1):
+        sources = {la: _via_points(ctx, la, seen, goal, best[0] if best else math.inf, taken)
+                   for la, (seen, _) in reached.items() if seen is not None}
         reached = {}
         for layer in ctx.layers:
-            seeds = _seeds(ctx, hops[-1], layer, goal, best[0] if best else math.inf, struck)
+            seeds = _seeds(ctx, sources, layer, goal, best[0] if best else math.inf)
             if seeds is None:
                 continue
             tris, cost, pts, source = seeds
