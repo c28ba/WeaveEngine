@@ -376,6 +376,8 @@ def rewind(pmap: PlanarMap, length: int) -> None:
                 pmap.tri_n[n] = row
             free_slots(pmap).append(entry["slot"])
             _refresh(pmap, (*(x[0] for x in entry["outer"]), *entry["slot"][1]))
+        elif entry["kind"] == "move":
+            _shift(pmap, pmap.sites[entry["pad"]], entry["from"], entry["was"], dict(entry["widths"]))
         else:  # a site was deleted: put it back
             slot = free_slots(pmap).pop()
             assert slot == entry["slot"], "the map's log and its free slots disagree"
@@ -453,6 +455,8 @@ def replay(pmap: PlanarMap, entries: list) -> None:
             _create_map(pmap, entry["t"], entry["point"], entry["pad"], entry["radius"])
         elif entry["kind"] == "flip":
             _flip_map(pmap, _quad(pmap, entry["e"]))
+        elif entry["kind"] == "move":
+            _move_map(pmap, pmap.sites[entry["pad"]], entry["to"])
         else:
             _delete_map(pmap, pmap.sites[entry["site"].pad])
 
@@ -678,6 +682,82 @@ def legalise(pmap: PlanarMap, state: TopoState, site: Site) -> int:
         for t in pmap.edge_t_list[e]:
             pending += [x for x in pmap.tri_e_list[t] if not mine.intersection(pmap.edge_v_list[x])]
     return flips
+
+
+def _around(pmap: PlanarMap, site: Site) -> tuple[list[int], list[int]]:
+    """The triangles that touch the site's hole, and all their edges."""
+    tris = sorted({t for e in (*site.spokes, *site.hole) for t in pmap.edge_t_list[e] if t >= 0})
+    return tris, sorted({e for t in tris for e in pmap.tri_e_list[t]})
+
+
+def _shift(pmap: PlanarMap, site: Site, centre, hole_xy, widths: dict | None = None) -> None:
+    """Puts the site's hole at ``hole_xy`` (centre ``centre``) and brings up to
+    date what follows from the coordinates: the lengths, middles, widths and
+    capacities of the edges at the hole, the middles of the triangles round it.
+    Nothing is joined differently. ``widths``: per edge, instead of estimating it."""
+    for v, q in zip(site.verts, hole_xy):
+        pmap.vx[v], pmap.vy[v] = q[0], q[1]
+        pmap.vxy[v] = (q[0], q[1])
+    site.centre = (centre[0], centre[1])
+    pmap.pad_centre[site.pad] = site.centre
+    if pmap.free_space is not None:
+        pmap.free_space.obs_geom[site.obstacle] = LinearRing(hole_xy)
+    tris, edges = _around(pmap, site)
+    for e in (*site.spokes, *site.hole):
+        _write_edge(pmap, e, pmap.edge_v_list[e], pmap.edge_t_list[e], pmap.edge_kind_list[e], pmap.edge_owner_list[e],
+                    None if widths is None else widths[e])
+    for t in tris:
+        pmap.tri_cen[t] = _centroid(pmap.vxy, pmap.tri_v_list[t])
+    _refresh(pmap, edges)  # the way across a triangle is measured between the middles of its edges
+
+
+def _move_map(pmap: PlanarMap, site: Site, point: tuple[float, float]) -> None:
+    """The map's side of ``move``; logs how to undo it."""
+    dx, dy = point[0] - site.centre[0], point[1] - site.centre[1]
+    was = [pmap.vxy[v] for v in site.verts]
+    entry = {"kind": "move", "pad": site.pad, "from": site.centre, "to": (point[0], point[1]), "was": was,
+             "widths": [(e, float(pmap.edge_width[e]) if pmap.edge_width is not None else None) for e in (*site.spokes, *site.hole)]}
+    _shift(pmap, site, point, [(x + dx, y + dy) for x, y in was])
+    log(pmap).append(entry)
+
+
+MOVE_KEEPS = 0.3  # of its area: what a move must leave every triangle at the site
+
+
+def move(pmap: PlanarMap, state: TopoState, site: Site, point: tuple[float, float], sure: bool = False) -> bool:
+    """Moves the site to ``point`` without changing how anything is joined: the
+    hole's three vertices go there together, and every wire keeps the gates it
+    crosses and its place on each (13.3). Only lengths and capacities change.
+
+    Returns False, changing nothing, if a triangle at the site would turn
+    over or be left with less than ``MOVE_KEEPS`` of its area (a move is a
+    step: further is another move), or if a gate at the site could then no
+    longer hold the wires it has. ``sure``: no test (to go back to where the
+    site was).
+    """
+    dx, dy = point[0] - site.centre[0], point[1] - site.centre[1]
+    mine = set(site.verts)
+    if not sure:
+        for t in _around(pmap, site)[0]:
+            a, b, c = (pmap.vxy[v] for v in pmap.tri_v_list[t])
+            p, q, r = ((pmap.vxy[v][0] + dx, pmap.vxy[v][1] + dy) if v in mine else pmap.vxy[v] for v in pmap.tri_v_list[t])
+            if _cross(p, q, r) < MOVE_KEEPS * _cross(a, b, c):
+                return False
+    notes = state.__dict__.get("_journal")
+    gates = [e for e in site.spokes]
+    before = [(e, float(state.cap[e])) for e in gates]
+    _move_map(pmap, site, point)
+    for e in gates:
+        _set_capacity(pmap, state, e)
+    if not sure and any(state.load[e] > state.cap[e] + 1e-9 for e in gates):
+        rewind(pmap, len(log(pmap)) - 1)
+        for e, cap in before:
+            state.cap[e] = cap
+        return False
+    if notes is not None:  # the map's log undoes the move; these put the capacities back with it
+        for e, cap in before:
+            notes.append(("gate", e, list(state.gate_order[e]), float(state.load[e]), cap))
+    return True
 
 
 def _ring(pmap: PlanarMap, site: Site):

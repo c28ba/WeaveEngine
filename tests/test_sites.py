@@ -125,7 +125,7 @@ def test_random_operations_keep_the_invariants():
     live: dict[int, tuple[int, int]] = {}
     made: list = []
     wire = ops = flips = carried = 0
-    count = {"insert": 0, "remove": 0, "site": 0, "wake": 0, "sleep": 0, "delete": 0, "delete refused": 0}
+    count = {"insert": 0, "remove": 0, "site": 0, "wake": 0, "sleep": 0, "delete": 0, "delete refused": 0, "move": 0, "move refused": 0}
     peak_edges = 0
     while ops < 10_000:
         roll = rng.random()
@@ -158,6 +158,25 @@ def test_random_operations_keep_the_invariants():
                 count["delete refused"] += 1
                 if before is not None:   # a refusal changes nothing
                     assert fingerprint(pmap) == before[0] and state.snapshot()[2] == before[1][2]
+        elif roll < 0.84 and made:
+            # Move a site a little, awake or asleep, with whatever wires pass it (13.3).
+            site = rng.choice(made)
+            reach = min(pmap.edge_len_list[e] for e in site.spokes)
+            angle = rng.random() * 2 * math.pi
+            step = reach * rng.choice((0.02, 0.1, 0.3, 0.8))
+            point = (site.centre[0] + step * math.cos(angle), site.centre[1] + step * math.sin(angle))
+            before = (fingerprint(pmap), state.snapshot(), state.cap.copy(), site.centre) if count["move refused"] < 40 else None
+            orders = [list(row) for row in state.gate_order]
+            if sites.move(pmap, state, site, point):
+                assert site.centre == point and pmap.pad_centre[site.pad] == point
+                assert not any(state.load[e] > state.cap[e] + 1e-9 for e in site.spokes)
+                count["move"] += 1
+            else:
+                count["move refused"] += 1
+                if before is not None:   # a refusal changes nothing
+                    assert fingerprint(pmap) == before[0] and state.snapshot()[2] == before[1][2] and site.centre == before[3]
+                    assert np.array_equal(state.cap, before[2])
+            assert [list(row) for row in state.gate_order] == orders   # no wire's place on any gate changes
         elif roll < 0.88 and len(made) < 60:
             t = rng.randrange(pmap.num_triangles)
             (ax, ay), (bx, by), (cx, cy) = (pmap.vxy[v] for v in pmap.tri_v_list[t])
@@ -195,7 +214,8 @@ def test_random_operations_keep_the_invariants():
     for site in made:  # every gate at a hole vertex is listed as a spoke of its site, and nothing else is
         at_hole = {e for e in range(pmap.num_edges) if pmap.edge_kind_list[e] == GATE and set(pmap.edge_v_list[e]) & set(site.verts)}
         assert set(site.spokes) == at_hole and len(site.spokes) == len(at_hole)
-    assert min(v for k, v in count.items() if k != "delete refused") > 50 and flips > 100 and carried > 50, (count, flips, carried)
+    assert min(v for k, v in count.items() if not k.endswith("refused")) > 50 and flips > 100 and carried > 50, (count, flips, carried)
+    assert count["move refused"] > 20, count
     assert count["delete refused"] <= count["delete"] // 20, count
     assert pmap.num_edges == peak_edges <= first_edges + 9 * 62      # slots are reused: no growth without end
     print("random operations:", count, "flips at creation", flips)
@@ -440,3 +460,80 @@ def test_a_deletion_is_logged_like_everything_else():
     state.resize()
     sites.clear_free(theirs, state)
     assert state.invariant_errors() == []
+
+
+
+def test_a_move_is_logged_like_everything_else():
+    """A site moved (13.3) rewinds exactly and replays on another copy of the map, wires and capacities with it."""
+    board = grid_board(6, 10.0, seed=3)
+    theirs, mine = planar_map.build(board), planar_map.build(board)
+    state = busy_state(theirs, PAIRS)
+    route(theirs, state, 0, 1)   # the compiled search's tables exist and must follow
+    made = [sites.create(theirs, state, t, sites.incentre(theirs, t)) for t in roomy_triangles(theirs, 8, seed=5)]
+    for n, site in enumerate(made):
+        if sites.fits(theirs, state, site, sites.keep_off(board.rules)):
+            sites.set_net(theirs, state, site, 700 + n, sites.keep_off(board.rules))
+    assert any(state.gate_order[e] for s in made for e in s.spokes)      # wires pass the sites that move
+    middle = (len(sites.log(theirs)), len(sites.journal(state)), fingerprint(theirs), state.snapshot(), state.cap.copy(),
+              theirs.edge_width.copy(), [s.centre for s in made])
+    rng = random.Random(2)
+    moved = 0
+    for _ in range(6):
+        for site in made:
+            reach = min(theirs.edge_len_list[e] for e in site.spokes)
+            angle = rng.random() * 2 * math.pi
+            moved += sites.move(theirs, state, site, (site.centre[0] + 0.2 * reach * math.cos(angle), site.centre[1] + 0.2 * reach * math.sin(angle)))
+    assert moved > 20 and [s.centre for s in made] != middle[6]
+    assert state.invariant_errors() == [] and map_errors(theirs) == [] and not state.overflowed_gates()
+    assert state.snapshot()[2] == middle[3][2]                           # no wire's path has changed
+    assert route(theirs, state, 3, 32) is not None
+    # Done again from the log on another copy: the same map.
+    sites.replay(mine, sites.log(theirs))
+    assert fingerprint(mine) == fingerprint(theirs) and map_errors(mine) == []
+    assert np.allclose(mine.edge_width[:mine.num_edges], theirs.edge_width[:theirs.num_edges])
+    assert [mine.sites[s.pad].centre for s in made] == [s.centre for s in made]
+    # Undone: the map, the widths and the capacities exactly as they were.
+    sites.undo(theirs, state, middle[0], middle[1])
+    assert fingerprint(theirs) == middle[2] and map_errors(theirs) == [] and [s.centre for s in made] == middle[6]
+    assert np.array_equal(theirs.edge_width[:len(middle[5])], middle[5]) and np.array_equal(state.cap[:len(middle[4])], middle[4])
+    assert state.snapshot()[2] == middle[3][2] and state.invariant_errors() == []
+
+
+def test_a_move_is_refused_when_it_would_turn_a_triangle_or_fill_a_gate():
+    board = grid_board(6, 10.0, seed=3)
+    pmap = planar_map.build(board)
+    state = busy_state(pmap, PAIRS)
+    site = sites.create(pmap, state, *next((t, sites.incentre(pmap, t)) for t in roomy_triangles(pmap, 3, seed=5)))
+    before = fingerprint(pmap), state.snapshot(), state.cap.copy()
+    far = max(pmap.edge_len_list[e] for e in site.spokes)
+    assert not sites.move(pmap, state, site, (site.centre[0] + 3 * far, site.centre[1]))     # out of its triangles
+    assert fingerprint(pmap) == before[0] and state.snapshot()[2] == before[1][2] and np.array_equal(state.cap, before[2])
+    assert sites.move(pmap, state, site, (site.centre[0] + 0.05 * far, site.centre[1]), sure=True)
+    assert map_errors(pmap) == [] and state.invariant_errors() == []
+
+
+@pytest.mark.parametrize("via_at, to", [((20.3, 15.2), (20.9, 15.6)), ((20.1, 9.0), (19.6, 9.5)), ((19.3, 20.4), (19.9, 19.9))])
+def test_a_moved_via_realises_clean(via_at, to):
+    """M15: a via moved in the map realises with no violation, its own traces ending on it and the others still going round it."""
+    board, maps, states = two_layer_case(via_at)
+    rules = board.rules
+    copper = Point(to).buffer(rules.via_diameter / 2.0, quad_segs=64)
+    for pmap, state in zip(maps, states):
+        site = pmap.sites[1000]
+        while math.dist(site.centre, to) > 1e-9:   # in steps: a move is refused if it takes too much of a triangle at once
+            reach = math.dist(site.centre, to)
+            part = next((p for p in (1.0, 0.5, 0.25, 0.1, 0.03) if sites.move(pmap, state, site, tuple(
+                c + p * (t - c) for c, t in zip(site.centre, to)) if p < 1.0 else to)), None)
+            assert part is not None, f"stuck {reach:.2f} mm from where it was to go"
+        with_via = copy.copy(board)
+        with_via.pads = board.pads + sites.via_pads(pmap, rules)
+        assert [p.centre for p in with_via.pads if p.is_via] == [pytest.approx(to)]
+        straighten(state, with_via)
+        assert state.invariant_errors() == [] and map_errors(pmap) == []
+        lines, violations, wire_net = realize(state, with_via)
+        assert violations == []
+        own = [w for w in lines if wire_net[w] == 1]
+        assert len(own) == 1 and min(math.dist(lines[own[0]][0], to), math.dist(lines[own[0]][-1], to)) < 1e-9
+        gap = min(LineString(lines[w]).distance(copper) for w in lines if wire_net[w] != 1)
+        assert gap >= rules.clearance + rules.trace_width / 2.0 - 1e-3
+
