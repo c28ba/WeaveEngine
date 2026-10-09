@@ -32,6 +32,7 @@ class Path:
     routes: list[Route]
     joints: list = field(default_factory=list)
     cost: float = 0.0
+    first: dict | None = field(default=None, repr=False)  # per layer, what the search from the connection's pad found (``find``)
 
     @classmethod
     def on_one_layer(cls, r: Route) -> "Path":
@@ -126,7 +127,7 @@ def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float, 
     return (np.stack([x, y], axis=1), cost, np.stack([np.full(len(tris), la), tris], axis=1)) if len(x) else None
 
 
-def _seeds(ctx, sources: dict, onto, goal, bound: float, onward: float):
+def _seeds(ctx, sources: dict, onto, goal, bound: float, onward: float, been=None):
     """Where the next search, on layer ``onto``, may start: the via points of
     the other layers (``sources``, per layer) that have room on this one too
     and can still lead to a route cheaper than ``bound``. Returns (triangles
@@ -138,6 +139,10 @@ def _seeds(ctx, sources: dict, onto, goal, bound: float, onward: float):
     pmap = onto.pmap
     tris = locate(pmap, pts)
     at = np.nonzero((tris >= 0) & (cost + onward * np.hypot(pts[:, 0] - goal[0], pts[:, 1] - goal[1]) < bound))[0]
+    if been is not None:
+        # A search has been in the middle of that triangle on this layer for no more: all that
+        # leads on from there it has found for less, or it stopped because nothing of it was wanted.
+        at = at[cost[at] < been[tris[at]]]
     at = at[kernel.rooms(pmap.tri_v, pmap.vx, pmap.vy, onto.state.corner, pmap.pitch, sites.keep_off(ctx.board.rules),
                          sites.MIN_ROOM * sites.SITE_RADIUS, tris[at], np.ascontiguousarray(pts[at, 0]), np.ascontiguousarray(pts[at, 1]))]
     return (tris[at], cost[at], pts[at], source[at]) if len(at) else None
@@ -156,7 +161,8 @@ def place(ctx, conn, path: "Path | None", **how) -> bool:
         struck += path.vias
         if not path.vias:
             how["through"] = False
-        path = find(ctx, conn, struck=struck, **how)
+        # Nothing has changed (a refused plan leaves no trace), so the searches from the pad stand.
+        path = find(ctx, conn, struck=struck, first=path.first, **how)
     return False
 
 
@@ -184,6 +190,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     # no copper but this connection's; else next to nothing, since it may lead along that copper.
     onward = 1.0 if conn.net_id in ctx.pairs else kernel.RIDE
     best = None  # (cost, hop, layer, route)
+    from_pad: dict = {}
     reached = {}  # per layer: what the search saw, the via points it started from, the layer each pad it started from was reached on
     for layer in ctx.layers:
         if conn.src not in layer.pmap.pad_edges:
@@ -192,9 +199,16 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
             r, seen = first[layer.index]
         else:
             r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, penalty=penalty.get(layer.index), bound=bound, **search)
+        from_pad[layer.index] = (r, seen)
         reached[layer.index] = (seen if changes else None, None, {})
         if r is not None and (best is None or r.cost < best[0]):
             best = (r.cost, 0, layer.index, r)
+    # Per layer, per triangle: the least cost at which a search has been in its middle.
+    # (A search made before a via was tried has fewer triangles on record: the tables grow, 12.5.)
+    been = {layer.index: np.full(layer.pmap.num_triangles, np.inf) for layer in ctx.layers}
+    for la, (seen, _, _) in reached.items():
+        if seen is not None:
+            been[la][:len(seen.best)] = seen.best
     hops = [reached]
     taken = _taken(ctx, struck) if max_vias else None
     had: dict[tuple[int, int], float] = {}  # (layer, pad of the net) -> the least cost at which a search has been at it there
@@ -210,7 +224,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
                     pads[pad] = (cost, la)
         reached = {}
         for layer in ctx.layers:
-            seeds = _seeds(ctx, sources, layer, goal, limit, onward)
+            seeds = _seeds(ctx, sources, layer, goal, limit, onward, been[layer.index])
             # A pad the net has on this layer too is where the route may go on here, unless a search has been at it here for less.
             starts = {pad: (cost, la) for pad, (cost, la) in pads.items()
                       if la != layer.index and pad in layer.pmap.pad_edges and cost < had.get((layer.index, pad), math.inf)}
@@ -222,6 +236,8 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
                             seeds=None if seeds is None else (tris, cost, pts[:, 0], pts[:, 1]),
                             bound=limit, penalty=penalty.get(layer.index), **search)
             reached[layer.index] = (seen if hop < changes else None, (pts, source), {pad: la for pad, (_, la) in starts.items()})
+            if seen is not None:
+                np.minimum(been[layer.index], seen.best, out=been[layer.index])
             if r is not None and (best is None or r.cost < best[0]):
                 best = (r.cost, hop, layer.index, r)
         if not reached:
@@ -252,5 +268,5 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     for part, joint in zip(chain[::-1], [*joints[::-1], None]):
         routes += part.routes
         between += part.joints + ([joint] if joint is not None else [])
-    return Path(routes, between, cost)
+    return Path(routes, between, cost, from_pad if through else None)
 

@@ -154,7 +154,7 @@ def _slot(pmap: PlanarMap):
 
     pmap.tri_v, pmap.tri_e, pmap.tri_n = more(pmap.tri_v, 5), more(pmap.tri_e, 5), more(pmap.tri_n, 5)
     pmap.vx, pmap.vy, pmap.v_obs = more(pmap.vx, 3), more(pmap.vy, 3), more(pmap.v_obs, 3)
-    for name in ("edge_v", "edge_t", "edge_len", "edge_mid", "edge_kind", "edge_owner", "edge_cap", "edge_width"):
+    for name in ("edge_v", "edge_t", "edge_len", "edge_mid", "edge_kind", "edge_owner", "edge_cap", "edge_width", "edge_changed"):
         if getattr(pmap, name) is not None:
             setattr(pmap, name, more(getattr(pmap, name), 9))
     pmap.tri_v_list += [(0, 0, 0)] * 5
@@ -232,9 +232,11 @@ def _repoint(pmap: PlanarMap, edge: int, nbr: int, was: int, now: int) -> None:
 
 def _refresh(pmap: PlanarMap, edges) -> None:
     """These edges have changed: what the map derives from them is out of date."""
+    edges = list(edges)
     pmap.stale.update(edges)
     pmap.moved = True
     pmap.changes += 1
+    pmap.edge_changed[edges] = pmap.changes
 
 
 def _register(pmap: PlanarMap, site: Site, hole_xy) -> None:
@@ -1031,6 +1033,7 @@ def set_net(pmap: PlanarMap, state: TopoState, site: Site, net: int, keep: float
     site.net, site.keep = net, keep
     pmap.pad_net[site.pad] = net
     pmap.changes += 1
+    pmap.edge_changed[[*site.spokes, *site.hole]] = pmap.changes  # what passes it keeps another distance, what ends on it is of another net
     for e in (*site.spokes, *site.hole):
         state.load[e] = state.tally(e)  # the traces of its net that lie against it count while it sleeps, and not while it is a via
     for e in site.spokes:

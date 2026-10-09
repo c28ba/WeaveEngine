@@ -94,6 +94,7 @@ class PlanarMap:
         self.stale: set[int] = set()  # edges changed since the transitions were last brought up to date
         self.moved = True             # triangles changed since the grid for locating points was filled
         self.changes = 0              # counts the changes made to the map since it was built
+        self.edge_changed = np.zeros(self.num_edges, dtype=np.int64)  # per edge: ``changes`` when it, or a triangle at it, last changed
 
     def catch_up(self) -> None:
         """Brings the transitions, and the compiled search's copy of them, up

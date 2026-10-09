@@ -258,12 +258,12 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     # hopped round its pad, a disc added by the repair), so both are kept
     # while no wire has come or gone on any of the wire's gates.
     memo = _kept(state, board)
-    stamp = state.stamp
+    stamp, changed = state.stamp, pmap.edge_changed
     sleeves, first, fresh = {}, {}, {}
     for w, steps in state.wire_path.items():
         had = memo.get(w)
-        if had is None or stamp[had[1]].max() > had[0]:
-            had = memo[w] = (state.epoch, np.fromiter((step[0] for step in steps), dtype=np.int64, count=len(steps)),
+        if had is None or stamp[had[1]].max() > had[0][0] or changed[had[1]].max() > had[0][1]:
+            had = memo[w] = ((state.epoch, pmap.changes), np.fromiter((step[0] for step in steps), dtype=np.int64, count=len(steps)),
                              [(*disc, i) for i, disc in enumerate(sleeve(w))], {})
         fresh[w] = had
         sleeves[w] = discs = list(had[2])
@@ -318,12 +318,14 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
 
 def _kept(state: TopoState, board: Board) -> dict:
     """What ``relax`` keeps from one run to the next, per wire: (the state's
-    epoch when it was worked out, the wire's gates, its discs, its first pull
-    by the discs the repair has added). Emptied when the map or the rules
-    have changed."""
-    rules, pmap = board.rules, state.map
-    key = (pmap.changes, rules.pitch, rules.clearance, tuple(sorted(rules.net_width.items())),
-           tuple(sorted((p.pad_id, p.net_id) for p in board.pads if p.is_via)))
+    and the map's count of changes when it was worked out, the wire's gates,
+    its discs, its first pull by the discs the repair has added). A wire's
+    entry holds while no wire has come or gone on any of its gates and the map
+    has not changed at any of them (a via made, moved, woken or taken out
+    changes the edges round it, and the wires that pass a via cross those).
+    Emptied when the rules have changed."""
+    rules = board.rules
+    key = (rules.pitch, rules.clearance, tuple(sorted(rules.net_width.items())))
     kept = state.__dict__.get("_relaxed")
     if kept is None or kept[0] != key:
         kept = state.__dict__["_relaxed"] = (key, {})
