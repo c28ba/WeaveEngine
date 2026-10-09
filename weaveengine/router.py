@@ -142,8 +142,10 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats)
 
 
-# Search settings of the raced variants: (heuristic weight). Variant 0 is the plain configuration.
-VARIANTS = (1.0, 1.5, 1.25, 1.75, 1.0, 2.0, 1.5, 1.25)
+# Settings of the raced variants: (search weighting, growth of the price of an over-full gate per round).
+# Variant 0 is the plain configuration. No two are alike: the seed by itself changes nothing
+# (measured, 22), so a variant that repeats another's settings repeats its routing.
+VARIANTS = ((1.0, 1.5), (1.5, 1.5), (1.25, 1.5), (1.75, 1.5), (1.0, 1.8), (2.0, 1.5), (1.5, 1.8), (1.25, 1.8))
 HEAT = 4
 SETTLE_AGAIN = 3  # times the routing is settled after repair before it is left as repair had it
 
@@ -152,8 +154,8 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool):
     """One routing pass, raced over several variants (section 22).
 
     How a pass ends depends strongly on small differences early on, so the
-    spare cores each run the whole pass with a different seed and search
-    weighting. The first variant, in their fixed order, that connects
+    spare cores each run the whole pass with a different search weighting
+    and price growth. The first variant, in their fixed order, that connects
     everything is taken (the plain configuration is first, so nothing is lost
     when it succeeds); if none does, the best is kept: fewest open connections,
     then shortest. The choice does not depend on which finishes first.
@@ -196,7 +198,7 @@ def _variant_task(shared, index: int):
     ctx.stop = stop
     ctx.seed += index
     ctx.variant = index
-    ctx.params.h_weight = VARIANTS[index % len(VARIANTS)]
+    ctx.params.h_weight, ctx.params.pres_growth = VARIANTS[index % len(VARIANTS)]
     if index:
         ctx.progress = None  # the console bar follows the plain variant; live events come from all of them
     try:
