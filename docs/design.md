@@ -344,15 +344,15 @@ Not built: places counted between runs rather than wires (a gate holds 15 wires 
 
 | Board | Routed | Vias | Copper | Time |
 |---|---|---|---|---|
-| Word of RAM | 85 of 85, as before | 0, as before | 2002 to 1972 mm | 1.9 s, as before |
-| ALU | 409 of 409, as before | 18 to 8 | 11,556 to 10,862 mm | 15.4 to 19.2 s |
-| ulx3s (6 perturbed runs, all alike) | 201 of 203, as before | 38 to 31 | 1457 to 1539 mm | 11.2 to 9.4 s |
-| blinkSP1 (18 perturbed runs) | 48 (47 to 51) to 55 (47 to 58) of 58 | 31 (29 to 38) to 35 (21 to 43) | 973 to 1129 mm | 5.7 to 5.1 s |
-| RAM Selector Tree (one run) | 394 to 400 of 400 | 175 to 119 | 25,836 to 22,952 mm | 200 to 161 s |
+| Word of RAM | 85 of 85, as before | 0, as before | 2002 to 1972 mm | 1.7 to 1.8 s |
+| ALU | 409 of 409, as before | 18 to 8 | 11,556 to 10,862 mm | 14.6 to 15.3 s |
+| ulx3s (6 perturbed runs, all alike) | 201 of 203, as before | 38 to 31 | 1457 to 1539 mm | 10.4 to 8.4 s |
+| blinkSP1 (18 perturbed runs) | 48 (47 to 51) to 55 (47 to 58) of 58 | 31 (29 to 38) to 35 (21 to 43) | 973 to 1129 mm | 5.4 to 4.9 s |
+| RAM Selector Tree (one run) | 394 to 400 of 400 | 175 to 119 | 25,836 to 22,952 mm | 207 to 160 s |
 
 - blinkSP1 is the board the open item of 12.7 was about (a net changes layer once and branches). With the layer change at the net's own copper switched off and everything else as it is: 52 (47 to 56) routed, 40 vias. With raced variants from the command line it routed 58 of 58 in both runs made, with 38 and with 50 vias (ulx3s, raced: 203 of 203 with 36); the routing saved in its file makes 51.
 - RAM Selector Tree, three nets of 73, 35 and 19 through-hole pads, is where a net's own copper is most of the board: complete for the first time on this code, with a third fewer vias. Two earlier versions of this work gave 398 and 399 of 400 with 140 and 139 vias, so the gain is not one draw.
-- ALU is slower because there is more to do: more searches (a route may go on at a pad), and more wires to draw, since a connection through a pad is two.
+- The times are with what relaxation keeps between runs (13.1), measured in turn with the program before (medians of three for the first three boards). Without that ALU took 19.2 s: there is more to do, more searches (a route may go on at a pad) and more wires to draw, since a connection through a pad is two.
 - ulx3s is not steady: 203 of 203 came out in two of the intermediate versions and 201 in the last, with between 1539 and 1761 mm of copper. Nothing here was tuned to it.
 
 *Limits.*
@@ -705,6 +705,8 @@ A disc inside another on the same side is never touched and is dropped. Where di
 Anything else of the kind is found by the check and repaired (13.2). (For a short while a second case was built in as well, the next vertex along an obstacle that the bundle inside a wire goes round. The repair of 13.2 does the same work: without the built-in case the saved RAM Selector Tree routing has 5 violations at the first check instead of 1 and none after repair either way, and the five boards route the same. It was removed.)
 
 **Cost.** RAM Selector Tree, 583 traces on two layers: 0.3 s per layer for relaxation, 0.1 s for the check.
+
+**Kept from one run to the next.** A layer is relaxed many times in which little has changed: once per round while ends are hopped round their pads (up to eight), once per repair (up to four), and again after every settling. A wire's discs follow from the wires on its own gates and from the map, and its first pull from its discs; so both are kept per wire while no wire has come or gone on any of its gates (`TopoState.stamp`, the state's count of changes written to each gate a wire comes to or leaves) and the map stands (`relax._kept`). The results are the same to the last digit. On ALU, of 54,000 computations of a wire's discs 4,700 are left, and the run takes 15.3 s instead of 19.2.
 
 ### 13.2 DRC and repair
 
