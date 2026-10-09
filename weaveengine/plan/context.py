@@ -543,18 +543,20 @@ class Context:
         return len(self.unrouted) + sum(l.state.overflow(e) for l in self.layers for e in l.state.overflowed_gates())
 
     @staticmethod
-    def wire_copper(layer: Layer, w: int) -> float:
+    def wire_copper(layer: Layer, w: int, first: bool = False) -> float:
         """The copper one wire adds to its net's: its length through the
         middles of its gates, of which a stretch beside another wire of its
         net counts as the search counts it (``kernel.RIDE``): next to nothing,
-        for there it is the same trace."""
+        for there it is the same trace. ``first``: only beside a wire that
+        came before it (a lower id), so that over all wires a shared trunk is
+        counted once."""
         mids, order, nets = layer.pmap.edge_mid_list, layer.state.gate_order, layer.state.net
         net = nets.get(w, -1)
         total, last, rode = 0.0, None, False
         for e, _, _, _ in layer.state.wire_path[w]:
             row = order[e]
             i = row.index(w)
-            rides = net >= 0 and ((i > 0 and nets.get(row[i - 1], -1) == net) or (i + 1 < len(row) and nets.get(row[i + 1], -1) == net))
+            rides = net >= 0 and any(nets.get(x, -1) == net and (x < w or not first) for x in row[max(i - 1, 0):i + 2] if x != w)
             if last is not None:
                 total += math.dist(mids[last], mids[e]) * (kernel.RIDE if rides and rode else 1.0)
             last, rode = e, rides
@@ -570,10 +572,5 @@ class Context:
         return out
 
     def estimated_length(self) -> float:
-        total = 0.0
-        for layer in self.layers:
-            mids = layer.pmap.edge_mid_list
-            for path in layer.paths.values():
-                g = path.gates
-                total += sum(math.hypot(mids[a][0] - mids[b][0], mids[a][1] - mids[b][1]) for a, b in zip(g, g[1:]))
-        return total
+        """The copper of the routing as it stands, through the middles of the gates; a trunk wires of one net share is counted once."""
+        return sum(self.wire_copper(layer, w, first=True) for layer in self.layers for w in layer.state.wire_path)

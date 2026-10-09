@@ -319,7 +319,48 @@ Measured, one variant, all results clean:
 
 Little of ALU's saving is copper that coincides (100 to 200 mm): routes come out shorter. RAM Selector Tree takes twice as long because rip-up goes on finding better states (its last improvement comes at 19 minutes instead of 8) and only then stalls. On blinkSP1 rip-up never settles with or without riding (20 to 30 wires ripped up every round to the end), so the result is the best state it happened to pass; riding changes which, not whether. Three things suspected of riding were checked and are not so: a trunk ripped up leaving its rider to overflow (a removal cannot raise a load; a foreign wire going between trunk and rider happens 140 times in 71,000 crossings and never put a gate over), searches being slower (same number and cost), and bad geometry on RAM Selector Tree (a gap in the string kernel, 13.1, since closed).
 
-Not built: places counted between runs rather than wires (a gate holds 15 wires in the search, riders included); riding through the trunk's via; merging coincident segments in the output.
+Not built: places counted between runs rather than wires (a gate holds 15 wires in the search, riders included); merging coincident segments in the output.
+
+**Its net's copper (built).** Three things were seen, all of one kind. Two traces of a net ran side by side, or took separate ways, where one trace would plainly have done. Two connections of a net never used the same via. And a trace went round a pad of its own net that stood in its way. On the five boards they are rare, so each was first made to happen on a small board of its own (`tests/test_own_copper.py`).
+
+*Why.* A connection could touch the copper of its net at its own two pads and nowhere else, and two places that judge a route did not know that copper beside its net is free.
+
+1. *The search's estimate.* Riding makes a length beside the net's own wire cost a twentieth, but the estimate of what is left (8.4) took the straight line in full. A way that first leads away from the goal, to the net's trace, and then along it, looked dearer than it is by nearly the whole ride, so the goal was reached by the direct way first and the search stopped. Riding was only found where the trace lay on the direct way. (On the test board: 72 mm of new trace round a wall and back, where about 40 mm to the trace on the far side and the rest along it would do.)
+2. *Refinement.* Phase 4 moved a wire only if its route came out shorter, measured through the middles of its gates. A route that joins its net's trace is usually longer and adds less copper. Phase 1 plans on the empty board, where there is nothing to ride on, and Phase 2 puts those plans in as they are; so whatever the first two phases laid side by side stayed side by side. Counted on ALU, for each single-layer wire of a multi-pin net, by taking it out and searching exactly: 104 of 261 had a route adding less copper than the one in place (148 mm in all), 9 of them missed by the estimate alone.
+3. *Pads and vias.* A pad edge was a wall to every wire but the one that ends there (the same-net rule of section 5), and a via's edges belong to its pad id. A wire could therefore neither pass a pad of its net nor come to a via of its net, and the layer change a net already had was of no use to its other connections (12.7, "still open").
+
+*What is done.*
+- **The estimate knows the net's wires** (8.4): of the straight line, only the way to the nearest wire of the net has to be new.
+- **One measure, copper** (`Context.wire_copper`): a wire's length through the middles of its gates, a stretch beside a wire of its net counted as the search counts it. Refinement and the tidying of vias (13.2a) compare this, and the best state rip-up keeps is the one with least of it (a shared trunk counted once). Refinement and tidying are now one routine (`ripup._replan`): lift the connection, plan it again, keep the plan if it adds less, else put it back exactly.
+- **A pad of the net is a junction.** With `through`, the search may cross a pad edge of its net, and goes on from every edge of that pad (`kernel.astar`, `THROUGH`). What it returns is then in pieces (`Route.lead`), each an ordinary wire from pad to pad, as a route through vias is in pieces. `Path.joints` holds what lies between consecutive pieces: a point, where a via is to be made, or the id of a pad or via that is there. Phase 1 candidates stay in one piece.
+- **A pad or via the net has on two layers is a change of layer.** A search reports the pads of its net it came to; the next search of the chain (12.3) starts from those on its own layer, at the cost so far and no price for a via. So a connection goes down the via another connection of its net made, or through a through-hole pad of its net.
+- **A via stays while any trace is on it.** `Connection.sites` are the vias a connection has pieces on, made for it or not; `Context.rip` deletes one only when no trace of another connection ends on it.
+- **Against a via of its own net a trace takes no room.** A wire that came to a via from outside used to be put through its nearest spoke by hand (`sites.leave`, `arrive`), and its weight added back to that spoke's capacity. Now any wire of the net may come to the via by any spoke, so the rule is general: the run of wires of the via's net at the via's end of a gate is not counted in the gate's load (`TopoState.tally`), and that place is one beside the net's copper for the search. The add-back is gone.
+- Pieces of one plan that use a gate in common (a route that leaves a pad beside the piece it came by) are found again in those gates once the earlier pieces are in, since their places there were not known (`Context.commit`). Lifting a connection records each piece's place among the pieces before it, not among all of them: put back in order with the old rule, two pieces on one gate could change places (found by the invariant check on Word of RAM).
+
+*What a via is worth here.* While the board is negotiated a new via costs more than any detour (9), so a connection will go a long way round to a via its net has. Tidying puts that right in one direction only, as before: a connection may be planned with as many new vias as the vias it goes through now, its own or borrowed, each new one at `via_worth`. So a borrowed via is given up for one of its own when the way round by it is longer than a via is worth, and a connection that goes through no via is never given one. Letting tidying add a via wherever it saved more copper than its worth was tried: ALU went from 18 vias to 134 and Word of RAM from 0 to 14, for a fifth less copper. Not kept: that is the opposite of 13.2a. Allowing as many new vias as the connection changes layer (through-hole pads included) gave Word of RAM 2 vias it does not need. Not kept either.
+
+*Measured*, one variant, against the program before; every result clean, and the written files of the first four measure clean. Copper is what is drawn, a shared trunk once (`stats["copper"]`; `stats["length"]` adds up every wire and so counts it twice).
+
+| Board | Routed | Vias | Copper | Time |
+|---|---|---|---|---|
+| Word of RAM | 85 of 85, as before | 0, as before | 2002 to 1972 mm | 1.9 s, as before |
+| ALU | 409 of 409, as before | 18 to 8 | 11,556 to 10,862 mm | 15.4 to 19.2 s |
+| ulx3s (6 perturbed runs, all alike) | 201 of 203, as before | 38 to 31 | 1457 to 1539 mm | 11.2 to 9.4 s |
+| blinkSP1 (18 perturbed runs) | 48 (47 to 51) to 55 (47 to 58) of 58 | 31 (29 to 38) to 35 (21 to 43) | 973 to 1129 mm | 5.7 to 5.1 s |
+| RAM Selector Tree (one run) | 394 to 400 of 400 | 175 to 119 | 25,836 to 22,952 mm | 200 to 161 s |
+
+- blinkSP1 is the board the open item of 12.7 was about (a net changes layer once and branches). With the layer change at the net's own copper switched off and everything else as it is: 52 (47 to 56) routed, 40 vias. With raced variants from the command line it routed 58 of 58 in both runs made, with 38 and with 50 vias (ulx3s, raced: 203 of 203 with 36); the routing saved in its file makes 51.
+- RAM Selector Tree, three nets of 73, 35 and 19 through-hole pads, is where a net's own copper is most of the board: complete for the first time on this code, with a third fewer vias. Two earlier versions of this work gave 398 and 399 of 400 with 140 and 139 vias, so the gain is not one draw.
+- ALU is slower because there is more to do: more searches (a route may go on at a pad), and more wires to draw, since a connection through a pad is two.
+- ulx3s is not steady: 203 of 203 came out in two of the intermediate versions and 201 in the last, with between 1539 and 1761 mm of copper. Nothing here was tuned to it.
+
+*Limits.*
+- **Two wires on one stretch each count it as shared.** Where two connections of a net ride each other and neither has a wire of its own underneath, each one's copper there is next to nothing, so neither is moved alone though moving both would save the stretch (seen on a board made for it: three back pads fed from one via beside the first of them).
+- **Where a shared via stands** is where the first connection put it.
+- **The estimate knows wires, not pads**, so it can be too high by a pad's width for a route through a pad. Marking the pads as well would make it exact and weaker wherever the net has a pad, which for a net of seventy pads is everywhere (not measured apart: RAM Selector Tree took 259 s with the pads marked and 211 s without, with other changes in between). Charging the way across a pad in full keeps it exact too, but put 5 % more copper on ALU (11,311 against 10,782 mm), where pads are large.
+- **A connection through a pad that is joined already is drawn twice there.** The piece from A to P beside the wire from A to P is that wire's copper; it is still its own wire, in the state and in the output. Nothing depends on anything, as with riding, at the price of more wires (a gate holds 15).
+- A connection still starts and ends on pads. It does not end on a trace of its net, and cannot cross one except at a pad.
 
 ---
 
@@ -379,7 +420,7 @@ Results (details in the M13 row of section 18): 10,000 random operations with th
 
 Known limits:
 - A point within 20 µm of a triangle's edge cannot hold a site (5 of 60 random positions). The caller nudges the point.
-- A via's own trace counts as load on the spokes it crosses, although it needs no keep-off from its own via. On a spoke shorter than the keep-off this under-states capacity.
+- A via's own trace counted as load on the spokes it crossed, although it needs no keep-off from its own via. Since section 11 ("Its net's copper") the wires of a via's net that lie against it are not counted there.
 - Capacity lowered by DRC feedback (`_penalise`) is overwritten when a site at that gate changes state or the gate is flipped.
 - `free_space` does not know about vias; only the end-straightening shortcut in relaxation reads it, and DRC checks its result.
 
@@ -391,7 +432,9 @@ Known limits:
 
 **Committing it** (`Context.commit`). For each via in order: its site is made on every layer (12.2) without settling its edges, so that the rest of the plan is still good; the piece ending on it is extended across the site's nearest spoke to the hole and inserted. Then the sites' edges are settled (`legalise`), which carries all wires. If a via turns out not to fit (a gate beside it would be over-full, a later piece passes a triangle an earlier via went into, two pieces on one layer share a gate), everything is taken out again in reverse order and the route is planned once more without that point (`path.place`). A trace may over-fill a gate for rip-up to sort out; a via may not.
 
-**The connection** then consists of pieces, each an ordinary connection from pad or via to via or pad, with the original as parent (`Connection.pieces`, `.sites`). `Context.rip` on any of them removes them all and deletes the vias from the maps (12.5 step 2).
+**The connection** then consists of pieces, each an ordinary connection from pad or via to via or pad, with the original as parent (`Connection.pieces`, `.sites`). `Context.rip` on any of them removes them all and deletes the vias from the maps (12.5 step 2), except a via that a trace of another connection ends on.
+
+**Copper the net already has** (section 11, "Its net's copper"). A piece may also end on a pad or via of its net that is there already, and the next start from it, on the same layer or on another. Such a joint costs nothing and nothing is made for it.
 
 **Racing variants** hand their sites back through the map log (12.2); the parent replays it.
 
@@ -545,7 +588,7 @@ A price somewhat above the cap keeps the same number of connections, with a thir
 **Stopping the cycling.** Once nothing is over-full, rip-up stops after three rounds without improvement instead of eight. Same spread of results on `blinkSP1` (48, 45 to 50; 37 vias), 15 s a run instead of 18.
 
 **Still open.**
-1. A net changes layer once and branches: a connection may start from any via or through-hole pad its net already has. This is where the file's routing gets 1.65 vias per connection through vias; this router pays 2.
+1. A net changes layer once and branches: a connection may start from any via or through-hole pad its net already has. This is where the file's routing gets 1.65 vias per connection through vias; this router pays 2. **Done** (section 11, "Its net's copper").
 2. Run-to-run spread is still 45 to 50 connections and 32 to 48 vias.
 3. The repair after the design-rule check on `RAM Selector Tree` (below).
 
@@ -681,7 +724,7 @@ Anything else of the kind is found by the check and repaired (13.2). (For a shor
 
 **What is done.**
 - *A via has a worth* when a routing is tidied: the track it takes away, which is the width it keeps clear on every layer (`ripup.via_worth`; about 3 mm on blinkSP1). A route is better without a via if that makes it no more than this much longer. This is not the price of a via during negotiation (9), which would trade a via for a detour of many times its size, as was measured when that price was first used here.
-- *Each connection through vias is planned again with the fewest vias first*: as many as its pads force, then one more, up to what it has. A plan is measured as it will be once in (to and from each via counted), must be better by a pitch, and is skipped altogether if the connection is already within a pitch of the straight line with the vias its pads force. Repeated while any connection comes out better (three times at most): one that moves leaves room for another.
+- *Each connection through vias is planned again with the fewest vias first*: none (its net may have a change of layer it can use, section 11), then one more, up to as many as it goes through. Routes are compared by the copper they add, not by length, and a via counts at its worth only if no other connection has a trace on it. A plan is measured as it will be once in (to and from each via counted), must be better by a pitch, and is skipped altogether if the connection is already within a pitch of the straight line with the vias its pads force. Repeated while any connection comes out better (three times at most): one that moves leaves room for another.
 - *After repair the routing is settled once more.* If the check then objects, it is done again from where it stood, leaving alone the connections whose traces the check names (three times at most, then left as repair had it).
 - *No copy of the board per attempt.* The connection is lifted (`Context.lift`: its pieces with their places on every gate, its vias, the marks of the maps' logs) and put back exactly (`Context.put_back`) if nothing better is found. A plan that is put in can be refused from inside `commit` (`within`), which then undoes itself as it does for a via that does not fit. Before this, every attempt took a snapshot of the whole board and most restored it: 48 of 73 s on RAM Selector Tree.
 - Found by the test of the exact put-back: deleting a site emptied the journal of what it had done to the wires whenever nobody else had written in it, so that it could never be undone. The journal is now emptied once a round by the planner. Also seen there and not yet traced: the stored capacity of a gate between two vias can be one wire too low (it errs on the safe side).

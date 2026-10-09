@@ -111,6 +111,34 @@ def test_waking_a_site_takes_its_keep_off_from_the_spokes(grid):
     assert [state.cap[e] for e in site.spokes] == asleep and sites.via_pads(pmap, board.rules) == []
 
 
+def test_a_trace_against_a_via_of_its_net_takes_no_room_there(grid):
+    """The via keeps its room clear for foreign traces; a trace of its own net
+    that lies against it is the via's copper (design section 11)."""
+    board, pmap = grid
+    state = TopoState(pmap)
+    t = max(range(pmap.num_triangles), key=lambda t: sites.room(pmap, t, sites.incentre(pmap, t)))
+    site = sites.create(pmap, state, t, sites.incentre(pmap, t))
+    sites.set_net(pmap, state, site, 3, sites.keep_off(board.rules))
+    r = route(pmap, state, 0, site.pad, net=3)
+    state.insert(1, r.steps, net=3)
+    spokes = [e for e in r.gates if e in site.spokes]
+    assert spokes and all(state.load[e] == 0.0 for e in spokes)
+    assert all(state.load[e] == 1.0 for e in r.gates[1:-1] if e not in site.spokes)   # everywhere else it counts
+    # The place against the via is one beside the net's copper, for the next wire of the net.
+    beside = state.beside(3)
+    assert all(beside[e] for e in site.spokes)
+    # A second trace of the net comes to the via as well. Were they of another net, they would count.
+    state.insert(2, route(pmap, state, 1, site.pad, net=3).steps, net=3)
+    mine = [e for e in site.spokes if state.gate_order[e]]
+    assert all(state.load[e] == 0.0 == state.tally(e) for e in mine)
+    state.net[1] = state.net[2] = 5
+    assert all(state.tally(e) == 1.0 for e in mine)
+    state.net[1] = state.net[2] = 3
+    state.remove(2), state.remove(1)
+    sites.set_net(pmap, state, site, -1)
+    assert all(state.load[e] == 0.0 for e in site.spokes) and state.check_invariants()
+
+
 def test_random_operations_keep_the_invariants():
     """M13 acceptance: 10,000 random inserts, removes, new sites, and sites woken
     and put to sleep; the invariant of 7.2 after every one, the map's own tables

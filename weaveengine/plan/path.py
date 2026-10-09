@@ -197,6 +197,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
             best = (r.cost, 0, layer.index, r)
     hops = [reached]
     taken = _taken(ctx, struck) if max_vias else None
+    had: dict[tuple[int, int], float] = {}  # (layer, pad of the net) -> the least cost at which a search has been at it there
     for hop in range(1, changes + 1):
         limit = best[0] if best else bound
         sources = {la: _via_points(ctx, la, seen, goal, limit, taken, via_cost, onward)
@@ -204,12 +205,16 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
         pads: dict[int, tuple[float, int]] = {}  # copper of the net that was reached: pad -> (cost, on which layer)
         for la, (seen, _, _) in reached.items():
             for pad, (cost, _) in (seen.pads.items() if seen is not None else ()):
+                had[la, pad] = min(cost, had.get((la, pad), math.inf))
                 if cost < limit and cost < pads.get(pad, (math.inf, 0))[0]:
                     pads[pad] = (cost, la)
         reached = {}
         for layer in ctx.layers:
             seeds = _seeds(ctx, sources, layer, goal, limit, onward)
-            starts = {pad: (cost, la) for pad, (cost, la) in pads.items() if la != layer.index and pad in layer.pmap.pad_edges}
+            # A pad the net has on this layer too is where the route may go on here, unless a search has been at it here for less.
+            starts = {pad: (cost, la) for pad, (cost, la) in pads.items()
+                      if la != layer.index and pad in layer.pmap.pad_edges and cost < had.get((layer.index, pad), math.inf)}
+            had.update({(layer.index, pad): cost for pad, (cost, _) in starts.items()})
             if seeds is None and not starts:
                 continue
             tris, cost, pts, source = seeds if seeds is not None else (None, None, None, None)
