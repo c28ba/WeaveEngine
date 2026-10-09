@@ -26,8 +26,10 @@ a = Analysis(
               "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf"],
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="WeaveEngine", console=False, upx=False)
+# The icon: assets/icon.png, as an .icns for macOS (made from it with iconutil; other systems take the PNG).
+icon = "assets/WeaveEngine.icns" if sys.platform == "darwin" else "assets/icon.png"
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="WeaveEngine", console=False, upx=False, icon=icon)
 coll = COLLECT(exe, a.binaries, a.datas, name="WeaveEngine", upx=False)
 if sys.platform == "darwin":
-    app = BUNDLE(coll, name="WeaveEngine.app", bundle_identifier="org.weaveengine.app",
+    app = BUNDLE(coll, name="WeaveEngine.app", icon=icon, bundle_identifier="org.weaveengine.app",
                  info_plist={"NSHighResolutionCapable": True, "CFBundleShortVersionString": "0.1.0"})
