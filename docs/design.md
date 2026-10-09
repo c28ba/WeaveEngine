@@ -102,7 +102,7 @@ Single net class in v1: trace width `t`, spacing `s`.
 2. **Inflate for centreline routing.** A wire centreline must stay at least `s + t/2` from foreign copper, so inflate every obstacle by `s + t/2` (`shapely.buffer`, with `join_style=mitre` limited, or round with a low `resolution`). In inflated space a wire is a zero-width curve. Shrink the board outline inward by `edge_clearance + t/2`.
 3. **Merge overlapping inflated obstacles** (`unary_union`). Overlap means no centreline fits between them. Each merged piece gets an integer **obstacle id**. The outline is obstacle id 0.
 4. **Terminal ownership.** For each pad, record which segments of the (merged) obstacle boundary lie on that pad's own inflated boundary. A wire of net N may start or end only through boundary segments owned by a pad of net N. All other boundary segments are walls for N.
-5. **Same-net rule (v1):** a wire never passes over another pad of its own net; it may end on one. Multi-pin nets are handled in section 11.
+5. **Same-net rule:** a pad of a wire's own net is that net's copper. The wire may end on it, and it may run into it and go on from any of its edges (section 11, "Its net's copper"). Until then (v1) it could only end on one, and went round every other.
 
 ---
 
@@ -194,7 +194,7 @@ From node `(h, p)` in triangle `t`, for each of the two other edges `b` of `t`:
 
 ### 8.4 A*
 
-- Heuristic: Euclidean distance from the current edge midpoint to the nearest target-pad point (use the target pad's centroid distance minus its radius, which is admissible; weight it 1.0).
+- Heuristic: Euclidean distance from the current edge midpoint to the nearest target-pad point (the target pad's centroid distance minus its radius; weight 1.0). That is admissible only while every length costs in full. Beside copper of its own net a wire costs a twentieth (11), so for a net that has copper on the layer the estimate is: of the straight line `d`, only the way to the nearest of that copper, `f`, has to be new, `RIDE * d + (1 - RIDE) * min(d, f)` (`kernel.estimate`). `f` is read from a coarse map (64 cells along the board's longer side, a cell's diagonal taken off so that it never says too much), made by one distance transform per net and kept while neither the wires nor the map change (`search._own`).
 - Priority queue: `heapq` with `(f, counter, node)`. Costs are floats; `counter` breaks ties.
 - Reuse `dict`s per search; clear instead of reallocating.
 - Return the gate/slot sequence, or `None`.
@@ -208,8 +208,9 @@ When no feasible path exists, run the same search with the feasibility check rel
 ### 8.6 Seeds, reach and bound (for routes across layers, 12.3)
 
 There is one search (`topo/kernel.py` `astar`, read by `topo/search.py` `route`). It always runs on one layer. Three additions let a chain of them route across layers:
+- **Starts at a cost.** Besides the connection's pad at cost 0, it may start from other pads of its net, each at the cost at which a search on another layer came to it (11): a through-hole pad or a via the net already has is a change of layer that costs nothing.
 - **Seeds.** Besides a pad's edges, it may start from points: (triangle, cost so far, x, y). A seed stands in the *middle cell* of its triangle, the part no wire has cut off, which is where a via site would be put. Its start nodes cross each edge of the triangle outwards at the slot between the wires cutting the two corners.
-- **Reach.** On the way it records, per triangle, the cheapest cost at which the middle cell was reached, and how. Because the search is A* with an admissible heuristic, every triangle through which a via could lead to a cheaper route has been reached by the time the goal is.
+- **Reach.** On the way it records, per triangle, the cheapest cost at which the middle cell was reached, and how; and, per pad of its net, the cheapest cost at which it came to that pad. Because the search is A* with an admissible heuristic, every triangle through which a via could lead to a cheaper route has been reached by the time the goal is. (With riding this was not so until the estimate above knew of it.)
 - **Bound.** It gives up on anything that cannot cost less than a bound the caller already has.
 
 Without numba the same function runs as plain Python (there is no second implementation).

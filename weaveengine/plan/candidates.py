@@ -76,10 +76,11 @@ def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict |
     params = ctx.params
     layer = ctx.layers[li]
     pmap, state = layer.pmap, layer.state
-    if plain is None:
+    first = None
+    if plain is not None:  # the search ``find`` starts with: it may go through pads of its net, which a candidate does not
+        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, through=True)
+    if first is None or first.lead:
         first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id)
-    else:
-        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True)
     if first is None:
         return []
     found = {first.gates: first}
@@ -196,7 +197,7 @@ def best_route(ctx: Context, conn: Connection) -> Path | None:
     else:
         direct = plain_route(ctx, conn)
     through = find(ctx, conn, first=first) if ctx.vias else None
-    if through is not None and through.vias and (direct is None or through.cost < direct.cost):
+    if through is not None and through.joints and (direct is None or through.cost < direct.cost):
         return through
     return Path.on_one_layer(direct) if direct is not None else through
 
@@ -219,8 +220,8 @@ def _best_task(ctx: Context, wire_id: int) -> Path | None:
 
 def replay(ctx: Context, conn: Connection, path: Path) -> Path | None:
     """The same gate sequence on the present state (slots recomputed), or None
-    if it no longer fits. A route through vias is not replayed but planned again."""
-    if path.vias:
+    if it no longer fits. A route in pieces is not replayed but planned again."""
+    if path.joints:
         return None
     r = path.routes[0]
     layer = ctx.layers[r.layer]

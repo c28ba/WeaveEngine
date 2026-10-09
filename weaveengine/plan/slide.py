@@ -27,8 +27,9 @@ def slide(ctx, lines: dict, violations: list, wire_net: dict, realize):
     the board's copper shorter and the check no worse. ``realize(ctx)`` gives
     the geometry of the routing as it stands. Returns (lines, violations,
     wire_net) of the result."""
-    legs = {pad: (conn.pieces[i], conn.pieces[i + 1])
-            for conn in ctx.conns.values() if conn.parent is None for i, pad in enumerate(conn.sites)}
+    # A via's two traces: a piece that ends on it and the next of its connection (of one connection, if several share it).
+    site = ctx.layers[0].pmap.sites
+    legs = {ctx.conns[a].dst: (a, b) for conn in ctx.conns.values() for a, b in zip(conn.pieces, conn.pieces[1:]) if ctx.conns[a].dst in site}
     held: set[int] = set()   # vias the check has sent back once: they stay
     for _ in range(ROUNDS if legs else 0):
         was: dict[int, tuple[float, float]] = {}

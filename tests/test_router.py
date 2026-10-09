@@ -431,6 +431,11 @@ def test_python_fallback_without_numba():
     assert out["1"][1].startswith("0 0 ")
 
 
+def copper(result) -> float:
+    """Length of the copper that is drawn: traces that coincide count once."""
+    return result.stats["copper"]
+
+
 def test_traces_of_one_net_share_a_trunk():
     """Two connections of a net that leave a pad the same way run as one trace
     until they part, instead of side by side."""
@@ -440,12 +445,12 @@ def test_traces_of_one_net_share_a_trunk():
     # a wall both connections from pad 0 have to go round the top of
     board.add_keepout([(12, 0), (13, 0), (13, 22), (12, 22)])
     result = route_board(board)
-    assert result.unrouted == [] and len(result.polylines) == 2
-    assert {(c.src, c.dst) for c in result.connections.values()} == {(0, 1), (0, 2)}
-    a, b = (LineString(p) for p in result.polylines.values())
-    shared = a.intersection(b.buffer(1e-3)).length
-    assert shared > 12.0         # from the pad to the end of the wall, as one trace
-    assert a.length - shared > 1 and b.length - shared > 1  # and then they part
+    assert result.unrouted == [] and net_is_connected(result, 0)
+    assert {(c.src, c.dst) for c in result.connections.values() if c.parent is None} == {(0, 1), (0, 2)}
+    # From pad 0 round the end of the wall there is one trace, whatever is joined to what beyond it.
+    total = sum(LineString(p).length for p in result.polylines.values())
+    assert copper(result) < total - 12.0
+    assert copper(result) < 44.0   # pad 0 to the wall's end, and on to each (41.8 if the second goes on from pad 2)
     assert_clean(board, result)
 
 
@@ -780,9 +785,6 @@ def test_a_connection_lifted_is_put_back_exactly():
                         {w: p.gates for w, p in l.paths.items()}))
         return out, {w: (c.layer, c.pieces, c.sites, c.parent, c.src, c.dst) for w, c in ctx.conns.items()}, sorted(ctx.unrouted)
 
-    for layer in ctx.layers:   # capacities at the vias as they are worked out afresh
-        for pad in layer.pmap.sites:
-            sites.refresh(layer.pmap, layer.state, pad)
     before = everything()
     tried = 0
     for conn in through:

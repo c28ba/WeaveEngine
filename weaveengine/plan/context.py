@@ -11,7 +11,7 @@ from scipy.sparse.csgraph import minimum_spanning_tree
 from weaveengine import parallel
 from weaveengine.board import Board
 from weaveengine.plan.path import locate
-from weaveengine.topo import sites
+from weaveengine.topo import kernel, sites
 from weaveengine.topo.barrier import Barrier
 from weaveengine.topo.costs import CostParams
 from weaveengine.topo.planar_map import GATE, PlanarMap
@@ -141,6 +141,8 @@ class Context:
                 i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
                 weight=1.0 + 2.0 * rules.extra(net_id) / rules.pitch,
                 layers=tuple(l.index for l in layers if a in l.pmap.pad_edges and b in l.pmap.pad_edges))
+        nets = [c.net_id for c in self.conns.values()]
+        self.pairs = {net for net in nets if nets.count(net) == 1}   # nets of two pads: a trace of theirs has no copper of its net to share
         self.unrouted: set[int] = set(self.conns)
         self.rounds = 0
         self.next_wire = len(self.conns) + 1             # ids of the pieces of connections through vias; never reused
@@ -251,8 +253,9 @@ class Context:
 
     def commit(self, conn: Connection, how, within=None) -> bool:
         """Routes the connection as ``how`` says: a ``Route`` on one layer, or a
-        ``Path``, which may go through vias. The vias' sites are made in the
-        maps of every layer and the pieces put in exactly as planned.
+        ``Path``, which may be in pieces joined at new vias and at pads and
+        vias its net already has. The new vias' sites are made in the maps of
+        every layer and the pieces put in as planned.
 
         Returns False, with nothing changed, if a via turns out not to fit
         where it was planned: a trace may over-fill a gate for the rip-up to
@@ -260,22 +263,15 @@ class Context:
         ``within``: asked, with the pieces in and the vias settled, whether the
         result will do; if it says no, that too leaves nothing changed.
         """
-        routes, vias = (how.routes, how.vias) if hasattr(how, "routes") else ([how], [])
-        if not vias:
+        routes, joints = (how.routes, how.joints) if hasattr(how, "routes") else ([how], [])
+        if not joints:
             self._lay(conn, routes[0].layer, routes[0].steps)
             self._laid(conn)
             self._waiting(conn, False)
             return True
-        # Each piece was planned as if the others were not there. Two on the
-        # same layer that use a gate in common might cross each other, and
-        # their places on that gate are not known: such a plan is not used.
-        used = [set() for _ in self.layers]
-        for r in routes:
-            if used[r.layer].intersection(r.gates):
-                return False
-            used[r.layer].update(r.gates)
         keep = sites.keep_off(self.board.rules)
-        pads = [conn.src, *range(self.next_pad, self.next_pad + len(vias)), conn.dst]
+        new = [not isinstance(j, int) for j in joints]     # per joint: a via to be made (else copper that is there)
+        pads = [conn.src, *(self.next_pad + sum(new[:n]) if new[n] else j for n, j in enumerate(joints)), conn.dst]
         pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id)
                   for n in range(len(routes))]
         def mark():
@@ -285,40 +281,53 @@ class Context:
             for l, m in zip(self.layers, marks):
                 sites.undo(l.pmap, l.state, *m)
 
-        before: list = []                                  # per via, the mark before its site was made
-        made: list[list] = []                              # per via, its site on each layer
+        before: dict[int, list] = {}                       # per new via, the mark before its site was made
+        made: dict[int, list] = {}                         # per new via, its site on each layer
         split = [set() for _ in self.layers]               # triangles that have had a site put in them, per layer
+        used = [set() for _ in self.layers]                # gates the pieces so far cross, per layer
         laid: list[Connection] = []
         settled = None
         try:
             for n, r in enumerate(routes):
-                if n < len(vias):  # the via this piece ends on: its site, on every layer
-                    point = vias[n]
+                if n < len(joints) and new[n]:  # the via this piece ends on: its site, on every layer
+                    point = joints[n]
                     where = [int(locate(l.pmap, np.array([point]))[0]) for l in self.layers]
                     if min(where) < 0 or not self.legal.exactly(*point):
                         raise ValueError("no via there")
-                    before.append(mark())
+                    before[n] = mark()
                     here = [sites.create(l.pmap, l.state, t, point, pad=pads[n + 1], settle=False) for l, t in zip(self.layers, where)]
                     for l, site, t in zip(self.layers, here, where):
                         sites.set_net(l.pmap, l.state, site, conn.net_id, keep)
                         split[l.index].add(t)
-                    made.append(here)
+                    made[n] = here
                 layer = self.layers[r.layer]
                 steps = list(r.steps)
                 if any(step[1] in split[r.layer] for step in steps):
                     raise ValueError("the plan passes a triangle one of its own vias went into")
-                if n > 0:
+                if used[r.layer].intersection(r.gates):
+                    # Each piece was planned as if the others were not there, so
+                    # its places on the gates it has in common with them are
+                    # not known. Between copper that is there it is found
+                    # again, in those gates, beside the pieces that are in.
+                    if n - 1 in made or n in made:
+                        raise ValueError("two pieces at a new via use a gate in common")
+                    again = route(layer.pmap, layer.state, pads[n], pads[n + 1], self.params, mode="corridor", corridor=set(r.gates),
+                                  weight=conn.weight, net=conn.net_id)
+                    if again is None:
+                        raise ValueError("the pieces do not fit together")
+                    steps = again.steps
+                used[r.layer].update(r.gates)
+                if n - 1 in made:
                     steps[:1] = sites.leave(layer.pmap, layer.state, made[n - 1][r.layer], steps[0])
-                if n < len(vias):
+                if n in made:
                     steps += sites.arrive(layer.pmap, layer.state, made[n][r.layer], steps[-1])
                 self._lay(pieces[n], r.layer, steps)
                 laid.append(pieces[n])
             settled = mark()
-            for here in made:
+            for here in made.values():
                 for l, site in zip(self.layers, here):
-                    sites.refresh(l.pmap, l.state, site.pad)
                     sites.legalise(l.pmap, l.state, site)
-            if any(l.state.overflow(e) for here in made for l, site in zip(self.layers, here) for e in site.spokes):
+            if any(l.state.overflow(e) for here in made.values() for l, site in zip(self.layers, here) for e in site.spokes):
                 raise ValueError("a gate beside the via would be over-full")
             if within is not None and not within(pieces):
                 raise ValueError("not what was asked for")
@@ -327,27 +336,29 @@ class Context:
             # the settling of the sites' edges, then each piece and the site made for it.
             if settled is not None:
                 back_to(settled)
-            for n in reversed(range(max(len(laid), len(before)))):
+            for n in reversed(range(len(routes))):
                 if n < len(laid):
                     self.layers[laid[n].layer].state.remove(laid[n].wire_id)
-                if n < len(before):
+                if n in before:
                     back_to(before[n])
             self._maps_changed()
             return False
         self._maps_changed()
         self.next_wire += len(pieces)
-        self.next_pad += len(vias)
+        self.next_pad += sum(new)
         for piece in pieces:
             piece.air_len = math.dist(self.pad_centre(piece.src), self.pad_centre(piece.dst))
             self.conns[piece.wire_id] = piece
             self._laid(piece)
-        conn.pieces, conn.sites = tuple(p.wire_id for p in pieces), tuple(pads[1:-1])
+        # The vias it ends pieces on, made for it or there already: they stay while any trace is on them.
+        conn.pieces, conn.sites = tuple(p.wire_id for p in pieces), tuple(p for p in pads[1:-1] if p in self.layers[0].pmap.sites)
         self._waiting(conn, False)
         return True
 
     def rip(self, wire_id: int) -> None:
-        """Removes the connection this wire belongs to: all its pieces, and its
-        vias from the maps. The barrier is not updated (append-only); rebuild it per round."""
+        """Removes the connection this wire belongs to: all its pieces, and
+        from the maps the vias no other connection has a trace on. The barrier
+        is not updated (append-only); rebuild it per round."""
         conn = self.conns[wire_id]
         if conn.parent is not None:
             conn = self.conns[conn.parent]
@@ -358,11 +369,12 @@ class Context:
             if w != conn.wire_id:
                 del self.conns[w]
         for pad in conn.sites:
-            for layer in self.layers:
-                site = layer.pmap.sites.get(pad)
-                if site is not None:
-                    sites.set_net(layer.pmap, layer.state, site, -1)
-                    sites.delete(layer.pmap, layer.state, site)  # if it cannot be, it stays, asleep
+            here = [(layer, layer.pmap.sites[pad]) for layer in self.layers if pad in layer.pmap.sites]
+            if any(layer.state.gate_order[e] for layer, site in here for e in site.hole):
+                continue  # a trace of another connection ends on it
+            for layer, site in here:
+                sites.set_net(layer.pmap, layer.state, site, -1)
+                sites.delete(layer.pmap, layer.state, site)  # if it cannot be, it stays, asleep
         if conn.sites:
             self._maps_changed()
         conn.layer, conn.pieces, conn.sites = None, (), ()
@@ -373,13 +385,17 @@ class Context:
         needs to have it exactly as it was: its pieces with their places on
         every gate, its vias, and how far the maps' logs had got."""
         pieces = []
-        for w in conn.pieces or (conn.wire_id,):
+        wires = list(conn.pieces or (conn.wire_id,))
+        for n, w in enumerate(wires):
             piece = self.conns[w]
             state = self.layers[piece.layer].state
             order = state.gate_order
             # Stored slots are those at insertion time; other wires have come
-            # and gone since, so read the wire's present position on each gate.
-            pieces.append((piece, piece.layer, [(e, t, k, order[e].index(w)) for e, t, k, _ in state.wire_path[w]]))
+            # and gone since, so read the wire's present position on each gate:
+            # where it goes in once the pieces before it are back, and not yet those after it.
+            later = set(wires[n + 1:])
+            pieces.append((piece, piece.layer, [(e, t, k, sum(1 for x in order[e][:order[e].index(w)] if x not in later))
+                                                for e, t, k, _ in state.wire_path[w]]))
         site = self.layers[0].pmap.sites
         saved = {"pieces": pieces, "of": (conn.layer, conn.pieces, conn.sites),
                  "vias": [(pad, site[pad].net, site[pad].keep) for pad in conn.sites],
@@ -525,6 +541,33 @@ class Context:
     # -- metrics ------------------------------------------------------------
     def violations(self) -> int:
         return len(self.unrouted) + sum(l.state.overflow(e) for l in self.layers for e in l.state.overflowed_gates())
+
+    @staticmethod
+    def wire_copper(layer: Layer, w: int) -> float:
+        """The copper one wire adds to its net's: its length through the
+        middles of its gates, of which a stretch beside another wire of its
+        net counts as the search counts it (``kernel.RIDE``): next to nothing,
+        for there it is the same trace."""
+        mids, order, nets = layer.pmap.edge_mid_list, layer.state.gate_order, layer.state.net
+        net = nets.get(w, -1)
+        total, last, rode = 0.0, None, False
+        for e, _, _, _ in layer.state.wire_path[w]:
+            row = order[e]
+            i = row.index(w)
+            rides = net >= 0 and ((i > 0 and nets.get(row[i - 1], -1) == net) or (i + 1 < len(row) and nets.get(row[i + 1], -1) == net))
+            if last is not None:
+                total += math.dist(mids[last], mids[e]) * (kernel.RIDE if rides and rode else 1.0)
+            last, rode = e, rides
+        return total
+
+    def copper(self) -> dict[int, float]:
+        """``wire_copper`` of every routed connection, its pieces together."""
+        out: dict[int, float] = {}
+        for layer in self.layers:
+            for w in layer.state.wire_path:
+                whole = self.conns[w].parent or w
+                out[whole] = out.get(whole, 0.0) + self.wire_copper(layer, w)
+        return out
 
     def estimated_length(self) -> float:
         total = 0.0

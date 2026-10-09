@@ -234,6 +234,7 @@ def _refresh(pmap: PlanarMap, edges) -> None:
     """These edges have changed: what the map derives from them is out of date."""
     pmap.stale.update(edges)
     pmap.moved = True
+    pmap.changes += 1
 
 
 def _register(pmap: PlanarMap, site: Site, hole_xy) -> None:
@@ -1029,41 +1030,25 @@ def set_net(pmap: PlanarMap, state: TopoState, site: Site, net: int, keep: float
         keep = 0.0
     site.net, site.keep = net, keep
     pmap.pad_net[site.pad] = net
+    pmap.changes += 1
+    for e in (*site.spokes, *site.hole):
+        state.load[e] = state.tally(e)  # the traces of its net that lie against it count while it sleeps, and not while it is a via
     for e in site.spokes:
         _set_capacity(pmap, state, e)
 
 
 def _set_capacity(pmap: PlanarMap, state: TopoState, e: int) -> None:
     """Capacity of a gate from its width estimate (6.3), less the keep-off of
-    an active site at either end. A trace of the via's own net needs no room
-    beyond that keep-off (it runs into the via), so it is not counted against
-    the gate: its weight is added back."""
+    an active site at either end. (A trace of the via's own net that lies
+    against the via needs no room beyond that keep-off: it is not counted in
+    the gate's load, ``TopoState.tally``.)"""
     owner = pmap.__dict__.get("_site_of_vertex", {})
-    keep, own = 0.0, 0.0
+    keep = 0.0
     for v in pmap.edge_v_list[e]:
         site = owner.get(v)
-        if site is None:
-            continue
-        keep += site.keep if site.active else asleep_keep(pmap)
-        if site.active:
-            for w in state.gate_order[e]:
-                if site.pad in wire_pads(pmap, state, w):
-                    own += state.weight[w]
-    state.cap[e] = (pmap.edge_width[e] - keep) / pmap.pitch + 1.0 + own
-
-
-def wire_pads(pmap: PlanarMap, state: TopoState, w: int) -> tuple[int, int]:
-    """The two pads a wire joins."""
-    steps = state.wire_path[w]
-    return pmap.edge_owner_list[steps[0][0]], pmap.edge_owner_list[steps[-1][0]]
-
-
-def refresh(pmap: PlanarMap, state: TopoState, pad: int) -> None:
-    """Recomputes the capacity of a site's spokes (a trace of its own has come or gone)."""
-    site = pmap.sites.get(pad)
-    if site is not None:
-        for e in site.spokes:
-            _set_capacity(pmap, state, e)
+        if site is not None:
+            keep += site.keep if site.active else asleep_keep(pmap)
+    state.cap[e] = (pmap.edge_width[e] - keep) / pmap.pitch + 1.0
 
 
 def fits(pmap: PlanarMap, state: TopoState, site: Site, keep: float) -> bool:

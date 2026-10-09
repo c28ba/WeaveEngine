@@ -132,11 +132,16 @@ def test_random_operations_keep_the_invariants():
         if roll < 0.40 or not live:
             ends = pads + [s.pad for s in made if s.active]
             a, b = rng.sample(ends, 2)
-            r = route(pmap, state, a, b, hard_cap=True)
+            # A trace that ends on a via is of the via's net: against the via it takes no room (``TopoState.tally``).
+            nets = {pmap.pad_net[x] for x in (a, b) if x in pmap.sites}
+            if len(nets) > 1:
+                continue
+            net = nets.pop() if nets else -1
+            r = route(pmap, state, a, b, hard_cap=True, net=net)
             if r is None:
                 continue
             wire += 1
-            state.insert(wire, r.steps)
+            state.insert(wire, r.steps, net=net)
             live[wire] = (a, b)
             count["insert"] += 1
         elif roll < 0.78:

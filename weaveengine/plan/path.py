@@ -5,6 +5,10 @@ first search starts at the connection's pad; each later one starts from every
 point the search before could reach, at its cost so far plus the cost of a via.
 A via is priced like anything else, so whether a connection takes one, and
 where, falls out of the same cost that decides everything else about it.
+
+Where the search before reached copper its net already has on both layers, a
+through-hole pad or a via, the next one starts from that as well, at no cost:
+the layer change is there already (11).
 """
 import math
 from dataclasses import dataclass, field
@@ -21,14 +25,26 @@ GRID = 0.25  # mm: cell of the coarse map of where a via may be
 
 @dataclass
 class Path:
-    """A route from pad to pad: one piece per layer it runs on, in order, with a via between consecutive pieces."""
+    """A route from pad to pad, in pieces. Between consecutive pieces is a
+    joint: a point (x, y) where a via is to be made, or the id of a pad or via
+    of the connection's net that is there already, which the route runs
+    through or changes layer at."""
     routes: list[Route]
-    vias: list[tuple[float, float]] = field(default_factory=list)
+    joints: list = field(default_factory=list)
     cost: float = 0.0
 
     @classmethod
     def on_one_layer(cls, r: Route) -> "Path":
-        return cls([r], [], r.cost)
+        """What one search found: its pieces, if it came through pads of its net."""
+        pieces = [*r.lead, r]
+        for piece in pieces:
+            piece.layer = r.layer
+        return cls(pieces, [piece.pad for piece in r.lead], r.cost)
+
+    @property
+    def vias(self) -> list[tuple[float, float]]:
+        """The vias to be made."""
+        return [j for j in self.joints if not isinstance(j, int)]
 
     @property
     def blocking(self) -> set[int]:
@@ -95,21 +111,22 @@ def _taken(ctx, struck) -> np.ndarray:
     return pts[np.argsort(pts[:, 0], kind="stable")]
 
 
-def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float):
+def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float, onward: float):
     """Where a route that the search ``seen`` brought this far on layer ``la``
     may change layer: the points it reached where a via is legal and fits,
     each at its cost so far plus a via. Points that cannot lead to a route
     cheaper than ``bound`` are left out. Returns (points, costs, where each
-    came from as (layer, triangle)), or None."""
+    came from as (layer, triangle)), or None. ``onward``: the part of the
+    straight line from a point to the goal that the way on costs at least."""
     rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
-    x, y, cost, tris = kernel.via_points(seen.best, via_cost, bound, goal[0], goal[1], pmap.tri_v, pmap.vx, pmap.vy,
+    x, y, cost, tris = kernel.via_points(seen.best, via_cost, bound, goal[0], goal[1], onward, pmap.tri_v, pmap.vx, pmap.vy,
                                          ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
                                          legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[:, 0]),
                                          np.ascontiguousarray(taken[:, 1]), rules.via_diameter + rules.clearance + 0.02)
     return (np.stack([x, y], axis=1), cost, np.stack([np.full(len(tris), la), tris], axis=1)) if len(x) else None
 
 
-def _seeds(ctx, sources: dict, onto, goal, bound: float):
+def _seeds(ctx, sources: dict, onto, goal, bound: float, onward: float):
     """Where the next search, on layer ``onto``, may start: the via points of
     the other layers (``sources``, per layer) that have room on this one too
     and can still lead to a route cheaper than ``bound``. Returns (triangles
@@ -120,15 +137,16 @@ def _seeds(ctx, sources: dict, onto, goal, bound: float):
     pts, cost, source = (np.concatenate(x) for x in zip(*parts))
     pmap = onto.pmap
     tris = locate(pmap, pts)
-    at = np.nonzero((tris >= 0) & (cost + np.hypot(pts[:, 0] - goal[0], pts[:, 1] - goal[1]) < bound))[0]
+    at = np.nonzero((tris >= 0) & (cost + onward * np.hypot(pts[:, 0] - goal[0], pts[:, 1] - goal[1]) < bound))[0]
     at = at[kernel.rooms(pmap.tri_v, pmap.vx, pmap.vy, onto.state.corner, pmap.pitch, sites.keep_off(ctx.board.rules),
                          sites.MIN_ROOM * sites.SITE_RADIUS, tris[at], np.ascontiguousarray(pts[at, 0]), np.ascontiguousarray(pts[at, 1]))]
     return (tris[at], cost[at], pts[at], source[at]) if len(at) else None
 
 
 def place(ctx, conn, path: "Path | None", **how) -> bool:
-    """Commits ``path``. If one of its vias does not fit where it was planned,
-    plans again without that point (``how``: as the first plan was made), twice at most."""
+    """Commits ``path``. If it does not fit as planned, plans again (``how``:
+    as the first plan was made), twice at most: without the point where a via
+    did not fit, or, if it has no via, without going through pads of its net."""
     struck: list = []
     for _ in range(3):
         if path is None:
@@ -136,14 +154,18 @@ def place(ctx, conn, path: "Path | None", **how) -> bool:
         if ctx.commit(conn, path):
             return True
         struck += path.vias
+        if not path.vias:
+            how["through"] = False
         path = find(ctx, conn, struck=struck, **how)
     return False
 
 
 def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None = None, first: dict | None = None,
-         via_cost: float | None = None, bound: float = math.inf, **how) -> Path | None:
-    """Cheapest route for the connection, changing layer at most ``max_vias``
-    times (default: as many as the parameters allow). ``how`` goes to every
+         via_cost: float | None = None, bound: float = math.inf, through: bool = True, **how) -> Path | None:
+    """Cheapest route for the connection, with at most ``max_vias`` new vias
+    (default: as many as the parameters allow). It may run through pads and
+    vias of its net and change layer at them (unless ``through`` is False:
+    then it touches nothing but its own two pads). ``how`` goes to every
     search (``mode``, ``hard_cap``, ``congestion``); ``penalty`` is per layer.
     ``struck``: points where a via has been found not to fit. ``first``: per
     layer, the outcome of the search from the connection's own pad, where the
@@ -154,36 +176,47 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     via_cost = params.via_cost if via_cost is None else via_cost
     if max_vias is None:
         max_vias = params.max_vias if ctx.vias else 0
+    changes = params.max_vias if len(ctx.layers) > 1 else 0  # of layer: at a new via, or at copper the net has on both
     goal = ctx.pad_centre(conn.dst)
     penalty = penalty or {}
+    search = dict(weight=conn.weight, net=conn.net_id, reach=True, target=goal, through=through, **how)
+    # What the way on from a via costs at least, of the straight line: all of it if the net has
+    # no copper but this connection's; else next to nothing, since it may lead along that copper.
+    onward = 1.0 if conn.net_id in ctx.pairs else kernel.RIDE
     best = None  # (cost, hop, layer, route)
-    reached = {}
+    reached = {}  # per layer: what the search saw, the via points it started from, the layer each pad it started from was reached on
     for layer in ctx.layers:
         if conn.src not in layer.pmap.pad_edges:
             continue
-        if first and layer.index in first:
+        if first and layer.index in first and through:
             r, seen = first[layer.index]
         else:
-            r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True,
-                            target=goal, penalty=penalty.get(layer.index), bound=bound, **how)
-        reached[layer.index] = (seen if max_vias else None, None)
+            r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, penalty=penalty.get(layer.index), bound=bound, **search)
+        reached[layer.index] = (seen if changes else None, None, {})
         if r is not None and (best is None or r.cost < best[0]):
             best = (r.cost, 0, layer.index, r)
     hops = [reached]
     taken = _taken(ctx, struck) if max_vias else None
-    for hop in range(1, max_vias + 1):
-        sources = {la: _via_points(ctx, la, seen, goal, best[0] if best else bound, taken, via_cost)
-                   for la, (seen, _) in reached.items() if seen is not None}
+    for hop in range(1, changes + 1):
+        limit = best[0] if best else bound
+        sources = {la: _via_points(ctx, la, seen, goal, limit, taken, via_cost, onward)
+                   for la, (seen, _, _) in reached.items() if seen is not None} if hop <= max_vias else {}
+        pads: dict[int, tuple[float, int]] = {}  # copper of the net that was reached: pad -> (cost, on which layer)
+        for la, (seen, _, _) in reached.items():
+            for pad, (cost, _) in (seen.pads.items() if seen is not None else ()):
+                if cost < limit and cost < pads.get(pad, (math.inf, 0))[0]:
+                    pads[pad] = (cost, la)
         reached = {}
         for layer in ctx.layers:
-            seeds = _seeds(ctx, sources, layer, goal, best[0] if best else bound)
-            if seeds is None:
+            seeds = _seeds(ctx, sources, layer, goal, limit, onward)
+            starts = {pad: (cost, la) for pad, (cost, la) in pads.items() if la != layer.index and pad in layer.pmap.pad_edges}
+            if seeds is None and not starts:
                 continue
-            tris, cost, pts, source = seeds
-            r, seen = route(layer.pmap, layer.state, None, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, target=goal,
-                            seeds=(tris, cost, pts[:, 0], pts[:, 1]), bound=best[0] if best else bound,
-                            penalty=penalty.get(layer.index), **how)
-            reached[layer.index] = (seen if hop < max_vias else None, (pts, source))
+            tris, cost, pts, source = seeds if seeds is not None else (None, None, None, None)
+            r, seen = route(layer.pmap, layer.state, None, conn.dst, params, starts={pad: c for pad, (c, _) in starts.items()},
+                            seeds=None if seeds is None else (tris, cost, pts[:, 0], pts[:, 1]),
+                            bound=limit, penalty=penalty.get(layer.index), **search)
+            reached[layer.index] = (seen if hop < changes else None, (pts, source), {pad: la for pad, (_, la) in starts.items()})
             if r is not None and (best is None or r.cost < best[0]):
                 best = (r.cost, hop, layer.index, r)
         if not reached:
@@ -192,15 +225,27 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     if best is None:
         return None
     cost, hop, li, r = best
-    r.layer = li
-    routes, vias = [r], []
-    for level in range(hop, 0, -1):
-        pts, source = hops[level][li][1]
-        vias.append((float(pts[r.seed, 0]), float(pts[r.seed, 1])))
-        li, tri = int(source[r.seed, 0]), int(source[r.seed, 1])
-        r = hops[level - 1][li][0].route_to(tri)
+    chain, joints = [], []  # from the goal back to the connection's pad
+    for level in range(hop, -1, -1):
+        r.layer = li
+        chain.append(Path.on_one_layer(r))
+        if level == 0:
+            break
+        if r.seed >= 0:  # it starts at a new via
+            pts, source = hops[level][li][1]
+            joints.append((float(pts[r.seed, 0]), float(pts[r.seed, 1])))
+            li, tri = int(source[r.seed, 0]), int(source[r.seed, 1])
+            r = hops[level - 1][li][0].route_to(tri)
+        else:            # it starts at copper of its net that the search before came to on another layer
+            pad = ctx.layers[li].pmap.edge_owner_list[chain[-1].routes[0].steps[0][0]]
+            joints.append(pad)
+            li = hops[level][li][2][pad]
+            r = hops[level - 1][li][0].route_to_pad(pad)
         if r is None:
             return None  # that way crosses a gate twice: it cannot be inserted
-        r.layer = li
-        routes.append(r)
-    return Path(routes[::-1], vias[::-1], cost)
+    routes, between = [], []
+    for part, joint in zip(chain[::-1], [*joints[::-1], None]):
+        routes += part.routes
+        between += part.joints + ([joint] if joint is not None else [])
+    return Path(routes, between, cost)
+

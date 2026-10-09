@@ -2,6 +2,7 @@
 import math
 
 import numpy as np
+import shapely
 from shapely.geometry import LineString
 
 from weaveengine.board import Board
@@ -420,6 +421,14 @@ def _simplify(line: Polyline, eps: float = 1e-9) -> Polyline:
 
 def polyline_length(line: Polyline) -> float:
     return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(line, line[1:]))
+
+
+def copper_length(lines: list[Polyline], within: float = 0.01) -> float:
+    """Length of the copper the traces of one layer make: where traces
+    coincide (wires of one net on a shared trunk, 11; nearer than ``within``
+    counts) it is counted once."""
+    drawn = [LineString(line).buffer(within, quad_segs=2) for line in lines if len(line) > 1]
+    return shapely.union_all(drawn).area / (2.0 * within) if drawn else 0.0
 
 
 def realize(state: TopoState, board: Board, repair_rounds: int = 4):  # one layer

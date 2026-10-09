@@ -37,6 +37,7 @@ class TopoState:
         self.count = np.zeros(planar_map.num_edges, dtype=np.int32)
         self.corner = np.zeros((planar_map.num_triangles, 3), dtype=np.int32)
         self.hist = np.zeros(planar_map.num_edges)
+        self.epoch = 0  # counts the times a wire has come or gone: what was worked out from the wires holds while it stands
 
     def resize(self) -> None:
         """Brings every table up to the map's present size (the map has gained
@@ -63,25 +64,40 @@ class TopoState:
 
     def tally(self, edge_id: int) -> float:
         """The load on a gate, from the wires on it: every run of neighbours of
-        one net counts once, as its widest wire."""
-        total, run, last = 0.0, 0.0, -1
+        one net counts once, as its widest wire. A run at an end of the gate
+        that is a via of its own net counts nothing: there it is the via's
+        copper, inside the room the via keeps clear (12.2)."""
+        runs, last = [], -1
         for w in self.gate_order[edge_id]:
             net = self.net.get(w, -1)
             if net < 0 or net != last:
-                total += run
-                run = 0.0
-            run = max(run, self.weight[w])
+                runs.append(0.0)
+            runs[-1] = max(runs[-1], self.weight[w])
             last = net
-        return total + run
+        vias = self.map.__dict__.get("_site_of_vertex")
+        if vias and runs:
+            row, (u, v) = self.gate_order[edge_id], self.map.edge_v_list[edge_id]
+            if v in vias and vias[v].net >= 0 and vias[v].net == self.net.get(row[-1], -1):
+                runs.pop()
+            if runs and u in vias and vias[u].net >= 0 and vias[u].net == self.net.get(row[0], -1):
+                runs[0] = 0.0
+        return sum(runs)
 
     def beside(self, net: int) -> dict[int, int]:
-        """Gate -> the places on it that are beside a wire of ``net`` (bit p set:
-        a wire put in at place p has one as its neighbour)."""
+        """Gate -> the places on it that are beside copper of ``net`` (bit p
+        set): a wire put in at place p has a wire of the net as its neighbour,
+        or lies against a via of the net."""
         places: dict[int, int] = {}
         for w in self.by_net.get(net, ()):
             for e, _, _, _ in self.wire_path[w]:
                 p = self.gate_order[e].index(w)
                 places[e] = places.get(e, 0) | (3 << p)
+        for site in self.map.sites.values():
+            if site.net == net:
+                for e in site.spokes:
+                    for end, v in enumerate(self.map.edge_v_list[e]):
+                        if v in site.verts:
+                            places[e] = places.get(e, 0) | (1 << (len(self.gate_order[e]) if end else 0))
         return places
 
     def overflow(self, edge_id: int) -> int:
@@ -109,6 +125,7 @@ class TopoState:
         """``net`` None: the net this wire had when it was last in (or none)."""
         if wire_id in self.wire_path:
             raise ValueError(f"wire {wire_id} already exists")
+        self.epoch += 1
         if net is not None:
             self.net[wire_id] = net
         self.weight[wire_id] = weight
@@ -120,11 +137,13 @@ class TopoState:
         # Slots come from one pre-insertion snapshot; gates are distinct, so
         # the inserts are independent of each other.
         nets, mine = self.net, self.net.get(wire_id, -1)
+        vias, edge_v = self.map.__dict__.get("_site_of_vertex") or (), self.map.edge_v_list
         for edge_id, tri_id, corner_k, slot in steps:
             row = self.gate_order[edge_id]
             row.insert(slot, wire_id)
-            if mine >= 0 and ((slot and nets.get(row[slot - 1], -1) == mine) or (slot + 1 < len(row) and nets.get(row[slot + 1], -1) == mine)):
-                self.load[edge_id] = self.tally(edge_id)  # beside one of its own net
+            if (mine >= 0 and ((slot and nets.get(row[slot - 1], -1) == mine) or (slot + 1 < len(row) and nets.get(row[slot + 1], -1) == mine))
+                    or (vias and (edge_v[edge_id][0] in vias or edge_v[edge_id][1] in vias))):
+                self.load[edge_id] = self.tally(edge_id)  # beside one of its own net, or at a via
             else:
                 self.load[edge_id] += weight
             self.count[edge_id] += 1
@@ -134,19 +153,22 @@ class TopoState:
         self.wire_path[wire_id] = list(steps)
 
     def remove(self, wire_id: int) -> None:
+        self.epoch += 1
         self.by_net.get(self.net.get(wire_id, -1), set()).discard(wire_id)
         nets, mine, weight = self.net, self.net.get(wire_id, -1), self.weight[wire_id]
+        vias, edge_v = self.map.__dict__.get("_site_of_vertex") or (), self.map.edge_v_list
         for edge_id, tri_id, corner_k, _ in self.wire_path.pop(wire_id):
             row = self.gate_order[edge_id]
             i = row.index(wire_id)
             del row[i]
             # Its two neighbours now meet. Only if one of them is of its net, or
-            # they are of one net themselves, is there a run to count again.
+            # they are of one net themselves, or the gate is at a via, is there a run to count again.
             a = nets.get(row[i - 1], -1) if i else -1
             b = nets.get(row[i], -1) if i < len(row) else -1
             if not row:
                 self.load[edge_id] = 0.0
-            elif (mine >= 0 and (a == mine or b == mine)) or (a >= 0 and a == b):
+            elif ((mine >= 0 and (a == mine or b == mine)) or (a >= 0 and a == b)
+                  or (vias and (edge_v[edge_id][0] in vias or edge_v[edge_id][1] in vias))):
                 self.load[edge_id] = self.tally(edge_id)
             else:
                 self.load[edge_id] -= weight
@@ -162,6 +184,7 @@ class TopoState:
 
     def restore(self, snap) -> None:
         order, cnt, paths, load, weight = snap
+        self.epoch += 1
         self.load, self.weight = load.copy(), dict(weight)
         self.count = np.array([len(o) for o in order], dtype=np.int32)
         self.corner = np.array(cnt, dtype=np.int32).reshape(-1, 3)

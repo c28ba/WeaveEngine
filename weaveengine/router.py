@@ -14,7 +14,7 @@ from weaveengine.plan.context import Connection, Context, Layer, Options, decomp
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
-from weaveengine.realize.relax import polyline_length, realize
+from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.teardrop import teardrops as make_teardrops
 from weaveengine.realize.terminals import straighten
@@ -125,6 +125,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "wires": len(routed),
         "vias": len(vias),
         "length": length,
+        "copper": sum(copper_length([lines[w] for w in routed if wire_layer[w] == layer.index]) for layer in ctx.layers),  # shared trunks once
         "airwire_length": air,
         "length_ratio": length / air if air else math.nan,
         "ripup_rounds": ctx.rounds,
