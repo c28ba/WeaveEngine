@@ -438,6 +438,13 @@ Known limits:
 
 **Racing variants** hand their sites back through the map log (12.2); the parent replays it.
 
+**Searches that need not be made** (from a profile of RAM Selector Tree, where 69 of 162 s are inside the search and nearly all of that in rip-up, for nets of two pads: a search that finds no way on its layer floods the layer, about 25,000 nodes).
+- *A via point where an earlier search on that layer has been for no more is not a start.* Per layer and triangle, `find` keeps the least cost at which a search has been in the triangle's middle; a seed there at that cost or more can lead to nothing the earlier search did not find for less. On a through-hole board both layers are searched from the pad, so most seeds fall away.
+- *A plan refused because its via did not fit is made again from the same searches from the pad* (`Path.first`): a refused plan leaves no trace, so they stand.
+- The searches of `find` inside rip-up on RAM Selector Tree: 34.7 s to 21.0 s. The whole run did not get faster by that much (166 s against 169 s for the program before, one run each on a busy machine), because it also took another course: 399 of 400 with 126 vias instead of 400 with 119. ulx3s: 9.2 s to 8.0 s (medians of three).
+- Tried and not kept: *not planning a connection again in refinement when nothing its last searches looked at has changed* (the gates they touched and those beside them, by the stamps of 13.1). It is exact: the routings came out identical on four boards. But one connection in four moves in a refinement pass, and each move changes gates that many others' searches looked at: 655 of 3252 attempts were skipped on ALU (15.2 s to 14.6 s), 474 of 1540 on ulx3s and 15 of 191 on blinkSP1 with no gain in time. Forty lines for 4 % on one board.
+- What the profile says is left on that board: the floods themselves (a route that changes layer is a chain of searches, each of which starts from nothing on its layer: one search over all layers would not flood twice), and the flips of edges when a via is made or taken out (81,873 of them, 12 % of the run).
+
 What an earlier prototype had and this does not: a separate completion step after rip-up with its own displacement rule; a second, legality-only flood; spare capacity that grew with each repair round; capacity lifted while searching for a via's own trace; the older code that added vias between passes. About 740 lines fewer.
 
 ### 12.4 What was measured
@@ -706,7 +713,7 @@ Anything else of the kind is found by the check and repaired (13.2). (For a shor
 
 **Cost.** RAM Selector Tree, 583 traces on two layers: 0.3 s per layer for relaxation, 0.1 s for the check.
 
-**Kept from one run to the next.** A layer is relaxed many times in which little has changed: once per round while ends are hopped round their pads (up to eight), once per repair (up to four), and again after every settling. A wire's discs follow from the wires on its own gates and from the map, and its first pull from its discs; so both are kept per wire while no wire has come or gone on any of its gates (`TopoState.stamp`, the state's count of changes written to each gate a wire comes to or leaves) and the map stands (`relax._kept`). The results are the same to the last digit. On ALU, of 54,000 computations of a wire's discs 4,700 are left, and the run takes 15.3 s instead of 19.2.
+**Kept from one run to the next.** A layer is relaxed many times in which little has changed: once per round while ends are hopped round their pads (up to eight), once per repair (up to four), and again after every settling. A wire's discs follow from the wires on its own gates and from the map, and its first pull from its discs; so both are kept per wire while no wire has come or gone on any of its gates (`TopoState.stamp`, the state's count of changes written to each gate a wire comes to or leaves) and the map has not changed at any of them (`PlanarMap.edge_changed`, likewise; `relax._kept`). At first the whole layer's were dropped whenever a via was made, moved or taken out anywhere; now only those of the wires that cross an edge at that via. The results are the same to the last digit. On ALU, of 54,000 computations of a wire's discs 4,700 are left, and the run takes 15.3 s instead of 19.2.
 
 ### 13.2 DRC and repair
 
@@ -996,6 +1003,8 @@ Workers are forked, so they inherit the maps and the state without copying; only
 - Everything must still work in a frozen (PyInstaller) build: use `multiprocessing.freeze_support()`; where fork is unavailable the single-process path is used.
 
 **With vias (12.2):** a variant's result also carries the log of what it did to its maps; the parent replays it, so the kept variant's snapshot restores exactly. Tested on a small board; not yet confirmed on a large one.
+
+**The variants were not all different (measured, then put right).** Each run alone on blinkSP1 and ulx3s: the seed by itself changes nothing (three seeds, the same routing to the millimetre on both), and the eight variants held only five settings of the search weighting, so variant 4 repeated variant 0 on both boards and, on blinkSP1, 6 and 7 repeated 1 and 2. A second heat was therefore mostly the first heat again. What does change the outcome: the search weighting (blinkSP1 53 to 58 of 58 over the five), the growth of the price of an over-full gate (55 to 56, other vias), the number of candidates. The four variants of the second heat now differ from the first in price growth (1.8 for 1.5); all eight give different routings on both boards.
 
 **Still open:** Phase 3 is sequential inside a variant; progress is reported only by the plain variant; a persistent worker pool with the state in shared memory would let single searches be spread across cores.
 
