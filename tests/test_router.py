@@ -272,26 +272,35 @@ def test_teardrop_size_is_limited_on_large_pads():
     assert max(math.dist(poly[1], poly[4]) for d in wide.teardrops.values() for poly in d) > 3.0
 
 
-def test_teardrop_is_left_out_where_it_is_cramped():
-    """A teardrop needs breathing room; next to foreign copper it is shortened, then omitted."""
+def test_teardrop_is_made_smaller_where_it_is_cramped():
+    """A teardrop wants breathing room. Next to foreign copper it is shortened, then
+    kept at the plain clearance, then narrowed: a small one rather than none."""
     board = Board.rectangle(30, 20, Rules(0.2, 0.2))
     board.pads.append(Pad.circle(0, 5, 10, 1.0, net_id=0))
     board.pads.append(Pad.circle(1, 25, 10, 1.0, net_id=0))
     open_board = route_board(board)
     assert sum(len(d) for d in open_board.teardrops.values()) == 2
+    roomy = max(Polygon(poly[:5]).area for d in open_board.teardrops.values() for poly in d)
     # a foreign pad just above the trace, right outside pad 0
     board.pads.append(Pad.circle(2, 6.6, 10.75, 0.3, net_id=1))
     board.pads.append(Pad.circle(3, 6.6, 3, 0.3, net_id=1))
     cramped = route_board(board)
     assert cramped.unrouted == []
     near_pad0 = [poly for d in cramped.teardrops.values() for poly in d if math.dist(poly[0], (5, 10)) < 1e-6]
-    assert near_pad0 == []
+    assert len(near_pad0) == 1 and Polygon(near_pad0[0][:5]).area < 0.8 * roomy
+    # What it adds to its pad keeps the clearance every trace keeps.
+    added = Polygon(near_pad0[0][:5]).difference(board.pads[0].shape)
+    assert added.distance(board.pads[2].shape) >= board.rules.clearance - 1e-6
     assert_clean(board, cramped)
-    relaxed = route_board(board, options=Options(teardrop_breathing=1.0))
-    for w, d in relaxed.teardrops.items():
-        if relaxed.wire_net[w] == 0:
-            for poly in d:
-                assert Polygon(poly[:5]).distance(board.pads[2].shape) >= board.rules.clearance - 1e-6
+    # Hemmed in from both sides it is smaller still, or left out; never nearer than the clearance.
+    board.pads.append(Pad.circle(4, 6.6, 9.25, 0.3, net_id=1))
+    shut = route_board(board)
+    for w, d in shut.teardrops.items():
+        for poly in d:
+            if shut.wire_net[w] == 0 and math.dist(poly[0], (5, 10)) < 1e-6:
+                added = Polygon(poly[:5]).difference(board.pads[0].shape)
+                assert all(added.distance(board.pads[n].shape) >= board.rules.clearance - 1e-6 for n in (2, 4))
+    assert_clean(board, shut)
 
 
 def square_pad_board(width: float = 0.2) -> Board:

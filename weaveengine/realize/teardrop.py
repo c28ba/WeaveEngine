@@ -109,11 +109,13 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
 
     Teardrops are added after routing, so they never take space a trace could
     have used. Each is limited to ``max_length`` beyond the pad and
-    ``max_width`` across. Where things are cramped it is shortened, and then
-    left out: it must keep ``breathing`` clearances from foreign copper and
-    traces and the full clearance from the board edge.
+    ``max_width`` across, and what it adds to the pad keeps ``breathing``
+    clearances from foreign copper and traces if it can. Where things are
+    cramped it is shortened; then it keeps the plain clearance, like a trace;
+    then it is made narrower; and only then left out. It always keeps the full
+    clearance from the board edge.
     """
-    room = board.rules.clearance * max(1.0, breathing)
+    roomy = board.rules.clearance * max(1.0, breathing)
     proud = 0.0
     rules = board.rules
     pads = {p.pad_id: p for p in board.pads_on(layer)}
@@ -140,27 +142,37 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                     continue
                 reach = max(Point(pad.centre).distance(g) for g in getattr(leave, "geoms", [leave]))
                 size = pad.shape.exterior.distance(Point(pad.centre))
-            for length in (LENGTH, LENGTH / 2.0):
+            # As large as there is room for, and a small one rather than none:
+            # shorter, then with no more than the clearance every trace keeps, then narrower.
+            for length, widest, room in ((LENGTH, max_width, roomy), (LENGTH / 2.0, max_width, roomy),
+                                         (LENGTH / 2.0, max_width, rules.clearance), (LENGTH / 2.0, min(max_width, 2.0 * size) / 2.0, rules.clearance)):
                 p = _point_at(pts, reach + min(length * size, max_length))
                 if p is None:
                     continue
                 if pad.radius is not None:
-                    poly = _round(pad.centre, pad.radius, p, half, max_width)
+                    poly = _round(pad.centre, pad.radius, p, half, widest)
                 else:
-                    poly = _polygonal(pad.centre, list(pad.shape.exterior.coords)[:-1], p, half, max_width)
+                    poly = _polygonal(pad.centre, list(pad.shape.exterior.coords)[:-1], p, half, widest)
                 if poly is None:
                     continue
                 shape = Polygon(poly[:5])
                 if not shape.is_valid or not board.outline.contains(shape) or shape.distance(board.outline.exterior) < edge - 1e-6:
                     continue
+                # What has to keep its distance is the copper the teardrop adds:
+                # its part over the pad is the pad's, which stands where it
+                # stands. (Tested whole, a via at the least clearance from a
+                # neighbour lost every teardrop on that side.)
+                added = shape.difference(pad.shape)
+                if added.is_empty:
+                    continue
                 clear = True
                 if tree_c is not None:
-                    for c in tree_c.query(shape, predicate="dwithin", distance=room + proud * 2 * half - 1e-6).tolist():
+                    for c in tree_c.query(added, predicate="dwithin", distance=room + proud * 2 * half - 1e-6).tolist():
                         if copper[c][1] != net:
                             clear = False
-                for j in (tree_w.query(shape, predicate="dwithin", distance=room + max(rules.net_width.values(), default=rules.trace_width)).tolist() if clear else []):
+                for j in (tree_w.query(added, predicate="dwithin", distance=room + max(rules.net_width.values(), default=rules.trace_width)).tolist() if clear else []):
                     other = ids[j]
-                    if wire_net[other] != net and shape.distance(lines[j]) < room + proud * 2 * half + rules.width(wire_net[other]) / 2.0 - 1e-6:
+                    if wire_net[other] != net and added.distance(lines[j]) < room + proud * 2 * half + rules.width(wire_net[other]) / 2.0 - 1e-6:
                         clear = False
                 if clear:
                     out.setdefault(w, []).append(poly)
