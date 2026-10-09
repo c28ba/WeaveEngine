@@ -252,9 +252,21 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
                         near.setdefault(v, []).append((w, px, py, centre[pad]))
         return near
 
-    sleeves = {}
-    for w in state.wire_path:
-        sleeves[w] = discs = [(*disc, i) for i, disc in enumerate(sleeve(w))]
+    # A wire's discs, and its trace pulled against them, follow from the wires
+    # on its own gates and from the map. Relaxation is run many times over a
+    # layer in which little has changed between one run and the next (an end
+    # hopped round its pad, a disc added by the repair), so both are kept
+    # while no wire has come or gone on any of the wire's gates.
+    memo = _kept(state, board)
+    stamp = state.stamp
+    sleeves, first, fresh = {}, {}, {}
+    for w, steps in state.wire_path.items():
+        had = memo.get(w)
+        if had is None or stamp[had[1]].max() > had[0]:
+            had = memo[w] = (state.epoch, np.fromiter((step[0] for step in steps), dtype=np.int64, count=len(steps)),
+                             [(*disc, i) for i, disc in enumerate(sleeve(w))], {})
+        fresh[w] = had
+        sleeves[w] = discs = list(had[2])
         # Discs from the repair loop. Each goes between the two discs the trace touched
         # either side of the trouble: after the last one on its own side that the
         # trace passes before it (and never among the window ends, the first two and last two).
@@ -265,7 +277,17 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
                 if discs[j][3] == left and (discs[j][0] - ox) * dx + (discs[j][1] - oy) * dy < far:
                     i = j
             discs.insert(i + 1, (x, y, r, left, -1, -1, 0, 1.5 * math.pi, place))
-    pull(sleeves, False)
+        pulled = had[3].get(tuple(sorted((cuts or {}).get(w, {}).values())))
+        if pulled is None:
+            first[w] = discs
+        else:
+            lines[w], where[w], touch[w] = pulled
+    pull(first, False)
+    for w in first:
+        fresh[w][3][tuple(sorted((cuts or {}).get(w, {}).values()))] = (lines[w], where[w], touch[w])
+    if len(memo) > 2 * len(fresh) + 64:  # wires that are gone
+        memo.clear()
+        memo.update(fresh)
     if report is not None and report.get("detect_only"):
         report["clamped"] = _clamped(state, lines, where, ends, d)
         return {}
@@ -292,6 +314,20 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     if pressed:
         _merge_pressed_ends(result, pressed, pmap, wire_net, half, board)
     return result
+
+
+def _kept(state: TopoState, board: Board) -> dict:
+    """What ``relax`` keeps from one run to the next, per wire: (the state's
+    epoch when it was worked out, the wire's gates, its discs, its first pull
+    by the discs the repair has added). Emptied when the map or the rules
+    have changed."""
+    rules, pmap = board.rules, state.map
+    key = (pmap.changes, rules.pitch, rules.clearance, tuple(sorted(rules.net_width.items())),
+           tuple(sorted((p.pad_id, p.net_id) for p in board.pads if p.is_via)))
+    kept = state.__dict__.get("_relaxed")
+    if kept is None or kept[0] != key:
+        kept = state.__dict__["_relaxed"] = (key, {})
+    return kept[1]
 
 
 def _arc(disc, come, go) -> Polyline:

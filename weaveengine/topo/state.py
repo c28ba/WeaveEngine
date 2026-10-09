@@ -22,10 +22,7 @@ class TopoState:
         # "load + weight <= cap" is the floor(w / (t + s)) + 1 rule of 6.3 for
         # uniform wires and stays correct for mixed widths. It is an estimate;
         # DRC feedback may lower it, so the working copy lives here.
-        kinds = planar_map.edge_kind_list
         self.cap = np.where(planar_map.edge_kind == 1, 0.0, planar_map.edge_width / planar_map.pitch + 1.0)
-        # A pad edge always lets one trace leave its own pad, however wide.
-        self._terminal = [k == 2 for k in kinds]
         self.load = np.zeros(planar_map.num_edges)
         self.weight: dict[int, float] = {}
         # Wires of one net side by side on a gate are one trace there (11):
@@ -38,11 +35,11 @@ class TopoState:
         self.corner = np.zeros((planar_map.num_triangles, 3), dtype=np.int32)
         self.hist = np.zeros(planar_map.num_edges)
         self.epoch = 0  # counts the times a wire has come or gone: what was worked out from the wires holds while it stands
+        self.stamp = np.zeros(planar_map.num_edges, dtype=np.int64)  # per gate: ``epoch`` when a wire last came or went there
 
     def resize(self) -> None:
         """Brings every table up to the map's present size (the map has gained
-        room for via sites; it never shrinks) and takes the kinds of its edges
-        from the map again. New gates and triangles start empty."""
+        room for via sites; it never shrinks). New gates and triangles start empty."""
         m = self.map
         edges, tris = m.num_edges - len(self.gate_order), m.num_triangles - len(self.corner_cnt)
         if edges > 0:
@@ -53,11 +50,10 @@ class TopoState:
             self.load = np.concatenate([self.load, np.zeros(edges)])
             self.hist = np.concatenate([self.hist, np.zeros(edges)])
             self.count = np.concatenate([self.count, np.zeros(edges, dtype=np.int32)])
+            self.stamp = np.concatenate([self.stamp, np.zeros(edges, dtype=np.int64)])
         if tris > 0:
             self.corner_cnt += [[0, 0, 0] for _ in range(tris)]
             self.corner = np.concatenate([self.corner, np.zeros((tris, 3), dtype=np.int32)])
-        if m.sites or edges > 0:
-            self._terminal = [k == 2 for k in m.edge_kind_list]
 
     def usage(self, edge_id: int) -> int:
         return len(self.gate_order[edge_id])
@@ -102,18 +98,18 @@ class TopoState:
 
     def overflow(self, edge_id: int) -> int:
         """Whole base-width wires by which the gate is over capacity."""
-        if self._terminal[edge_id] and len(self.gate_order[edge_id]) <= 1:
-            return 0
+        if len(self.gate_order[edge_id]) <= 1 and self.map.edge_kind_list[edge_id] == 2:
+            return 0  # a pad edge always lets one trace leave its own pad, however wide
         return max(0, math.ceil(self.load[edge_id] - self.cap[edge_id] - 1e-9))
 
     def overflowed_gates(self) -> list[int]:
-        order, terminal = self.gate_order, self._terminal
+        order, kind = self.gate_order, self.map.edge_kind_list
         return [e for e in np.nonzero(self.load > self.cap + 1e-9)[0].tolist()
-                if not (terminal[e] and len(order[e]) <= 1)]
+                if not (len(order[e]) <= 1 and kind[e] == 2)]
 
     def fits(self, edge_id: int, weight: float) -> bool:
         """Whether one more wire of this weight fits on the edge."""
-        if self._terminal[edge_id] and not self.gate_order[edge_id]:
+        if not self.gate_order[edge_id] and self.map.edge_kind_list[edge_id] == 2:
             return True
         return self.load[edge_id] + weight <= self.cap[edge_id] + 1e-9
 
@@ -141,6 +137,7 @@ class TopoState:
         for edge_id, tri_id, corner_k, slot in steps:
             row = self.gate_order[edge_id]
             row.insert(slot, wire_id)
+            self.stamp[edge_id] = self.epoch
             if (mine >= 0 and ((slot and nets.get(row[slot - 1], -1) == mine) or (slot + 1 < len(row) and nets.get(row[slot + 1], -1) == mine))
                     or (vias and (edge_v[edge_id][0] in vias or edge_v[edge_id][1] in vias))):
                 self.load[edge_id] = self.tally(edge_id)  # beside one of its own net, or at a via
@@ -161,6 +158,7 @@ class TopoState:
             row = self.gate_order[edge_id]
             i = row.index(wire_id)
             del row[i]
+            self.stamp[edge_id] = self.epoch
             # Its two neighbours now meet. Only if one of them is of its net, or
             # they are of one net themselves, or the gate is at a via, is there a run to count again.
             a = nets.get(row[i - 1], -1) if i else -1
@@ -185,6 +183,7 @@ class TopoState:
     def restore(self, snap) -> None:
         order, cnt, paths, load, weight = snap
         self.epoch += 1
+        self.stamp = np.full(len(order), self.epoch, dtype=np.int64)
         self.load, self.weight = load.copy(), dict(weight)
         self.count = np.array([len(o) for o in order], dtype=np.int32)
         self.corner = np.array(cnt, dtype=np.int32).reshape(-1, 3)
