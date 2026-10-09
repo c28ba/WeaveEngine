@@ -91,11 +91,12 @@ def _far(pmap: PlanarMap, edges: list[int]):
 
 
 _NOWHERE = (np.full((1, 1), np.inf), 0.0, 0.0, 1.0)
+_NO_RIDE = (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64))
 
 
 def _own(pmap: PlanarMap, state: TopoState, net: int, through: bool):
     """What a search for a wire of ``net`` reads about its net: the places
-    beside the net's wires, the net's pads on this layer (if the wire may go
+    beside the net's wires (gates, and the places on each), the net's pads on this layer (if the wire may go
     ``through`` them) and how far its wires are from everywhere. Kept while
     neither the wires nor the map change: a connection is searched several
     times over before anything moves."""
@@ -109,7 +110,9 @@ def _own(pmap: PlanarMap, state: TopoState, net: int, through: bool):
             for p in sorted(pmap.pad_edges):
                 by_net[1].setdefault(pmap.pad_net.get(p, -1), []).append(p)
         pads = by_net[1].get(net, []) if through else []
-        kept = pmap.__dict__["_own"] = (key, riding, pads, _far(pmap, list(riding)) if riding else _NOWHERE)
+        at = np.fromiter(riding, dtype=np.int64, count=len(riding))
+        kept = pmap.__dict__["_own"] = (key, (at, np.fromiter(riding.values(), dtype=np.int64, count=len(riding))), pads,
+                                        _far(pmap, at) if riding else _NOWHERE)
     return kept[1:]
 
 
@@ -172,7 +175,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     pmap.catch_up()
     found, seen = None, None
     tb = None
-    riding, pads, far = _own(pmap, state, net, through) if net >= 0 else ({}, [], _NOWHERE)
+    (ride_at, ride_places), pads, far = _own(pmap, state, net, through) if net >= 0 else (_NO_RIDE, [], _NOWHERE)
     pads = [p for p in pads if p != dst_pad and p not in start]
     own_edges = [pmap.pad_edges[p] for p in pads]
     own_ptr = np.cumsum([0, *map(len, own_edges)]).astype(np.int64)
@@ -183,8 +186,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
             tb = pmap.__dict__.get("_kernel_tables")
             if tb is None:
                 tb = pmap.__dict__["_kernel_tables"] = kernel.Tables(pmap)
-            for e, places in riding.items():
-                tb.ride[e] = places
+            tb.ride[ride_at] = ride_places
             for k, edges in enumerate(own_edges):
                 tb.own[edges] = k + 1
             best[:], best_node[:] = np.inf, -1
@@ -229,7 +231,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
             tb.parent[:] = -1
     finally:
         if tb is not None and pmap.__dict__.get("_kernel_tables") is tb:
-            tb.ride[list(riding)] = 0
+            tb.ride[ride_at] = 0
             tb.own[own_edge] = 0
     return (found, seen) if reach else found
 
