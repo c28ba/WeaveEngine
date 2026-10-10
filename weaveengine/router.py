@@ -39,6 +39,7 @@ class Result:
     teardrops: dict[int, list] = field(default_factory=dict)
     stats: dict = field(default_factory=dict)
     wire_pads: dict[int, tuple[int, int]] = field(default_factory=dict)  # wire -> the two pads it joins
+    kept: dict | None = field(default=None, repr=False)  # the routing itself, to go on from (``route_board(resume=...)``)
 
     def summary(self) -> "Result":
         """The same result without the maps and states: small enough to send
@@ -46,7 +47,7 @@ class Result:
         open_pairs = {w: self.connections[w] for w in self.unrouted}
         return Result(self.board, [], open_pairs, self.polylines, self.wire_net, self.wire_layer,
                       self.violations, self.unrouted, self.vias, self.teardrops, self.stats,
-                      {w: (c.src, c.dst) for w, c in self.connections.items() if w in self.polylines})
+                      {w: (c.src, c.dst) for w, c in self.connections.items() if w in self.polylines}, self.kept)
 
     @property
     def complete(self) -> bool:
@@ -63,8 +64,16 @@ class Result:
 
 def route_board(board: Board, params: CostParams | None = None, options: Options | None = None, seed: int = 0,
                 drc_rounds: int = 4, drop_violators: bool = True,
-                workers: int | None = None, progress=None, events=None) -> Result:
+                workers: int | None = None, progress=None, events=None, resume: dict | None = None) -> Result:
     """Routes the board.
+
+    ``resume``: the ``kept`` of an earlier result for this board with these
+    rules. The routing goes on from there instead of from nothing: what is
+    open is negotiated for again, everything is settled and drawn again, and
+    the outcome replaces the earlier one only if it is better (fewer open,
+    then fewer violations, then less trace); otherwise the earlier one is
+    returned as it was. ValueError if the board or its rules are not the ones
+    that routing was made for.
 
     ``workers``: processes to use (None = all cores, 1 = none besides this one);
     the result does not depend on it. ``progress``: optional callable
@@ -81,7 +90,19 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
                   (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events)
-    lines, violations, wire_net = _route_portfolio(ctx, drc_rounds, drop_violators)
+    maps = [_print(layer.pmap) for layer in layers]  # (as built: before any via is put into them)
+    if resume is not None:
+        if resume["maps"] != maps:
+            raise ValueError("the board or its rules have changed since that routing was made: it cannot be gone on from (route it from nothing: Restart)")
+        _adopt(ctx, resume)
+    lines, violations, wire_net = _route_portfolio(ctx, drc_rounds, drop_violators, resume is not None)
+    better = None
+    if resume is not None:
+        better = _key(ctx, lines, violations) < resume["key"]
+        if not better:  # no gain: the earlier routing, exactly
+            _adopt(ctx, resume)
+            lines, violations, wire_net = dict(resume["lines"]), list(resume["violations"]), dict(resume["wire_net"])
+    routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
@@ -138,8 +159,46 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "time_total": t_end - t0,
         "triangles": sum(l.pmap.num_triangles for l in ctx.layers),
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
+        "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
-    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats)
+    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+
+
+def _print(pmap: PlanarMap) -> str:
+    """Names a map as it was built: a routing can only be gone on from on the same one."""
+    import hashlib
+    digest = hashlib.sha1()
+    for table in (pmap.vx, pmap.vy, pmap.tri_v, pmap.edge_kind):
+        digest.update(table.tobytes())
+    return digest.hexdigest()
+
+
+def _key(ctx: Context, lines: dict, violations: list) -> tuple:
+    """How good a routing is, least best: connections open, violations, copper (a shared trunk once)."""
+    copper = sum(copper_length([line for w, line in lines.items() if ctx.conns[w].layer == layer.index]) for layer in ctx.layers)
+    return (len(ctx.unrouted), len(violations), round(copper, 3))
+
+
+def _keep(ctx: Context, lines: dict, violations: list, wire_net: dict, maps: list | None = None) -> dict:
+    """The routing as it stands, to be taken up again on another copy of the
+    maps (``_adopt``): by the parent of a raced variant, or by a later run."""
+    return {"key": _key(ctx, lines, violations), "snapshot": ctx.snapshot(),
+            "caps": [layer.state.cap.copy() for layer in ctx.layers], "hists": [layer.state.hist.copy() for layer in ctx.layers],
+            "pres": ctx.params.pres_fac, "flags": {w: (c.fails, c.dead) for w, c in ctx.conns.items()}, "rounds": ctx.rounds,
+            "lines": lines, "violations": violations, "wire_net": wire_net,
+            "logs": [list(sites.log(layer.pmap)) for layer in ctx.layers], "maps": maps}
+
+
+def _adopt(ctx: Context, kept: dict) -> None:
+    """Takes up a routing kept by ``_keep``: its via sites are made again on this copy of the maps."""
+    ctx.restore(kept["snapshot"], kept["logs"])
+    for layer, cap, hist in zip(ctx.layers, kept["caps"], kept["hists"]):
+        layer.state.cap, layer.state.hist = cap.copy(), hist.copy()
+    ctx.params.pres_fac = kept["pres"]
+    ctx.rounds = kept["rounds"]
+    for w, (fails, dead) in kept["flags"].items():
+        if w in ctx.conns:
+            ctx.conns[w].fails, ctx.conns[w].dead = fails, dead
 
 
 # Settings of the raced variants: (search weighting, growth of the price of an over-full gate per round).
@@ -150,7 +209,7 @@ HEAT = 4
 SETTLE_AGAIN = 3  # times the routing is settled after repair before it is left as repair had it
 
 
-def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool):
+def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bool = False):
     """One routing pass, raced over several variants (section 22).
 
     How a pass ends depends strongly on small differences early on, so the
@@ -165,7 +224,7 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool):
         workers = parallel.cpu_count() if ctx.workers is None else ctx.workers
         count = max(1, min(len(VARIANTS), workers))
     if count == 1 or not parallel.can_fork() or parallel._inside:
-        return _route_once(ctx, drc_rounds, drop_violators)
+        return _route_once(ctx, drc_rounds, drop_violators, resumed)
     # Raced in heats of four: more at once than that only slows each other
     # down (shared caches, efficiency cores), and the plain variant is in the
     # first heat, so an easy board is not held up by the rest.
@@ -175,26 +234,20 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool):
         heat = range(start, min(count, start + HEAT))
         ctx.report("racing variants %d-%d of %d" % (heat[0] + 1, heat[-1] + 1, count))
         stop = parallel.stop_flag()
-        found = parallel.first_accepted(_variant_task, (ctx, drc_rounds, drop_violators, stop), heat,
+        found = parallel.first_accepted(_variant_task, (ctx, drc_rounds, drop_violators, stop, resumed), heat,
                                         lambda outcome: outcome is not None and complete(outcome), len(heat), stop)
         outcomes += [o for o in found if o is not None]
         if outcomes and complete(outcomes[-1]):
             break
     best = len(outcomes) - 1 if outcomes[-1][0][:2] == (0, 0) else min(range(len(outcomes)), key=lambda i: (outcomes[i][0], i))
-    _, snaps, caps, hists, pres, flags, rounds, lines, violations, wire_net, logs = outcomes[best]
-    ctx.restore(snaps, logs)  # the variant's via sites are made again on this copy of the maps
-    for layer, cap, hist in zip(ctx.layers, caps, hists):
-        layer.state.cap, layer.state.hist = cap.copy(), hist.copy()
-    ctx.params.pres_fac = pres
-    ctx.rounds = rounds
-    for w, (fails, dead) in flags.items():
-        ctx.conns[w].fails, ctx.conns[w].dead = fails, dead
+    kept = outcomes[best][1]
+    _adopt(ctx, kept)
     ctx.report("variant %d of %d kept" % (best + 1, count), 1.0, 1.0)
-    return lines, violations, wire_net
+    return kept["lines"], kept["violations"], kept["wire_net"]
 
 
 def _variant_task(shared, index: int):
-    ctx, drc_rounds, drop_violators, stop = shared
+    ctx, drc_rounds, drop_violators, stop, resumed = shared
     ctx.stop = stop
     ctx.seed += index
     ctx.variant = index
@@ -202,32 +255,35 @@ def _variant_task(shared, index: int):
     if index:
         ctx.progress = None  # the console bar follows the plain variant; live events come from all of them
     try:
-        lines, violations, wire_net = _route_once(ctx, drc_rounds, drop_violators)
+        lines, violations, wire_net = _route_once(ctx, drc_rounds, drop_violators, resumed)
     except parallel.Stopped:
         return None  # an earlier variant already connected everything
-    key = (len(ctx.unrouted), len(violations), round(sum(polyline_length(l) for l in lines.values()), 6))
-    return (key, ctx.snapshot(), [l.state.cap.copy() for l in ctx.layers], [l.state.hist.copy() for l in ctx.layers],
-            ctx.params.pres_fac, {w: (c.fails, c.dead) for w, c in ctx.conns.items()}, ctx.rounds,
-            lines, violations, wire_net, [sites.log(l.pmap) for l in ctx.layers])
+    kept = _keep(ctx, lines, violations, wire_net)
+    return (kept["key"], kept)
 
 
-def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool):
-    """Phases 1 - 4 and realisation on a fixed set of pads and connections."""
+def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bool = False):
+    """Phases 1 - 4 and realisation on a fixed set of pads and connections.
+    ``resumed``: the context holds a routing already (``_adopt``); Phases 1
+    and 2 are not run, and everything from Phase 3 on goes on from it."""
     opts = ctx.options
-    conns = list(ctx.conns.values())
-    # Phase 1: candidates for every connection on the empty map, one chosen per connection.
-    cands: dict[int, list] = {}
-    selection: dict[int, int] = {}
-    ctx.report("candidates")
-    if opts.global_selection:
-        cands = cand_mod.generate_all(ctx)
-        ctx.report("global selection")
-        selection = select(ctx, cands)
-    # Phase 2: commit in regret order.
-    commit_all(ctx, cands, selection)
-    # Phase 3: negotiated rip-up and reroute.
+    if not resumed:
+        # Phase 1: candidates for every connection on the empty map, one chosen per connection.
+        cands: dict[int, list] = {}
+        selection: dict[int, int] = {}
+        ctx.report("candidates")
+        if opts.global_selection:
+            cands = cand_mod.generate_all(ctx)
+            ctx.report("global selection")
+            selection = select(ctx, cands)
+        # Phase 2: commit in regret order.
+        commit_all(ctx, cands, selection)
+    else:
+        for conn in ctx.conns.values():  # what could not be done then may be possible now: try everything again
+            conn.fails, conn.dead = 0, False
+    # Phase 3: negotiated rip-up and reroute. (Going on from a routing: as many rounds again, at the most.)
     if opts.ripup:
-        negotiate(ctx)
+        negotiate(ctx, ctx.rounds + ctx.params.max_rounds if resumed else None)
     # Phase 4: topology refinement, what still fits, and vias where a trace would do.
     settle(ctx, vias=True)
 

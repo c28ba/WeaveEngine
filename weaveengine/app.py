@@ -694,6 +694,7 @@ class MainWindow(QMainWindow):
 
         self.act_open = action("Open DSN…", self.open_dialog, "Ctrl+O", tip="Open a Specctra DSN exported from your CAD tool")
         self.act_route = action("Route", self.route, "Ctrl+R", False, tip="Route the board")
+        self.act_restart = action("Restart", self.restart, "Ctrl+Shift+R", False, tip="Take every trace out and route the board from nothing")
         self.act_stop = action("Stop", self.stop, "Ctrl+.", False, tip="Stop routing")
         bar.addSeparator()
         self.act_ses = action("Export SES…", self.export_ses_dialog, "Ctrl+E", False, tip="Write the routed traces as a Specctra session to import into your CAD tool")
@@ -897,13 +898,21 @@ class MainWindow(QMainWindow):
         self.pass_label.setText("")
         self.phase_label.setText("")
         self.time_label.setText("")
-        self.act_route.setEnabled(True)
+        self._idle()
         self.act_ses.setEnabled(False)
         self.act_svg.setEnabled(False)
         return True
 
     # -- routing ----------------------------------------------------------------
+    def restart(self) -> None:
+        """Takes every trace out and routes the board from nothing."""
+        if self.job is not None and self.job.running():
+            return
+        self.result = None
+        self.route()
+
     def route(self) -> None:
+        """Routes the board; if it is routed already, goes on from that routing and tries to better it."""
         if self.dsn_path is None or (self.job is not None and self.job.running()):
             return
         status = self.accel_status
@@ -912,22 +921,23 @@ class MainWindow(QMainWindow):
                                          QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
             if answer != QMessageBox.Yes:
                 return
-        self.result = None
+        improving = self.result is not None and self.result.kept is not None
         self.variants, self.shown_variant, self.previous = {}, None, {}
         self.snapshots_seen = 0
         # The time this board took with these settings before, if it is on record: the best estimate there is.
         self.timings = Timings(os.path.join(os.path.dirname(os.path.abspath(self.settings_path)), "timings.json"))
-        try:
-            self.run_key = Timings.key(self.dsn_path, {k: v for k, v in asdict(self.settings).items()
-                                                       if k not in ("show_outlines", "show_names", "gpu_drawing")})
+        try:  # (going on from a routing takes another time than routing: it is not on that record)
+            self.run_key = None if improving else Timings.key(self.dsn_path, {k: v for k, v in asdict(self.settings).items()
+                                                                              if k not in ("show_outlines", "show_names", "gpu_drawing")})
         except OSError:
             self.run_key = None
         self.started = time.time()
         self.tracker = Estimator(self.started, self.timings.last(self.run_key) if self.run_key else None)
-        self.job = Job(self.dsn_path, self.settings)
+        self.job = Job(self.dsn_path, self.settings, self.result.kept if improving else None)
         self.job.start()
-        self.say("Routing started")
+        self.say("Going on from the routing there is, to better it" if improving else "Routing started")
         self.act_route.setEnabled(False)
+        self.act_restart.setEnabled(False)
         self.act_stop.setEnabled(True)
         self.act_open.setEnabled(False)
         self.act_settings.setEnabled(False)
@@ -943,7 +953,16 @@ class MainWindow(QMainWindow):
             self._idle()
 
     def _idle(self) -> None:
+        """No run is going: the buttons, and the routing there is (if a run to better it was stopped or failed, it stands)."""
+        routed = self.result is not None
+        self.act_route.setText("Improve" if routed else "Route")
+        self.act_route.setToolTip(("Go on from this routing and try to better it" if routed else "Route the board") + "  (Ctrl+R)")
         self.act_route.setEnabled(self.dsn_path is not None)
+        self.act_restart.setEnabled(routed)
+        if routed:
+            self._show(self.result)
+            self.act_ses.setEnabled(True)
+            self.act_svg.setEnabled(True)
         self.act_stop.setEnabled(False)
         self.act_open.setEnabled(True)
         self.act_settings.setEnabled(True)
@@ -1027,8 +1046,24 @@ class MainWindow(QMainWindow):
 
     def _finished(self, event: dict) -> None:
         self.result = result = event["result"]
+        self.finished_runs = getattr(self, "finished_runs", 0) + 1
         self.routed_design = event["design"]
         self.want = event["want"]
+        stats = result.stats
+        self.progress.setValue(1000)
+        self.pass_label.setText("Finished")
+        self.time_label.setText(f"took {clock(event['seconds'])}")
+        if self.run_key:
+            self.timings.record(self.run_key, time.time() - self.started)
+        how = {None: "Finished", True: "Bettered", False: "No better, the routing is as it was"}[stats.get("improved")]
+        self.say(f"{how}: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "
+                 f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
+        self._idle()
+        if stats.get("improved") is False:
+            self.phase_label.setText(self.phase_label.text() + "; no better found, the routing is as it was")
+
+    def _show(self, result) -> None:
+        """Draws a result and puts its figures in the panel."""
         stats = result.stats
         teardrops = [(result.wire_layer[w], poly[:5]) for w, drops in result.teardrops.items() for poly in drops]
         wires = [(result.wire_layer[w], result.wire_net[w], pts) for w, pts in result.polylines.items()]
@@ -1047,17 +1082,7 @@ class MainWindow(QMainWindow):
         self.stats["layers"].setText(", ".join(f"{k}: {v}" for k, v in stats["wires_per_layer"].items()))
         self.stats["showing"].setText("final result" + (f", {len(teardrops)} teardrops" if teardrops else ""))
         self.stats["race"].setText("–")
-        self.progress.setValue(1000)
-        self.pass_label.setText("Finished")
         self.phase_label.setText(f"{stats['routed']} of {stats['connections']} connections routed")
-        self.time_label.setText(f"took {clock(event['seconds'])}")
-        if self.run_key:
-            self.timings.record(self.run_key, time.time() - self.started)
-        self.say(f"Finished: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "
-                 f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
-        self._idle()
-        self.act_ses.setEnabled(True)
-        self.act_svg.setEnabled(True)
 
     # -- export -----------------------------------------------------------------
     def export_ses_dialog(self) -> None:
@@ -1135,7 +1160,7 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
     """Drives the window without a person: open, route, export, check. Used to
     test the application, including a packaged build:
 
-        main.py --self-test board.dsn [--ses out.ses] [--screenshot out.png] [--gpu]
+        main.py --self-test board.dsn [--ses out.ses] [--screenshot out.png] [--gpu] [--improve [--restart]]
 
     ``--gpu``: with graphics-card drawing switched on for this run (the settings file is left alone).
     """
@@ -1190,6 +1215,38 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
           f"teardrops {sum(len(d) for d in window.result.teardrops.values())}, "
           f"live picture shown: {bool(live_frames or window.snapshots_seen)} ({window.snapshots_seen} snapshots)")
     ok = stats["routed"] == stats["connections"]
+    if "--improve" in sys.argv:
+        # "Improve" goes on from the routing there is; "Restart" routes from nothing again.
+        def run(press) -> bool:
+            done = window.finished_runs
+            press()
+            until = time.time() + timeout
+            while window.finished_runs == done and window.job is not None and not window.job.finished and time.time() < until:
+                app.processEvents()
+                time.sleep(0.01)
+            for _ in range(20):
+                app.processEvents()
+                time.sleep(0.01)
+            return window.finished_runs > done
+        before = (stats["connections"] - stats["routed"], len(window.result.violations))
+        assert window.act_route.text() == "Improve" and window.act_restart.isEnabled()
+        if not run(window.route):
+            print("self-test: improving did not finish:", window.phase_label.text())
+            print(window.log.toPlainText()[-2000:])
+            window.close()
+            return 3
+        stats = window.result.stats
+        after = (stats["connections"] - stats["routed"], len(window.result.violations))
+        print(f"self-test: improve: routed {stats['routed']}/{stats['connections']}, vias {stats['vias']}, improved: {stats['improved']}, never worse: {after <= before}")
+        ok = stats["routed"] == stats["connections"] and after <= before and stats["improved"] is not None
+        if "--restart" in sys.argv:
+            if not run(window.restart):
+                print("self-test: restarting did not finish:", window.phase_label.text())
+                window.close()
+                return 3
+            stats = window.result.stats
+            print(f"self-test: restart: routed {stats['routed']}/{stats['connections']}, vias {stats['vias']}, from nothing: {stats['improved'] is None}")
+            ok = ok and stats["improved"] is None
     if ses:
         ok = window.export_ses(ses) and ok
         print("self-test:", window.log.toPlainText().splitlines()[-1].strip())

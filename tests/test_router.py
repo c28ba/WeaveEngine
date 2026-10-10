@@ -850,3 +850,33 @@ def test_a_connection_lifted_is_put_back_exactly():
     for layer in ctx.layers:
         assert layer.state.check_invariants()
 
+
+
+def test_a_routing_is_gone_on_from_and_never_made_worse():
+    """Routing a board that is routed already goes on from that routing: its
+    state comes back with the result, survives being handed to another
+    process, and the outcome is the earlier one unless something is gained."""
+    import pickle
+    board = crossing_board()
+    first = route_board(board, options=Options(portfolio=1, vias=False), workers=1)   # a first routing with room left to better it
+    assert first.stats["improved"] is None and first.kept is not None and first.stats["routed"] == 2
+    kept = pickle.loads(pickle.dumps(first.summary().kept))
+    again = route_board(board, options=Options(portfolio=1), workers=1, resume=kept)
+    assert_clean(board, again)
+    assert again.stats["improved"] is True and again.stats["routed"] == 4 and again.stats["vias"] >= 2
+    assert all(net_is_connected(again, net) for net in range(4))
+    # Nothing more to gain: the routing comes back as it was, vias and all.
+    once_more = route_board(board, options=Options(portfolio=1), workers=1, resume=again.kept)
+    if once_more.stats["improved"] is False:
+        assert once_more.kept["lines"] == again.kept["lines"] and once_more.stats["vias"] == again.stats["vias"]
+    assert once_more.kept["key"] <= again.kept["key"]
+    assert_clean(board, once_more)
+    # With raced variants too; and each of them starts from the routing, not from nothing.
+    raced = route_board(board, options=Options(portfolio=3), workers=3, resume=first.kept)
+    assert raced.kept["key"] <= first.kept["key"]
+    assert_clean(board, raced)
+    # Another board, or other rules, and there is nothing to go on from.
+    other = crossing_board()
+    other.rules.clearance += 0.05
+    with pytest.raises(ValueError, match="changed"):
+        route_board(other, options=Options(portfolio=1), workers=1, resume=first.kept)

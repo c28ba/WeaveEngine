@@ -29,8 +29,8 @@ import traceback
 from weaveengine.settings import Settings
 
 
-def _work(dsn_path: str, settings: Settings, events) -> None:
-    """Body of the routing process."""
+def _work(dsn_path: str, settings: Settings, events, resume=None) -> None:
+    """Body of the routing process. ``resume``: the ``kept`` of an earlier result to go on from."""
     try:
         if hasattr(os, "setsid"):
             os.setsid()  # own process group: cancelling takes the worker processes too
@@ -58,7 +58,7 @@ def _work(dsn_path: str, settings: Settings, events) -> None:
         params = cost_params(settings, planar_map.build(design.board))
         result = route_board(design.board, params, settings.options(), seed=settings.seed,
                              drc_rounds=settings.drc_rounds,
-                             workers=settings.workers or None, events=events.put)
+                             workers=settings.workers or None, events=events.put, resume=resume)
         summary = result.summary()
         events.put({"type": "done", "result": summary, "design": design, "seconds": time.time() - start,
                     "want": (want_clearance, want_edge)})
@@ -71,9 +71,10 @@ def _work(dsn_path: str, settings: Settings, events) -> None:
 class Job:
     """One routing run in a background process."""
 
-    def __init__(self, dsn_path: str, settings: Settings | None = None):
+    def __init__(self, dsn_path: str, settings: Settings | None = None, resume: dict | None = None):
         self.dsn_path = dsn_path
         self.settings = settings or Settings()
+        self.resume = resume  # ``Result.kept`` of an earlier run of this board with these rules: go on from it
         # A fresh interpreter, not a fork: the front end may be a GUI with threads.
         # (Inside it, the router forks its own workers where the platform allows.)
         self._ctx = multiprocessing.get_context("spawn")
@@ -84,7 +85,7 @@ class Job:
         self.finished = False
 
     def start(self) -> None:
-        self._process = self._ctx.Process(target=_work, args=(self.dsn_path, self.settings, self._events), daemon=False)
+        self._process = self._ctx.Process(target=_work, args=(self.dsn_path, self.settings, self._events, self.resume), daemon=False)
         self._process.start()
 
     def poll(self, limit: int = 200) -> list[dict]:

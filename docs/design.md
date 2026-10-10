@@ -1067,6 +1067,33 @@ A simple GUI started from `main.py` at the repository root (`weaveengine/app.py`
 
 ---
 
+## 23a. Going on from a routing (`router.route_board(resume=...)`)
+
+**What it is for.** Routing a board that is routed already used to throw the routing away and start from nothing. Now a result carries the routing itself (`Result.kept`: the states, the log of what was done to the maps, the capacities and histories, the prices, the traces as drawn), and `route_board` given that goes on from it.
+
+**What going on does.** Phases 1 and 2 are not run. The maps are built afresh and the kept routing put on them exactly (`router._adopt`, which is how the parent of raced variants has always taken up the variant it keeps: the via sites are made again from the log, 12.2). Then everything from Phase 3 on runs as in any pass: every connection may be tried again (the marks of earlier failure are wiped), rip-up may run as many rounds again, the routing is settled, drawn, checked, repaired and its vias slid. Raced variants each start from the kept routing, with their different settings.
+
+**Never worse.** A routing is judged by connections open, then violations, then copper (a shared trunk once: `router._key`, which is also how raced variants are now told apart; it was the length of all traces added up, which counts a shared trunk twice and called a routing with more copper the better one on Word of RAM). If going on does not give a better one, the earlier routing is put back and returned as it was (`stats["improved"]` is False).
+
+**Only on the same maps.** A kept routing names every gate by number. It is refused, with a message, if the maps built now are not the maps it was made on (a hash of each map as built): another board, or other rules.
+
+**In the application.** Once a board is routed, "Route" reads "Improve" and goes on from the routing shown; "Restart" takes everything out and routes from nothing. Stopping a run that is going on from a routing, or one that fails, leaves the routing that was there. The time such a run takes is not put on the record of how long the board takes (24).
+
+**Measured** (one variant unless said):
+
+| Board | Routed from nothing | Gone on from once | Twice | Three times |
+|---|---|---|---|---|
+| blinkSP1 | 56 of 58, 43 vias, 5.2 s | 58 of 58, 41 vias, 3.4 s | no better, 1.9 s | no better |
+| blinkSP1, raced | 58 of 58, 50 vias, 1248 mm, 14.8 s | 48 vias, 1236 mm, 2.8 s | 1225 mm | 1224 mm |
+| ulx3s | 201 of 203, 31 vias, 8.3 s | 202, 4.7 s | 203 of 203, 4.1 s | less copper |
+| Word of RAM | 85 of 85, 1971 mm | no better, 0.6 s | | |
+
+The kept routing is 4 to 5 MB for blinkSP1 and ulx3s as handed between processes.
+
+Not done: it is not saved with the board, so it lasts while the application is open; and it is all of the routing or none (no going on from part of it).
+
+---
+
 ## 24. The time left (`weaveengine/progress.py`)
 
 **What was wrong.** The old figure took fixed shares per phase, measured once on ALU, and extrapolated the time so far. It was nearly always too small, for three reasons found by recording the events of real runs: (1) rip-up's "progress" was the share of violations cleared, which reaches 90 % in the first few rounds and then crawls for most of the run; (2) repairs after the check were not counted; (3) when no raced variant connects everything, a second heat of four variants runs, about as long as the first, and the timer followed only variant 0, which is not in it.
