@@ -104,6 +104,11 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     """wire id -> teardrops, each [pad centre, pad point, track left, track right, pad point, tip]:
     the first five are the outline, the sixth is the centre of the track where the teardrop starts.
 
+    Between two pads too close for a teardrop each, the trace gets one piece of
+    copper from pad to pad with straight sides instead, in the same form: two
+    halves whose "track left" and "track right" are the ends of the line they
+    share across its middle.
+
     Round pads get tangent lines to the pad circle; other convex pads get lines
     to the two pad corners that bound the pad as seen from the trace.
 
@@ -116,7 +121,6 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     clearance from the board edge.
     """
     roomy = board.rules.clearance * max(1.0, breathing)
-    proud = 0.0
     rules = board.rules
     pads = {p.pad_id: p for p in board.pads_on(layer)}
     copper = [(p.shape, p.net_id) for p in pads.values()] + [(o.shape, o.net_id) for o in board.obstacles_on(layer)]
@@ -142,10 +146,58 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                 leave = LineString(pts).intersection(pad.shape.exterior)
                 reach = 0.0 if leave.is_empty else max(Point(pad.centre).distance(g) for g in getattr(leave, "geoms", [leave]))
                 ends.append((pad if not leave.is_empty else None, pts, reach, pad.shape.exterior.distance(Point(pad.centre))))
+        def shaped(pad, p, widest):
+            """The teardrop of ``pad`` with its point at p, or None."""
+            if pad.radius is not None:
+                return _round(pad.centre, pad.radius, p, half, widest)
+            return _polygonal(pad.centre, list(pad.shape.exterior.coords)[:-1], p, half, widest)
+
+        def fits(shape, own, room: float) -> bool:
+            """Whether the copper ``shape`` adds to the pads ``own`` is on the
+            board and keeps ``room`` from foreign copper and traces. What has
+            to keep its distance is what is added: the part over a pad is the
+            pad's, which stands where it stands. (Tested whole, a via at the
+            least clearance from a neighbour lost every teardrop on that side.)"""
+            if not shape.is_valid or not board.outline.contains(shape) or shape.distance(board.outline.exterior) < edge - 1e-6:
+                return False
+            added = shape
+            for pad in own:
+                added = added.difference(pad.shape)
+            if added.is_empty:
+                return False
+            if tree_c is not None and any(copper[c][1] != net for c in tree_c.query(added, predicate="dwithin", distance=room - 1e-6).tolist()):
+                return False
+            for j in tree_w.query(added, predicate="dwithin", distance=room + max(rules.net_width.values(), default=rules.trace_width)).tolist():
+                if wire_net[ids[j]] != net and added.distance(lines[j]) < room + rules.width(wire_net[ids[j]]) / 2.0 - 1e-6:
+                    return False
+            return True
+
         # Of the trace between its two pads each end's teardrop may take half: on a
         # trace shorter than two teardrops they would otherwise reach past each
         # other, each with its point inside the other's pad.
         share = (sum(math.dist(p, q) for p, q in zip(line, line[1:])) - ends[0][2] - ends[1][2]) / 2.0
+        (pad_a, pts, reach_a, size_a), (pad_b, _, _, size_b) = ends
+        if pad_a is not None and pad_b is not None and share > 0.0 and min(LENGTH * size_a, max_length) + min(LENGTH * size_b, max_length) > 2.0 * share:
+            # No room for two teardrops: they would meet at a waist with a notch
+            # either side of it. One piece of copper from pad to pad instead,
+            # with straight sides, kept as two halves that share its middle.
+            mid = _point_at(pts, reach_a + share)
+            for widest, room in ((max_width, roomy), (max_width, rules.clearance), (min(max_width, 2.0 * min(size_a, size_b)) / 2.0, rules.clearance)):
+                one, two = (shaped(pad_a, mid, widest), shaped(pad_b, mid, widest)) if mid is not None else (None, None)
+                if one is None or two is None:
+                    continue
+                # Which point of the one pad is joined to which of the other: so that the sides do not cross.
+                near, far = (two[4], two[1]) if not LineString([one[1], two[4]]).intersects(LineString([one[4], two[1]])) else (two[1], two[4])
+                left = ((one[1][0] + near[0]) / 2.0, (one[1][1] + near[1]) / 2.0)
+                right = ((one[4][0] + far[0]) / 2.0, (one[4][1] + far[1]) / 2.0)
+                if math.dist(left, right) < 2.0 * half:
+                    continue  # (narrower in the middle than the trace: two teardrops after all)
+                tip = ((left[0] + right[0]) / 2.0, (left[1] + right[1]) / 2.0)
+                if fits(Polygon([one[1], near, far, one[4]]), (pad_a, pad_b), room):
+                    out[w] = [[one[0], one[1], left, right, one[4], tip], [two[0], near, left, right, far, tip]]
+                    break
+            if w in out:
+                continue
         for pad, pts, reach, size in ends:
             if pad is None or share <= half:
                 continue
@@ -154,34 +206,8 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
             for length, widest, room in ((LENGTH, max_width, roomy), (LENGTH / 2.0, max_width, roomy),
                                          (LENGTH / 2.0, max_width, rules.clearance), (LENGTH / 2.0, min(max_width, 2.0 * size) / 2.0, rules.clearance)):
                 p = _point_at(pts, reach + min(length * size, max_length, share))
-                if p is None:
-                    continue
-                if pad.radius is not None:
-                    poly = _round(pad.centre, pad.radius, p, half, widest)
-                else:
-                    poly = _polygonal(pad.centre, list(pad.shape.exterior.coords)[:-1], p, half, widest)
-                if poly is None:
-                    continue
-                shape = Polygon(poly[:5])
-                if not shape.is_valid or not board.outline.contains(shape) or shape.distance(board.outline.exterior) < edge - 1e-6:
-                    continue
-                # What has to keep its distance is the copper the teardrop adds:
-                # its part over the pad is the pad's, which stands where it
-                # stands. (Tested whole, a via at the least clearance from a
-                # neighbour lost every teardrop on that side.)
-                added = shape.difference(pad.shape)
-                if added.is_empty:
-                    continue
-                clear = True
-                if tree_c is not None:
-                    for c in tree_c.query(added, predicate="dwithin", distance=room + proud * 2 * half - 1e-6).tolist():
-                        if copper[c][1] != net:
-                            clear = False
-                for j in (tree_w.query(added, predicate="dwithin", distance=room + max(rules.net_width.values(), default=rules.trace_width)).tolist() if clear else []):
-                    other = ids[j]
-                    if wire_net[other] != net and added.distance(lines[j]) < room + proud * 2 * half + rules.width(wire_net[other]) / 2.0 - 1e-6:
-                        clear = False
-                if clear:
+                poly = shaped(pad, p, widest) if p is not None else None
+                if poly is not None and fits(Polygon(poly[:5]), (pad,), room):
                     out.setdefault(w, []).append(poly)
                     break
     return out

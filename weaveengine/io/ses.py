@@ -21,16 +21,28 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
     """
     half = track_width / 2.0
     _, t1, left, right, t2 = poly[:5]
-    tip = tip_of(poly)
-    # Outer lines: the teardrop's sides moved in by half a trace width.
-    first = (t1[0] - (left[0] - tip[0]), t1[1] - (left[1] - tip[1]))
-    last = (t2[0] - (right[0] - tip[0]), t2[1] - (right[1] - tip[1]))
+
+    def inset(a, b, towards):
+        """The side a b moved half a trace width in, towards the other side."""
+        nx, ny = b[1] - a[1], a[0] - b[0]
+        n = math.hypot(nx, ny) or 1.0
+        if nx * (towards[0] - a[0]) + ny * (towards[1] - a[1]) < 0.0:
+            nx, ny = -nx, -ny
+        return (a[0] + half * nx / n, a[1] + half * ny / n), (b[0] + half * nx / n, b[1] + half * ny / n)
+
+    # Outer lines: the teardrop's sides moved in by half a trace width. At the
+    # track that brings both to the track's centre (the sides are tangent to
+    # its round end); where the copper is wide there too (one piece from pad to
+    # pad, ``teardrops``), the lines start side by side across it.
+    (first, begin), (last, end) = inset(t1, left, t2), inset(t2, right, t1)
     span = math.dist(first, last)
     if math.dist(t1, t2) <= track_width or span <= 1e-6:
         return []
-    count = max(2, math.ceil(span / (TEARDROP_OVERLAP * track_width)) + 1)
+    count = max(2, math.ceil(max(span, math.dist(begin, end)) / (TEARDROP_OVERLAP * track_width)) + 1)
     ends = [(first[0] + (last[0] - first[0]) * i / (count - 1), first[1] + (last[1] - first[1]) * i / (count - 1))
             for i in range(count)]
+    starts = [(begin[0] + (end[0] - begin[0]) * i / (count - 1), begin[1] + (end[1] - begin[1]) * i / (count - 1))
+              for i in range(count)]
     # From the edges towards the middle.
     order, lo, hi = [], 0, count - 1
     while lo <= hi:
@@ -44,13 +56,13 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
     # beyond it.) The slivers this leaves between round ends are over the pad.
     out = []
     for i in order:
-        ex, ey = ends[i]
-        dx, dy = ex - tip[0], ey - tip[1]
+        (sx, sy), (ex, ey) = starts[i], ends[i]
+        dx, dy = ex - sx, ey - sy
         length = math.hypot(dx, dy)
         if length <= half + 1e-6:
             continue
         f = (length - half) / length
-        out.append((track_width, tip, (tip[0] + dx * f, tip[1] + dy * f)))
+        out.append((track_width, (sx, sy), (sx + dx * f, sy + dy * f)))
     return out
 
 

@@ -303,9 +303,13 @@ def test_teardrop_is_made_smaller_where_it_is_cramped():
     assert_clean(board, shut)
 
 
-def test_teardrops_on_a_short_trace_do_not_reach_past_each_other():
-    """Two pads of a net close together: each end's teardrop takes at most half
-    of the trace between them, so neither has its point inside the other's pad."""
+def test_pads_too_close_for_two_teardrops_get_one_piece_of_copper():
+    """Two pads of a net close together. Two teardrops would reach past each
+    other, or, cut short, meet at a waist with a notch either side. The trace
+    gets one straight-sided piece from pad to pad, as two halves that share its
+    middle; and the session file's traces fill it."""
+    from shapely.ops import unary_union
+    from weaveengine.io.ses import teardrop_tracks
     board = Board.rectangle(12, 8, Rules(0.2, 0.2))
     board.pads.append(Pad.circle(0, 5.0, 5.0, 0.5, net_id=0))
     board.pads.append(Pad.rect(1, 5.3, 3.75, 1.6, 1.0, net_id=0))
@@ -313,11 +317,18 @@ def test_teardrops_on_a_short_trace_do_not_reach_past_each_other():
     assert result.unrouted == []
     (w, drops), = result.teardrops.items()
     assert len(drops) == 2
-    free = LineString(result.polylines[w]).difference(board.pads[0].shape).difference(board.pads[1].shape)
-    for poly in drops:
-        tip = Point(tip_of(poly))
-        assert not any(pad.shape.contains(tip) for pad in board.pads)
-        assert tip.distance(free.interpolate(0.5, normalized=True)) <= free.length / 2 + 1e-6   # on its own half
+    one, two = (Polygon(poly[:5]) for poly in drops)
+    assert not any(pad.shape.contains(Point(tip_of(poly))) for poly in drops for pad in board.pads)
+    # The halves meet along one line and nowhere overlap: together they are one convex piece, with no notch.
+    assert drops[0][2] == drops[1][2] and drops[0][3] == drops[1][3] and one.intersection(two).area < 1e-9
+    whole = unary_union([one, two])
+    assert whole.convex_hull.area - whole.area < 1e-9
+    assert math.dist(drops[0][2], drops[0][3]) > 2 * board.rules.trace_width   # as wide in the middle as a teardrop, not a waist
+    # Written out as traces, it is filled and nothing reaches outside it.
+    tracks = [LineString([a, b]).buffer(width / 2.0) for poly in drops for width, a, b in teardrop_tracks(poly, board.rules.trace_width)]
+    solid = unary_union([whole, board.pads[0].shape, board.pads[1].shape, LineString(result.polylines[w]).buffer(0.1)])
+    assert all(solid.buffer(1e-5).contains(t) for t in tracks)
+    assert unary_union(tracks + [board.pads[0].shape, board.pads[1].shape, LineString(result.polylines[w]).buffer(0.1)]).area > 0.999 * solid.area
     assert_clean(board, result)
 
 
@@ -507,7 +518,7 @@ def test_teardrops_are_written_to_the_session_as_traces(tmp_path):
             tip = tip_of(poly, width / 2)
             tracks = teardrop_tracks(poly, width)
             assert len(tracks) >= 2
-            assert all(t[0] == width and t[1] == tip for t in tracks)       # ordinary traces, all from the tip
+            assert all(t[0] == width and math.dist(t[1], tip) < 1e-9 for t in tracks)   # ordinary traces, all from the tip
             copper = [LineString([a, b]).buffer(w_ / 2.0) for w_, a, b in tracks]
             track = LineString(result.polylines[w]).buffer(width / 2.0)
             for c in copper:
