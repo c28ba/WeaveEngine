@@ -104,10 +104,10 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     """wire id -> teardrops, each [pad centre, pad point, track left, track right, pad point, tip]:
     the first five are the outline, the sixth is the centre of the track where the teardrop starts.
 
-    Between two pads too close for a teardrop each, the trace gets one piece of
-    copper from pad to pad with straight sides instead, in the same form: two
-    halves whose "track left" and "track right" are the ends of the line they
-    share across its middle.
+    Between two pads too close for a teardrop each, the two are made together:
+    each takes half of the trace, and they meet in one line across it, their
+    "track left" and "track right", so that the pair is an hourglass with no
+    notch at its waist.
 
     Round pads get tangent lines to the pad circle; other convex pads get lines
     to the two pad corners that bound the pad as seen from the trace.
@@ -178,23 +178,27 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
         share = (sum(math.dist(p, q) for p, q in zip(line, line[1:])) - ends[0][2] - ends[1][2]) / 2.0
         (pad_a, pts, reach_a, size_a), (pad_b, _, _, size_b) = ends
         if pad_a is not None and pad_b is not None and share > 0.0 and min(LENGTH * size_a, max_length) + min(LENGTH * size_b, max_length) > 2.0 * share:
-            # No room for two teardrops: they would meet at a waist with a notch
-            # either side of it. One piece of copper from pad to pad instead,
-            # with straight sides, kept as two halves that share its middle.
+            # No room for two teardrops: each takes half of the trace, and they
+            # are made together, so that they meet in one line across the
+            # trace, as wide as the trace. (Each made by itself ends in sides
+            # tangent to the trace's round end, and two such ends cross and
+            # leave a notch either side.)
             mid = _point_at(pts, reach_a + share)
             for widest, room in ((max_width, roomy), (max_width, rules.clearance), (min(max_width, 2.0 * min(size_a, size_b)) / 2.0, rules.clearance)):
                 one, two = (shaped(pad_a, mid, widest), shaped(pad_b, mid, widest)) if mid is not None else (None, None)
                 if one is None or two is None:
                     continue
-                # Which point of the one pad is joined to which of the other: so that the sides do not cross.
-                near, far = (two[4], two[1]) if not LineString([one[1], two[4]]).intersects(LineString([one[4], two[1]])) else (two[1], two[4])
-                left = ((one[1][0] + near[0]) / 2.0, (one[1][1] + near[1]) / 2.0)
-                right = ((one[4][0] + far[0]) / 2.0, (one[4][1] + far[1]) / 2.0)
-                if math.dist(left, right) < 2.0 * half:
-                    continue  # (narrower in the middle than the trace: two teardrops after all)
-                tip = ((left[0] + right[0]) / 2.0, (left[1] + right[1]) / 2.0)
-                if fits(Polygon([one[1], near, far, one[4]]), (pad_a, pad_b), room):
-                    out[w] = [[one[0], one[1], left, right, one[4], tip], [two[0], near, left, right, far, tip]]
+                dx, dy = pad_b.centre[0] - pad_a.centre[0], pad_b.centre[1] - pad_a.centre[1]
+                n = math.hypot(dx, dy) or 1.0
+                left, right = (mid[0] - half * dy / n, mid[1] + half * dx / n), (mid[0] + half * dy / n, mid[1] - half * dx / n)
+                halves = []
+                for poly in (one, two):  # which of its two points on the pad is on which side of the trace
+                    a, b = poly[1], poly[4]
+                    if dx * (a[1] - mid[1]) - dy * (a[0] - mid[0]) < dx * (b[1] - mid[1]) - dy * (b[0] - mid[0]):
+                        a, b = b, a
+                    halves.append([poly[0], a, left, right, b, tuple(mid)])
+                if fits(shapely.union_all([Polygon(poly[:5]) for poly in halves]), (pad_a, pad_b), room):
+                    out[w] = halves
                     break
             if w in out:
                 continue
