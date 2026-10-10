@@ -614,6 +614,30 @@ All measured clean from the written file.
 - `RAM Selector Tree` is worse than the prototype of 12.4 was (383 of 400, 206 vias, about 5 minutes). The main rip-up takes 9 minutes, and then each of the four repair rounds after the design-rule check takes over two minutes more. The geometry failures with vias on this board (12.4, finding 4) have never been diagnosed, and the repair for them is where half the time and probably the connections go.
 - Racing variants on a board no variant will finish runs all eight for nothing: the variants differ only in seed and search weighting, and the seed has no effect. `RAM Selector Tree` raced was stopped after 13 minutes with its first heat of four still running.
 
+### 12.7a Where rip-up's time goes, round by round (measured; nothing changed)
+
+Rip-up is 106 of 156 s on RAM Selector Tree (35 rounds), 3.3 of 5.8 s on blinkSP1, 2.7 of 10 s on ulx3s, 2.1 of 16 s on ALU. On RAM Selector Tree: planning a route for each connection taken out 76 s (3,600 plans, 21 ms each), putting plans in 18 s, taking connections out 5.5 s, the searches that name what blocks an open connection 3.6 s, everything else 1 s.
+
+**What the searches inside rip-up are** (58 s inside the kernel on that board):
+
+| Search | Share | Nodes each |
+|---|---|---|
+| from the pad: the cheapest way crosses a gate twice, so there is no route (8.4) | 33 % (7,650 of 10,500 such searches) | 28,000 |
+| from via points, a way found | 32 % | 28,000 |
+| from via points, the way crosses a gate twice | 12 % | 35,000 |
+| from via points, no way | 6 % | 9,000 |
+| everything else (a way found from the pad, candidates, blocking) | 17 % | |
+
+So the floods are not, as was supposed, a matter of the price of an over-full gate dwarfing distances and blunting the estimate. Three searches from the pad in four end in a way that goes along one side of a wire, round its end and back along the other, which cannot be put in. Nothing is offered on that layer, and the connection goes to the searches from via points, which flood again. This is one cause for both the time and the vias made during rip-up (44 rise to 173; 119 are left after tidying).
+
+**Tried: a search that does not cross a gate its own way has crossed.** Before a step onto a gate the search has been at already, the way to the present node is walked back to see whether it crossed that gate (the walk stops at a pad of the net it came through, where a new piece begins). Not exact (a dearer way to the same node that had not crossed the gate is not kept), but every way found can be put in. Rip-up then behaves as negotiation should: on RAM Selector Tree it ends in 20 rounds with nothing open and nothing over-full, where it now runs 35 and ends with 5 open; ALU ends with 1 via instead of 8. But the walk makes a search ten times slower with the same number of nodes (ALU: 0.74 ms to 8.7 ms each): RAM Selector Tree 156 s to 424 s, ALU 15 s to 28 s. Quality was mixed besides: ALU 6 % more copper, RAM Selector Tree 150 vias for 119, blinkSP1 56 (47 to 58) for 55 (47 to 58). Taken out. A test in a few steps instead of a walk (a pointer per node that jumps back, the depth of each node) would by my estimate leave a search about twice as slow, and the run on RAM Selector Tree perhaps a sixth faster: not enough for a change that alters every board's routing.
+
+**Tried: ending rip-up as soon as no gate is over-full**, and leaving what is open to `fill` (once nothing is over-full, a round takes out what blocks the open connections, and those are open next: on RAM Selector Tree the open count goes 20, 13, 10, 17, 8, 12, 13, 10, 2, 5, 9, 6, 6, 5, 7, 2, 5, 3 over the last 17 rounds). Word of RAM, ALU and ulx3s come out the same to the millimetre. RAM Selector Tree: 400 of 400 still, 105 vias for 119, 4 % more copper, 148 s for about 160. blinkSP1: the same median, 55, but the worst of 18 runs falls from 47 to 42. Eight per cent on one board against a worse tail on another: not kept.
+
+**Other things seen and not pursued.** Every wire on an over-full gate is taken out, though the gate may be over by one: 133 to 169 of 400 connections a round for the first eleven rounds. Rounds that repeat exactly (ulx3s rounds 10 to 15: the same four wires out and back) until the stall limit ends them; they cost hundredths of a second each. Each plan in rip-up makes two scored candidates per layer before the route across layers is tried; how often the second or the scoring changes the choice has not been counted.
+
+**Where that leaves it.** The lever is the search: a way from the pad that is a route, and one search over all layers instead of a chain that floods each layer again. Both are the same piece of work, and it changes what every board routes to, so it is to be judged as a change of the router and not as a speed-up.
+
 ### 12.8 Why traces end up too close on RAM Selector Tree (diagnosis)
 
 Taken from the routing saved at its first geometry step: 32 of 400 connections open, 215 vias, 583 traces, 123 violations.
