@@ -129,24 +129,31 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     for w, line in polylines.items():
         net = wire_net[w]
         half = rules.width(net) / 2.0
+        # Each end: its pad, the trace seen from it, how far along the trace the pad reaches, the pad's size.
+        ends = []
         for pad_id, pts in zip(wire_pads[w], (line, line[::-1])):
             pad = pads.get(pad_id)
             if pad is None:
-                continue
-            if pad.radius is not None:
-                reach = size = pad.radius
+                ends.append((None, pts, 0.0, 0.0))
+            elif pad.radius is not None:
+                ends.append((pad, pts, pad.radius, pad.radius))
             else:
                 # Where the trace leaves the pad, and half the pad's smaller dimension (its inscribed radius).
                 leave = LineString(pts).intersection(pad.shape.exterior)
-                if leave.is_empty:
-                    continue
-                reach = max(Point(pad.centre).distance(g) for g in getattr(leave, "geoms", [leave]))
-                size = pad.shape.exterior.distance(Point(pad.centre))
+                reach = 0.0 if leave.is_empty else max(Point(pad.centre).distance(g) for g in getattr(leave, "geoms", [leave]))
+                ends.append((pad if not leave.is_empty else None, pts, reach, pad.shape.exterior.distance(Point(pad.centre))))
+        # Of the trace between its two pads each end's teardrop may take half: on a
+        # trace shorter than two teardrops they would otherwise reach past each
+        # other, each with its point inside the other's pad.
+        share = (sum(math.dist(p, q) for p, q in zip(line, line[1:])) - ends[0][2] - ends[1][2]) / 2.0
+        for pad, pts, reach, size in ends:
+            if pad is None or share <= half:
+                continue
             # As large as there is room for, and a small one rather than none:
             # shorter, then with no more than the clearance every trace keeps, then narrower.
             for length, widest, room in ((LENGTH, max_width, roomy), (LENGTH / 2.0, max_width, roomy),
                                          (LENGTH / 2.0, max_width, rules.clearance), (LENGTH / 2.0, min(max_width, 2.0 * size) / 2.0, rules.clearance)):
-                p = _point_at(pts, reach + min(length * size, max_length))
+                p = _point_at(pts, reach + min(length * size, max_length, share))
                 if p is None:
                     continue
                 if pad.radius is not None:

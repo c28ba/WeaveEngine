@@ -303,6 +303,24 @@ def test_teardrop_is_made_smaller_where_it_is_cramped():
     assert_clean(board, shut)
 
 
+def test_teardrops_on_a_short_trace_do_not_reach_past_each_other():
+    """Two pads of a net close together: each end's teardrop takes at most half
+    of the trace between them, so neither has its point inside the other's pad."""
+    board = Board.rectangle(12, 8, Rules(0.2, 0.2))
+    board.pads.append(Pad.circle(0, 5.0, 5.0, 0.5, net_id=0))
+    board.pads.append(Pad.rect(1, 5.3, 3.75, 1.6, 1.0, net_id=0))
+    result = route_board(board, options=Options(teardrop_max_length=0.5, teardrop_max_width=1.0))
+    assert result.unrouted == []
+    (w, drops), = result.teardrops.items()
+    assert len(drops) == 2
+    free = LineString(result.polylines[w]).difference(board.pads[0].shape).difference(board.pads[1].shape)
+    for poly in drops:
+        tip = Point(tip_of(poly))
+        assert not any(pad.shape.contains(tip) for pad in board.pads)
+        assert tip.distance(free.interpolate(0.5, normalized=True)) <= free.length / 2 + 1e-6   # on its own half
+    assert_clean(board, result)
+
+
 def square_pad_board(width: float = 0.2) -> Board:
     board = Board.rectangle(30, 20, Rules(0.2, 0.2))
     for pad_id, x, y, net in [(0, 5, 5, 0), (1, 25, 8, 0), (2, 5, 15, 1), (3, 25, 13, 1)]:
