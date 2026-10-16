@@ -27,7 +27,7 @@ from weaveengine.io.ses import write_ses
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
-from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, Settings, default_path
+from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, RULES, Settings, default_path, detected_rules, undetected
 from weaveengine.viz.svg import export_result
 
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227", "#b06cff", "#22cfcf"]
@@ -517,7 +517,9 @@ class SettingsDialog(QDialog):
     number, which is only enabled when the switch is off.
     """
 
-    def __init__(self, settings: Settings, path: str, parent=None):
+    def __init__(self, settings: Settings, path: str, parent=None, detected: dict | None = None, board: str = ""):
+        """``detected``: what the open board gives for each rule (``settings.detected_rules``),
+        shown under that rule's row; ``board`` names it. None: no board is open."""
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.path = path
@@ -546,10 +548,16 @@ class SettingsDialog(QDialog):
                 spin = self._spin(isinstance(value, int), minimum=0)
                 form.addRow(label, spin)
                 self.readers[name], self.writers[name] = spin.value, spin.setValue
+            if name in RULES:
+                form.addRow(self._detected_label(name, detected, board))
             hint = QLabel(description)
             hint.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 6px;")
             hint.setWordWrap(True)
             form.addRow(hint)
+        if detected and any(value is None for value, _ in detected.values()):
+            for i in range(tabs.count()):
+                if tabs.tabText(i) == "Rules":
+                    tabs.setTabText(i, "Rules ⚠")
         self.load(settings)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel | QDialogButtonBox.RestoreDefaults)
         buttons.accepted.connect(self.accept)
@@ -563,6 +571,23 @@ class SettingsDialog(QDialog):
         layout.addWidget(where)
         layout.addWidget(buttons)
         self.resize(520, 640)
+
+    @staticmethod
+    def _detected_label(name: str, detected: dict | None, board: str) -> QLabel:
+        """What the open board gives for this rule, or a warning that it gives nothing."""
+        if detected is None:
+            label = QLabel("Open a board to see the value it gives")
+            label.setStyleSheet("color: gray; font-size: 11px;")
+        else:
+            value, source = detected[name]
+            if value is None:
+                label = QLabel(f"⚠ Not detected in {board}: {source}")
+                label.setStyleSheet("color: #e8a33d; font-size: 11px; font-weight: bold;")
+            else:
+                label = QLabel(f"Detected in {board}: {value:g} mm, {source}")
+                label.setStyleSheet("color: #6fbf73; font-size: 11px;")
+        label.setWordWrap(True)
+        return label
 
     @staticmethod
     def _spin(whole: bool, minimum: float = 0):
@@ -878,6 +903,8 @@ class MainWindow(QMainWindow):
         self.board_label.setText(f"<b>{os.path.basename(path)}</b><br>{len(board.layers)} layers, {len(board.pads)} pads, "
                                  f"{len(nets)} nets, {connections} connections")
         self.say(f"Opened {path}")
+        for text in undetected(detected_rules(design, path), self.settings):
+            self.say(f"  ⚠ {text}. Set it in Settings, Rules")
         if board.plane_nets:
             self.say(f"  {len(board.plane_nets)} nets have a copper plane and will not be routed: "
                      + ", ".join(sorted(design.net_names[n] for n in board.plane_nets)))
@@ -1125,7 +1152,7 @@ class MainWindow(QMainWindow):
 
     # -- settings ---------------------------------------------------------------
     def edit_settings(self) -> None:
-        dialog = SettingsDialog(self.settings, self.settings_path, self)
+        dialog = SettingsDialog(self.settings, self.settings_path, self, *self._detected())
         if dialog.exec() == QDialog.Accepted:
             self.settings = dialog.settings()
             self.outline_box.setChecked(self.settings.show_outlines)
@@ -1136,6 +1163,12 @@ class MainWindow(QMainWindow):
                 self._apply_gpu()
             except OSError as error:
                 QMessageBox.critical(self, "Could not save the settings", str(error))
+
+    def _detected(self) -> tuple[dict | None, str]:
+        """What the open board gives for each rule, and its file name (for the settings editor)."""
+        if self.design is None:
+            return None, ""
+        return detected_rules(self.design, self.dsn_path), os.path.basename(self.dsn_path)
 
     def closeEvent(self, event) -> None:
         if self.job is not None:
@@ -1297,9 +1330,10 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
         view.zoom_at(view.mapFromScene(QPointF(mid[0], -mid[1])), 6.0)
         app.processEvents()
         picture(window).save(os.path.splitext(screenshot)[0] + "_zoom.png")
-        dialog = SettingsDialog(window.settings, window.settings_path, window)
+        dialog = SettingsDialog(window.settings, window.settings_path, window, *window._detected())
         dialog.show()
         tabs = dialog.findChild(QTabWidget)
+        print("self-test: rules detected:", [label.text() for label in dialog.findChildren(QLabel) if label.text().startswith(("Detected", "\u26a0"))])
         for i in range(tabs.count()):
             tabs.setCurrentIndex(i)
             app.processEvents()

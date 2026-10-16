@@ -143,8 +143,8 @@ class Settings:
         """Applies the rule overrides to ``design.board`` (in place) and adds the
         routing margin. Returns the clearance and edge clearance to *check*
         against (without the margin), and notes for the user."""
-        from weaveengine.io.check import kicad_project_rules
         board, rules, notes = design.board, design.board.rules, []
+        found = detected_rules(design, dsn_path)
         if self.ignore_keepouts:
             kept = [o for o in board.obstacles if o.net_id >= 0]
             notes.append(f"ignoring {len(board.obstacles) - len(kept)} keepout areas")
@@ -157,21 +157,15 @@ class Settings:
             rules.via_diameter = self.via_diameter
         if self.via_drill > 0:
             rules.via_drill = self.via_drill
-        # Rules the DSN left out and the settings do not set either: say what is used.
-        missing = [text for name, text in design.defaulted.items() if getattr(self, name) <= 0]
-        if missing:
-            notes.append("not in the DSN, defaults used: " + ", ".join(missing))
+        # Rules the board does not give and the settings do not set either: say what is used instead.
+        notes += [f"WARNING: {text}" for text in undetected(found, self)]
         if design.dropped_wiring:
             notes.append(design.dropped_wiring)
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
-        else:
-            project = (dsn_path.rsplit(".", 1)[0] + ".kicad_pro") if dsn_path else ""
-            if project and os.path.exists(project):
-                rules.edge_clearance = max(kicad_project_rules(project)["edge_clearance"], rules.clearance)
-                notes.append(f"edge clearance {rules.edge_clearance:g} mm from {os.path.basename(project)}")
-            else:
-                notes.append(f"edge clearance {rules.clearance:g} mm (the DSN does not carry one)")
+        elif found["edge_clearance"][0] is not None:
+            rules.edge_clearance = max(found["edge_clearance"][0], rules.clearance)
+            notes.append(f"edge clearance {rules.edge_clearance:g} mm, {found['edge_clearance'][1]}")
         if board.plane_nets:
             names = design.net_names
             notes.append(f"{len(board.plane_nets)} nets have a copper plane and are not routed: "
@@ -181,6 +175,50 @@ class Settings:
         rules.clearance = want_clearance + self.margin
         rules.edge_clearance = want_edge + self.margin
         return want_clearance, want_edge, notes
+
+
+RULES = ("trace_width", "clearance", "via_diameter", "via_drill", "edge_clearance")  # the rules settings can override
+
+
+def kicad_project(dsn_path: str | None) -> str | None:
+    """The KiCad project file of the same name beside the DSN, if there is one."""
+    project = (dsn_path.rsplit(".", 1)[0] + ".kicad_pro") if dsn_path else ""
+    return project if project and os.path.exists(project) else None
+
+
+def detected_rules(design, dsn_path: str | None) -> dict[str, tuple[float | None, str]]:
+    """What the board itself says for each rule in ``RULES``, before any setting
+    overrides it: name -> (value in mm, where it came from), or (None, what is
+    used instead) when the board does not give it. Read ``design`` as
+    ``read_dsn`` returned it. The edge clearance is in no DSN; it comes from
+    the KiCad project beside the file, else the clearance stands in for it."""
+    rules, out = design.board.rules, {}
+    for name in RULES[:-1]:
+        value = getattr(rules, name)
+        out[name] = (None, f"the built-in {value:g} mm is used") if name in design.defaulted else (value, "from the DSN")
+    project = kicad_project(dsn_path)
+    edge = 0.0
+    if project:
+        from weaveengine.io.check import kicad_project_rules
+        try:
+            edge = kicad_project_rules(project)["edge_clearance"]
+        except (OSError, ValueError, KeyError, TypeError):
+            edge = 0.0
+    if edge > 0:
+        out["edge_clearance"] = (edge, f"from {os.path.basename(project)}")
+    else:
+        stem = os.path.basename((dsn_path or "board.dsn").rsplit(".", 1)[0])
+        where = f"{os.path.basename(project)} sets none" if project else f"there is no {stem}.kicad_pro beside the DSN"
+        out["edge_clearance"] = (None, f"a DSN does not carry it and {where}; the clearance is used ({rules.clearance:g} mm unless set)")
+    return out
+
+
+def undetected(found: dict, settings: "Settings | None" = None) -> list[str]:
+    """One line per rule the board does not give and ``settings`` (if given) do not set either."""
+    labels = {"trace_width": "trace width", "clearance": "clearance", "via_diameter": "via diameter",
+              "via_drill": "via drill", "edge_clearance": "copper to board edge clearance"}
+    return [f"{labels[name]} not detected: {text}" for name, (value, text) in found.items()
+            if value is None and (settings is None or getattr(settings, name) <= 0)]
 
 
 def default_path() -> str:

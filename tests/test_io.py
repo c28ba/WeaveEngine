@@ -235,8 +235,9 @@ def test_missing_rules_take_defaults(tmp_path):
     # A setting the user made is not reported as defaulted.
     from weaveengine.settings import Settings
     notes = Settings(trace_width=0.3).apply_rules(bare)[2]
-    said = next(n for n in notes if n.startswith("not in the DSN"))
-    assert "clearance 0.2 mm" in said and "trace width" not in said and bare.board.rules.trace_width == 0.3
+    said = [n for n in notes if " not detected: " in n]
+    assert "WARNING: clearance not detected: the built-in 0.2 mm is used" in said
+    assert not any("trace width" in n for n in said) and bare.board.rules.trace_width == 0.3
     # What cannot be assumed is still refused, readably.
     for name in ("boundary", "layer", "structure"):
         with pytest.raises(ValueError, match="DSN has no"):
@@ -291,3 +292,24 @@ def test_cutouts_holes_and_round_paths(tmp_path):
     assert pad.radius == 0.85 and pad.shape.buffer(1e-9).contains(Point(pad.centre).buffer(0.85, quad_segs=64))
     assert write_dsn(board, str(tmp_path / "again.dsn")) is None
     assert len(read_dsn(str(tmp_path / "again.dsn")).board.outline.interiors) == 1
+
+
+def test_rules_the_board_gives_and_does_not(tmp_path):
+    """The settings editor shows what the board gives for each rule, and warns
+    about what it does not: a rule missing from the DSN, and the edge
+    clearance, which no DSN carries, unless a KiCad project is beside it."""
+    import json
+    from weaveengine.settings import Settings, detected_rules, undetected
+    path = tmp_path / "demo.dsn"
+    path.write_text(KICAD_STYLE.replace("(rule (width 250) (clearance 200.1) (clearance 50 (type smd_smd)))", ""))
+    design = read_dsn(str(path))
+    found = detected_rules(design, str(path))
+    assert found["trace_width"] == (0.25, "from the DSN")   # from the net class
+    assert found["edge_clearance"][0] is None and "no demo.kicad_pro" in found["edge_clearance"][1]
+    # (its via padstack is not in the library, so the via is not given either)
+    assert [line.split(" not detected")[0] for line in undetected(found)] == ["via diameter", "via drill", "copper to board edge clearance"]
+    assert undetected(found, Settings(edge_clearance=0.4, via_diameter=0.6, via_drill=0.3)) == []   # set by hand: nothing to warn about
+    (tmp_path / "demo.kicad_pro").write_text(json.dumps({"board": {"design_settings": {"rules": {"min_copper_edge_clearance": 0.5}}}}))
+    found = detected_rules(design, str(path))
+    assert found["edge_clearance"] == (0.5, "from demo.kicad_pro")
+    assert Settings().apply_rules(read_dsn(str(path)), str(path))[1] == 0.5
