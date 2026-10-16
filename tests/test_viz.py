@@ -14,7 +14,7 @@ def test_svg_export(tmp_path):
     assert text.count("<title>pad") == 6
     export_result(result, str(out))
     text = out.read_text()
-    assert text.count("<title>wire") == 3 and text.count("<polygon") >= 1 + 1 + 6 + 6  # outline, keepout, pads, teardrops
+    assert text.count("<title>wire") == 3 and text.count("<polygon") >= 1 + 6 + 6  # keepout, pads, teardrops (the outline is a path)
 
 
 def _run(est, rounds, at=0.0, heat="racing variants 1-4 of 8", complete=True):

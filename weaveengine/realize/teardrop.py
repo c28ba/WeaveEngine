@@ -158,7 +158,7 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
             to keep its distance is what is added: the part over a pad is the
             pad's, which stands where it stands. (Tested whole, a via at the
             least clearance from a neighbour lost every teardrop on that side.)"""
-            if not shape.is_valid or not board.outline.contains(shape) or shape.distance(board.outline.exterior) < edge - 1e-6:
+            if not shape.is_valid or not board.outline.contains(shape) or shape.distance(board.outline.boundary) < edge - 1e-6:
                 return False
             added = shape
             for pad in own:

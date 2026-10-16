@@ -64,7 +64,7 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
     copper_tree = shapely.STRtree([c[0] for c in copper]) if copper else None
     widest = max([rules.trace_width, *rules.net_width.values()])
     edge = rules.outline_inset - rules.base_width / 2.0
-    boundary = board.outline.exterior
+    boundary = board.outline.boundary  # the edge and its cutouts
     rounded = kept = 0
     out: dict[int, list] = {}
 

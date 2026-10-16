@@ -251,3 +251,43 @@ def test_cli_routes_a_dsn_without_rules(tmp_path, capsys):
     assert main([str(dsn), "--quiet", "--workers", "1"]) == 0
     out = capsys.readouterr().out
     assert "not in the DSN, defaults used: trace width 0.2 mm, clearance 0.2 mm" in out and "-> OK" in out
+
+
+KICAD_CUTOUT = """(pcb cut.dsn
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu (type signal)) (layer B.Cu (type signal))
+    (boundary (path pcb 0  0 0  30000 0  30000 -20000  0 -20000  0 0))
+    (keepout "" (polygon signal 0  13000 -8000  17000 -8000  17000 -12000  13000 -12000  13000 -8000))
+    (rule (width 200) (clearance 200))
+  )
+  (placement
+    (component J (place J1 5000 -10000 front 0) (place J2 25000 -10000 back 90))
+  )
+  (library
+    (image J (pin Oval[A]Pad_1700x1700_um 1 0 0) (pin Oval[A]Pad_1700x1700_um 2 0 -2540)
+      (keepout "" (circle F.Cu 1600 2540 0)) (keepout "" (circle B.Cu 1600 2540 0)))
+    (padstack Oval[A]Pad_1700x1700_um (shape (path F.Cu 1700 0 0 0 0)) (shape (path B.Cu 1700 0 0 0 0)) (attach off))
+  )
+  (network (net A (pins J1-1 J2-1)) (net B (pins J1-2 J2-2)))
+  (wiring)
+)
+"""
+
+
+def test_cutouts_holes_and_round_paths(tmp_path):
+    """KiCad writes a cutout in the board as a keepout on every layer
+    ("signal"), a hole without copper as a keepout of the part on each
+    layer, and a round pad as an oval of equal sides (a path of no length)."""
+    from shapely.geometry import Point
+    path = tmp_path / "cut.dsn"
+    path.write_text(KICAD_CUTOUT)
+    board = read_dsn(str(path)).board
+    assert len(board.outline.interiors) == 1 and abs(board.outline.area - (600 - 16)) < 1e-6   # board edge, not a keepout
+    holes = sorted((round(o.shape.centroid.x, 3), round(o.shape.centroid.y, 3), sorted(o.layers)) for o in board.obstacles)
+    assert holes == [(7.54, -10.0, [0]), (7.54, -10.0, [1]), (25.0, -12.54, [0]), (25.0, -12.54, [1])]   # placed, rotated, flipped
+    pad = next(p for p in board.pads if p.name == "J1-1")
+    assert pad.radius == 0.85 and pad.shape.buffer(1e-9).contains(Point(pad.centre).buffer(0.85, quad_segs=64))
+    assert write_dsn(board, str(tmp_path / "again.dsn")) is None
+    assert len(read_dsn(str(tmp_path / "again.dsn")).board.outline.interiors) == 1

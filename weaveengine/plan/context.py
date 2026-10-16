@@ -514,7 +514,9 @@ class Context:
             mids, centre = layer.pmap.edge_mid_list, layer.pmap.pad_centre
             for w, path in layer.paths.items():
                 conn = self.conns[w]
-                if lines is not None and w in lines:
+                if lines is not None:
+                    if w not in lines:
+                        continue  # not drawn: it would be a second trace (``router._redundant``)
                     pts = lines[w]
                 else:
                     pts = [centre[conn.src]] + [mids[g] for g in path.gates] + [centre[conn.dst]]

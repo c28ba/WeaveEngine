@@ -493,8 +493,6 @@ def test_traces_of_one_net_share_a_trunk():
     assert result.unrouted == [] and net_is_connected(result, 0)
     assert {(c.src, c.dst) for c in result.connections.values() if c.parent is None} == {(0, 1), (0, 2)}
     # From pad 0 round the end of the wall there is one trace, whatever is joined to what beyond it.
-    total = sum(LineString(p).length for p in result.polylines.values())
-    assert copper(result) < total - 12.0
     assert copper(result) < 44.0   # pad 0 to the wall's end, and on to each (41.8 if the second goes on from pad 2)
     assert_clean(board, result)
 

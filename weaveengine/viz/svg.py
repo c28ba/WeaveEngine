@@ -27,7 +27,7 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
 
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">',
            f'<rect width="{width:.0f}" height="{height:.0f}" fill="#121212"/>',
-           f'<polygon points="{pts(board.outline.exterior.coords)}" fill="#1b2a1f" stroke="#7a8a7d" stroke-width="1.5"/>']
+           f'<path d="{" ".join("M" + pts(r.coords) + "Z" for r in (board.outline.exterior, *board.outline.interiors))}" fill="#1b2a1f" fill-rule="evenodd" stroke="#7a8a7d" stroke-width="1.5"/>']
     for obs in board.obstacles:
         out.append(f'<polygon points="{pts(obs.shape.exterior.coords)}" fill="#3a1717" stroke="#ff4d4d" stroke-width="1" stroke-dasharray="4,3"/>')
     if pmap is not None:

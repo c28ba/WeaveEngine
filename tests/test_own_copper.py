@@ -156,7 +156,9 @@ def test_a_through_hole_pad_of_the_net_is_the_layer_change():
     assert result.unrouted == [] and result.vias == [] and net_is_connected(result, 0)
     assert_clean(board, result)
     whole = next(c for c in result.connections.values() if c.parent is None and (c.src, c.dst) == (0, 2))
-    assert [(result.connections[w].src, result.connections[w].dst, result.wire_layer[w]) for w in whole.pieces] == [(0, 1, 0), (1, 2, 1)]
+    assert [(result.connections[w].src, result.connections[w].dst, result.connections[w].layer) for w in whole.pieces] == [(0, 1, 0), (1, 2, 1)]
+    # Its piece from 0 to 1 lies beside the wire that joins them already: one trace is drawn there, not two.
+    assert sorted((c.src, c.dst, result.wire_layer[w]) for w, c in result.connections.items() if w in result.polylines) == [(0, 1, 0), (1, 2, 1)]
 
 
 def test_pieces_that_share_a_gate_are_put_back_as_they_were():

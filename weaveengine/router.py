@@ -104,6 +104,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
             lines, violations, wire_net = dict(resume["lines"]), list(resume["violations"]), dict(resume["wire_net"])
     routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
+    loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
+    lines = {w: line for w, line in lines.items() if w not in loops}
+    violations = [v for v in violations if not loops.intersection(v.wires)]
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
         ctx.emit_snapshot(force=True, lines=lines)
@@ -111,7 +114,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
                 "vias": sum(1 for p in work.pads if p.is_via)})
     t_route = time.perf_counter()
 
-    wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None}
+    wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
     used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
     vias = [p for p in work.pads if p.is_via and p.pad_id in used]
     smoothed = (0, 0)
@@ -162,6 +165,51 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+
+
+def _redundant(ctx: Context, lines: dict, vias: set[int]) -> set[int]:
+    """Wires that join nothing their net's other wires do not join already (section 11).
+
+    A connection may go through pads and vias its net has, and beside its
+    net's copper it costs next to nothing, so a piece of it can run from pad
+    to pad beside a wire that joins those two already, or a whole connection
+    can join two pads other connections have joined. In the state each is a
+    wire of its own (nothing depends on anything); on the board it is a
+    second trace. Per net, the shortest wires that join its pads are kept (a
+    spanning forest of pads and vias, wires by drawn length); the rest, and
+    wires to a via nothing else uses, are redundant."""
+    by_net: dict[int, list[int]] = {}
+    for w, c in ctx.conns.items():
+        if c.layer is not None and w in lines:
+            by_net.setdefault(c.net_id, []).append(w)
+    out: set[int] = set()
+    for wires in by_net.values():
+        parent: dict[int, int] = {}
+
+        def root(p: int) -> int:
+            while parent.setdefault(p, p) != p:
+                parent[p] = p = parent[parent[p]]
+            return p
+
+        kept = []
+        for w in sorted(wires, key=lambda w: (polyline_length(lines[w]), w)):
+            a, b = root(ctx.conns[w].src), root(ctx.conns[w].dst)
+            if a == b:
+                out.add(w)
+            else:
+                parent[a] = b
+                kept.append(w)
+        while True:  # a via one wire ends on is that wire's dead end
+            ends: dict[int, list[int]] = {}
+            for w in kept:
+                for p in (ctx.conns[w].src, ctx.conns[w].dst):
+                    ends.setdefault(p, []).append(w)
+            stubs = {ws[0] for p, ws in ends.items() if p in vias and len(ws) == 1}
+            if not stubs:
+                break
+            out |= stubs
+            kept = [w for w in kept if w not in stubs]
+    return out
 
 
 def _print(pmap: PlanarMap) -> str:

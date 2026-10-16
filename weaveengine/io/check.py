@@ -17,7 +17,7 @@ from weaveengine.io.dsn import UNIT_MM, Design, _child, _children, parse_sexpr
 class Measured:
     required_clearance: float
     required_edge: float
-    track_to_pad: float = float("inf")      # smallest copper gap, trace to a pad of another net
+    track_to_pad: float = float("inf")      # smallest copper gap, trace to a pad, keepout or fixed copper of another net
     track_to_track: float = float("inf")    # smallest copper gap between traces of different nets on a layer
     track_to_edge: float = float("inf")     # smallest gap, trace copper to the board edge
     widths: dict[str, set] = field(default_factory=dict)  # net name -> widths used
@@ -60,11 +60,14 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     out = Measured(clearance, edge)
     wires, vias = read_session(ses_path)
     out.traces, out.vias = len(wires), len(vias)
-    outline = board.outline.exterior
+    outline = board.outline.boundary  # the edge and its cutouts
     layer_index = {name: i for i, name in enumerate(board.layers)}
+    # Pads, keepouts and fixed copper (each with its layers), then the session's vias (on every layer).
     pads = [(Point(p.centre).buffer(p.radius, quad_segs=32) if p.radius else p.shape, p) for p in board.pads]
+    pads += [(o.shape, o) for o in board.obstacles]
+    pad_net = [design.net_names.get(p.net_id, "") for _, p in pads]
     pads += [(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32), None) for _, x, y in vias]
-    pad_net = [design.net_names.get(p.net_id, "") if p is not None else vias[i - len(board.pads)][0] for i, (_, p) in enumerate(pads)]
+    pad_net += [net for net, _, _ in vias]
     tree = shapely.STRtree([g for g, _ in pads])
     by_layer: dict[str, list] = {}
     for net, layer, width, pts in wires:

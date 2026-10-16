@@ -104,8 +104,10 @@ class BoardView(QGraphicsView):
         x0, y0, x1, y1 = board.outline.bounds
         span = max(x1 - x0, y1 - y0)
         scene.setSceneRect(QRectF(x0 - 20 * span, -y1 - 20 * span, 41 * span, 41 * span))  # room to pan freely
-        outline = QPolygonF([QPointF(x, -y) for x, y in board.outline.exterior.coords])
-        scene.addPolygon(outline, QPen(QColor("#7a8a7d"), 0), QBrush(QColor(BOARD))).setZValue(-10)
+        outline = QPainterPath()  # (odd-even filled: the cutouts are holes)
+        for ring in (board.outline.exterior, *board.outline.interiors):
+            outline.addPolygon(QPolygonF([QPointF(x, -y) for x, y in ring.coords]))
+        scene.addPath(outline, QPen(QColor("#7a8a7d"), 0), QBrush(QColor(BOARD))).setZValue(-10)
         for obs in board.obstacles:
             poly = QPolygonF([QPointF(x, -y) for x, y in obs.shape.exterior.coords])
             pen = QPen(QColor("#ff4d4d"), 0, Qt.DashLine)

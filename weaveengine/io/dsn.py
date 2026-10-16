@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 from shapely import affinity
-from shapely.geometry import LineString, Point, Polygon, box
+from shapely.geometry import LineString, Polygon, box
 from shapely.ops import unary_union
 
 from weaveengine.board import Board, Component, Obstacle, Pad, Rules, circle_polygon
@@ -80,9 +80,14 @@ def _shape(desc: list, scale: float):
         return (Polygon(pts).buffer(0), layer, None) if len(pts) >= 3 else None
     if kind == "path":
         pts = list(zip(nums[1::2], nums[2::2]))
-        if len(pts) == 1 or (len(pts) == 2 and pts[0] == pts[1]):
-            return Point(pts[0]).buffer(max(nums[0], 1e-6) / 2.0, quad_segs=4), layer, None
-        return LineString(pts).buffer(max(nums[0], 1e-6) / 2.0, quad_segs=4), layer, None
+        pts = [p for i, p in enumerate(pts) if i == 0 or p != pts[i - 1]]
+        half = max(nums[0], 1e-6) / 2.0
+        if len(pts) == 1:  # a round pad (KiCad writes an oval of equal sides so)
+            return circle_polygon(*pts[0], half), layer, half
+        # Its round ends and corners circumscribed, as circles are (circle_polygon):
+        # a polygon inside the true copper would let a trace come too close.
+        return unary_union([LineString(pts).buffer(half, cap_style="flat", join_style="bevel"),
+                            *(circle_polygon(x, y, half) for x, y in pts)]), layer, None
     return None
 
 
@@ -170,6 +175,19 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     if not outlines:
         raise ValueError("DSN has no usable boundary")
     outline = max(outlines, key=lambda p: p.area)
+    # A keepout on every layer at once ("signal") is how KiCad writes a cutout
+    # in the board (Edge.Cuts inside the outline); a keepout area it writes
+    # per layer. A cutout is board edge, and keeps the edge clearance.
+    keepouts, cutouts = [], []
+    for k in _children(structure, "keepout"):
+        for desc in k[1:]:
+            got = _shape(desc, scale) if isinstance(desc, list) else None
+            if got:
+                (cutouts if got[1] in ("signal", "pcb") else keepouts).append(got)
+    if cutouts:
+        outline = outline.difference(unary_union([g[0] for g in cutouts]))
+        if outline.geom_type != "Polygon":
+            outline = max(outline.geoms, key=lambda p: p.area)
 
     def rule_of(node):
         """(width, clearance) of a rule list; typed clearances (smd_smd, ...) are ignored."""
@@ -204,14 +222,10 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         defaulted["clearance"] = f"clearance {rules.clearance:g} mm"
     board = Board(outline=outline, rules=rules, layers=list(use))
 
-    for k in _children(structure, "keepout"):
-        for desc in k[1:]:
-            if isinstance(desc, list):
-                got = _shape(desc, scale)
-                if got:
-                    on = layer_set([got[1]])
-                    if on is None or on:
-                        board.obstacles.append(Obstacle(got[0], layers=on))
+    for shape, layer, _ in keepouts:
+        on = layer_set([layer])
+        if on is None or on:
+            board.obstacles.append(Obstacle(shape, layers=on))
 
     library = _child(root, "library") or []
     padstacks = {p[1]: [s[1] for s in _children(p, "shape")] for p in _children(library, "padstack")}
@@ -268,6 +282,12 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             component = Component(ref, part_number[1] if part_number and len(part_number) > 1 else "", comp[1], side,
                                   px * scale, py * scale, rot)
             board.components.append(component)
+
+            def on_board(shape):
+                """A shape in the image's coordinates, on the board."""
+                if back:
+                    shape = affinity.scale(shape, xfact=-1.0, origin=(0, 0))
+                return affinity.translate(affinity.rotate(shape, rot, origin=(0, 0)), px * scale, py * scale)
             for outline in _children(image, "outline"):
                 for desc in outline[1:]:
                     line = _outline(desc, scale) if isinstance(desc, list) else None
@@ -290,17 +310,18 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                     continue
                 shape = unary_union([g[0] for g in shapes])
                 radius = shapes[0][2] if all(g[2] is not None for g in shapes) else None
-                shape = affinity.rotate(shape, pin_rot, origin=(0, 0))
-                shape = affinity.translate(shape, x, y)
-                if back:
-                    shape = affinity.scale(shape, xfact=-1.0, origin=(0, 0))
-                shape = affinity.rotate(shape, rot, origin=(0, 0))
-                shape = affinity.translate(shape, px * scale, py * scale)
+                shape = on_board(affinity.translate(affinity.rotate(shape, pin_rot, origin=(0, 0)), x, y))
                 if shape.geom_type != "Polygon":
                     shape = shape.convex_hull
                 name = f"{ref}-{pin_id}"
                 component.pads.append(len(board.pads))
                 board.pads.append(Pad(len(board.pads), pin_net.get(name, -1), shape, name, on, radius))
+            # The part's own keepouts: KiCad writes a hole without copper (NPTH) as one per layer.
+            for k in _children(image, "keepout"):
+                for shape, layer, _ in filter(None, (_shape(d, scale) for d in k[1:] if isinstance(d, list))):
+                    on = layer_set([layer], back)
+                    if on is None or on:
+                        board.obstacles.append(Obstacle(on_board(shape), layers=on))
 
     # Pre-existing copper that is marked fixed is an obstacle. The rest is
     # routing some earlier run left behind (a saved, already-routed design):
@@ -354,6 +375,8 @@ def write_dsn(board: Board, path: str, name: str = "board", layer: str = "F.Cu")
     out = [f"(pcb {name}", "  (parser (host_cad weaveengine))", "  (resolution um 10)", "  (unit um)", "  (structure",
            f"    (layer {layer} (type signal))",
            "    (boundary (path pcb 0 " + " ".join(f"{u(x)} {u(y)}" for x, y in board.outline.exterior.coords) + "))"]
+    for hole in board.outline.interiors:
+        out.append('    (keepout "" (polygon signal 0 ' + " ".join(f"{u(x)} {u(y)}" for x, y in hole.coords) + "))")
     for obs in board.obstacles:
         out.append(f'    (keepout "" (polygon {layer} 0 ' + " ".join(f"{u(x)} {u(y)}" for x, y in obs.shape.exterior.coords) + "))")
     out += [f"    (rule (width {u(rules.trace_width)}) (clearance {u(rules.clearance)}))", "  )", "  (placement"]

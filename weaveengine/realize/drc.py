@@ -46,7 +46,7 @@ def check(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_ne
                 out.append(Violation("clearance", (ids[i],), dist, need, _closest(lines[i], copper[c][0]), layer))
 
     # Trace to board edge.
-    boundary = board.outline.exterior
+    boundary = board.outline.boundary  # the edge and its cutouts
     for i, line in enumerate(lines):
         need = edge + half[i]
         dist = line.distance(boundary)
