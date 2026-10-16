@@ -520,8 +520,8 @@ def _foot(touched, at):
             span = (math.atan2(go[1] - y, go[0] - x) - math.atan2(come[1] - y, come[0] - x)) * on % (2.0 * math.pi)
             if n > 0.0 and turn <= span and (best is None or abs(n - r) < best[0]):
                 best = (abs(n - r), i, (x + r * dx / n, y + r * dy / n), (-on * dy, on * dx))
-        if i + 1 < len(touched):  # on the straight run to the next
-            (ax, ay), (bx, by) = go, touched[i + 1][5]
+        if i + 1 < len(touched) or i == 0:  # on the straight run to the next (a trace of no length: its one point)
+            (ax, ay), (bx, by) = go, touched[min(i + 1, len(touched) - 1)][5]
             dx, dy = bx - ax, by - ay
             n2 = dx * dx + dy * dy
             t = 0.0 if n2 == 0.0 else min(1.0, max(0.0, ((at[0] - ax) * dx + (at[1] - ay) * dy) / n2))

@@ -104,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {len(stats['buried_pads'])} pads have no reachable boundary (overlapping clearances)")
     m = measure(design, out, want_clearance, want_edge)
     print(f"measured from {os.path.basename(out)}: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
-          f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g}) mm; "
+          f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"
+          f"{'' if m.track_to_keepout == float('inf') else f', trace-keepout {m.track_to_keepout:.4f} (not inside)'} mm; "
           f"{m.crossings} crossings; widths {'as ruled' if not m.wrong_width else 'WRONG for ' + ', '.join(m.wrong_width)}"
           f" -> {'OK' if m.ok else 'VIOLATIONS'}")
     if args.svg:

@@ -1106,7 +1106,8 @@ class MainWindow(QMainWindow):
             return False
         self.say(f"Wrote {path}")
         self.say(f"  measured from the file: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
-                 f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g}) mm; "
+                 f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"
+                 f"{'' if m.track_to_keepout == float('inf') else f', trace-keepout {m.track_to_keepout:.4f} (not inside)'} mm; "
                  f"{m.crossings} crossings -> {'OK' if m.ok else 'VIOLATIONS'}")
         return m.ok
 
