@@ -149,6 +149,7 @@ class Context:
         self.next_wire = len(self.conns) + 1             # ids of the pieces of connections through vias; never reused
         self.next_pad = max((p.pad_id for p in board.pads), default=-1) + 1   # pad ids of via sites
         self._legal = None
+        self.trail: list | None = None  # while recording (``record``): how to take out each commit, in order
         self._setup()
 
     # -- vias (12.3) -----------------------------------------------------------
@@ -265,10 +266,19 @@ class Context:
         result will do; if it says no, that too leaves nothing changed.
         """
         routes, joints = (how.routes, how.joints) if hasattr(how, "routes") else ([how], [])
+        nexts = (self.next_wire, self.next_pad)
         if not joints:
             self._lay(conn, routes[0].layer, routes[0].steps)
             self._laid(conn)
             self._waiting(conn, False)
+            if self.trail is not None:
+                def take_out() -> None:
+                    layer = self.layers[conn.layer]
+                    layer.state.remove(conn.wire_id)
+                    layer.paths.pop(conn.wire_id, None)
+                    conn.layer = None
+                    self._waiting(conn, True)
+                self.trail.append(take_out)
             return True
         keep = sites.keep_off(self.board.rules)
         new = [not isinstance(j, int) for j in joints]     # per joint: a via to be made (else copper that is there)
@@ -281,6 +291,17 @@ class Context:
         def back_to(marks) -> None:
             for l, m in zip(self.layers, marks):
                 sites.undo(l.pmap, l.state, *m)
+
+        def unlay(settled, laid, before) -> None:
+            """Takes out what went in, in the reverse of the order it went in:
+            the settling of the sites' edges, then each piece and the site made for it."""
+            if settled is not None:
+                back_to(settled)
+            for n in reversed(range(len(routes))):
+                if n < len(laid):
+                    self.layers[laid[n].layer].state.remove(laid[n].wire_id)
+                if n in before:
+                    back_to(before[n])
 
         before: dict[int, list] = {}                       # per new via, the mark before its site was made
         made: dict[int, list] = {}                         # per new via, its site on each layer
@@ -335,13 +356,7 @@ class Context:
         except ValueError:
             # Take everything out again, in the reverse of the order it went in:
             # the settling of the sites' edges, then each piece and the site made for it.
-            if settled is not None:
-                back_to(settled)
-            for n in reversed(range(len(routes))):
-                if n < len(laid):
-                    self.layers[laid[n].layer].state.remove(laid[n].wire_id)
-                if n in before:
-                    back_to(before[n])
+            unlay(settled, laid, before)
             self._maps_changed()
             return False
         self._maps_changed()
@@ -354,7 +369,30 @@ class Context:
         # The vias it ends pieces on, made for it or there already: they stay while any trace is on them.
         conn.pieces, conn.sites = tuple(p.wire_id for p in pieces), tuple(p for p in pads[1:-1] if p in self.layers[0].pmap.sites)
         self._waiting(conn, False)
+        if self.trail is not None:
+            def take_out() -> None:
+                for piece in pieces:
+                    self.layers[piece.layer].paths.pop(piece.wire_id, None)
+                    del self.conns[piece.wire_id]
+                unlay(settled, laid, before)
+                self._maps_changed()
+                conn.pieces, conn.sites = (), ()
+                self.next_wire, self.next_pad = nexts
+                self._waiting(conn, True)
+            self.trail.append(take_out)
         return True
+
+    def record(self) -> None:
+        """From here on, every ``commit`` notes how to take it out again (``undo``)."""
+        self.trail = []
+
+    def undo(self) -> None:
+        """Takes out every commit since ``record``, last first, exactly: the
+        state and the maps are as they were before it. (What was lifted before
+        is then put back by ``put_back``.)"""
+        trail, self.trail = self.trail, None
+        for take_out in reversed(trail):
+            take_out()
 
     def rip(self, wire_id: int) -> None:
         """Removes the connection this wire belongs to: all its pieces, and

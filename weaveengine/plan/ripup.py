@@ -1,5 +1,6 @@
 """Phase 3: negotiated rip-up and reroute, and Phase 4 refinement (section 10)."""
 import math
+import os
 
 from weaveengine.plan.candidates import route_batch
 from weaveengine.plan.context import Context
@@ -173,6 +174,10 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
         copper = sum(ctx.wire_copper(layer, w) for layer in ctx.layers for net in nets for w in layer.state.by_net.get(net, ()))
         return copper + worth * sum(1 for s in ctx.layers[0].pmap.sites.values() if s.active)
 
+    def over() -> dict:
+        """Over-full gates, and by how much (repair after the check can leave some for rip-up)."""
+        return {(layer.index, e): layer.state.overflow(e) for layer in ctx.layers for e in layer.state.overflowed_gates()}
+
     kept = 0
     for _ in range(sweeps):
         was = ctx.copper()
@@ -198,24 +203,68 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
             if not move or len(move) > MOST_MOVED or move & hold:
                 continue
             nets = {conn.net_id} | {ctx.conns[x].net_id for x in move} | {ctx.conns[x].net_id for x in ctx.unrouted}
-            before, open_before, snap = total(nets), set(ctx.unrouted), ctx.snapshot()
-            ctx.rip(w)
-            for x in move:
-                if ctx.conns[x].routed:
-                    ctx.rip(x)
+            before, open_before, over_before = total(nets), set(ctx.unrouted), over()
+            check = ctx.snapshot() if CHECK_UNDO else None
+            # Lifted, not ripped, and what goes in recorded: a try that does not pay is
+            # undone exactly, by taking out what it put in and putting back what it lifted, last first.
+            lifted = [(ctx.conns[x], ctx.lift(ctx.conns[x])) for x in (w, *sorted(move)) if ctx.conns[x].routed]
+            ctx.record()
             plan = find(ctx, conn, hard_cap=True, congestion=False)
             if plan is not None and ctx.commit(conn, plan):
                 fill(ctx, hold)
+            after = over()
             if (conn.routed and ctx.unrouted <= open_before and total(nets) < before - pitch
-                    and not any(layer.state.overflowed_gates() for layer in ctx.layers)):
+                    and all(n <= over_before.get(g, 0) for g, n in after.items())):  # (no gate over-full that was not, or more)
+                ctx.trail = None
                 changed += 1
             else:
-                ctx.restore(snap)
+                ctx.undo()
+                for c, saved in reversed(lifted):
+                    ctx.put_back(c, saved)
+                if check is not None:
+                    _same(ctx, check)
         ctx.rebuild_barrier()
         kept += changed
         if not changed:
             break
     return kept
+
+
+CHECK_UNDO = bool(os.environ.get("WEAVEENGINE_CHECK_UNDO"))  # tests: after each undone try, compare everything with before
+
+
+def _same(ctx: Context, snap) -> None:
+    """Raises if the routing is not exactly as in ``snap`` (``CHECK_UNDO``). The
+    state's tables may have grown since, for via sites made and taken out
+    again (they never shrink): the rows beyond have to be empty."""
+    def equal(now, then, empty) -> bool:
+        n = min(len(now), len(then))
+        return list(now[:n]) == list(then[:n]) and all(x == empty for x in list(now[n:]) + list(then[n:]))
+
+    now = ctx.snapshot()
+    for a, b in zip(now["states"], snap["states"]):
+        order, cnt, paths, load, weight, nets = a
+        order0, cnt0, paths0, load0, weight0, nets0 = b
+        n = min(len(load), len(load0))
+        drift = abs(load[:n] - load0[:n]).max(initial=0.0) <= 1e-9 and not load[n:].any() and not load0[n:].any()  # (sums of weights, added and taken off)
+        if not (equal(order, order0, []) and equal(cnt, cnt0, [0, 0, 0]) and drift):
+            n = min(len(order), len(order0))
+            li = now["states"].index(a)
+            st = ctx.layers[li].state
+            bad = [i for i, (x, y) in enumerate(zip(load.tolist(), load0.tolist())) if abs(x - y) > 1e-9][:3]
+            raise AssertionError(f"tally now: {[(e, st.tally(e), [(w, st.net.get(w), st.weight.get(w)) for w in st.gate_order[e]]) for e in bad]} -- state differs after undo: order {[(e, order[e], order0[e]) for e in range(n) if order[e] != order0[e]][:3]} "
+                                 f"tail {[x for x in order[n:] + order0[n:] if x][:3]} cnt {[(i, cnt[i], cnt0[i]) for i in range(min(len(cnt), len(cnt0))) if cnt[i] != cnt0[i]][:3]} "
+                                 f"load {[(i, x, y) for i, (x, y) in enumerate(zip(load.tolist(), load0.tolist())) if x != y][:3]}")
+        # A wire's steps keep the place it had on each gate when it went in, which a wire
+        # put back (``put_back``) has afresh; where it is, is in the gates' orders above.
+        paths = {w: [s[:3] for s in steps] for w, steps in paths.items()}
+        paths0 = {w: [s[:3] for s in steps] for w, steps in paths0.items()}
+        if not (paths == paths0 and weight == weight0 and nets == nets0):
+            pw = [w for w in set(paths) | set(paths0) if paths.get(w) != paths0.get(w)][:3]
+            raise AssertionError(f"wires differ after undo: {[(w, w in paths, w in paths0, (paths.get(w) or [])[:3], (paths0.get(w) or [])[:3]) for w in pw]} "
+                                 f"weight {[(w, weight.get(w), weight0.get(w)) for w in set(weight) | set(weight0) if weight.get(w) != weight0.get(w)][:3]} "
+                                 f"nets {[(w, nets.get(w), nets0.get(w)) for w in set(nets) | set(nets0) if nets.get(w) != nets0.get(w)][:3]}")
+    assert now["vias"] == snap["vias"] and now["pieces"] == snap["pieces"] and now["next"] == snap["next"], "vias or pieces differ after undo"
 
 
 def refine(ctx: Context, passes: int = 2, hold=frozenset()) -> int:
