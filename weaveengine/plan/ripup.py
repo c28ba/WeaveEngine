@@ -126,10 +126,15 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
         refine(ctx, hold=hold)
         while fill(ctx, hold):
             refine(ctx, hold=hold)
-        if vias and replan(ctx, hold=hold):
+        # Detours before vias: undoing one moves wires and puts them back where they
+        # now fit, through a via if need be, and what it frees lets others place.
+        # Planned last, the vias see the routing as it will stay.
+        if ctx.options.untangle and untangle(ctx, hold):
             refine(ctx, hold=hold)
             fill(ctx, hold)
-        if ctx.options.untangle and untangle(ctx, hold):
+        for _ in range(3 if vias else 0):  # (what is filled after may go through vias again)
+            if not replan(ctx, hold=hold):
+                break
             refine(ctx, hold=hold)
             fill(ctx, hold)
 

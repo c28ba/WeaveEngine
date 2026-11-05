@@ -434,6 +434,19 @@ No violation in any run. The time goes on tries that are undone: 20 to 100 per s
 
 Completion as without it on every board (blinkSP1 55 (52 to 58) against 55.5 (51 to 58)), no violation in any run. The extra time is now 3 to 20 %, against 6 to 170 % for the first version.
 
+**Vias left behind, and the order of a settle (2026-11).** A via on RAM Selector Tree (the user's settings, edge clearance 1.5 mm) took a trace to the other layer a millimetre before a through-hole pad it could have reached on its own layer, at a sharp angle. Planning every connection through vias again once more after a finished pass found 29 such vias (175 to 146). The cause was the order of `settle`: vias were planned again (`replan`) before the detour repair, which moves wires and puts them back where they fit, through a via if need be, and before the last `fill`, which places open connections the same way; nothing planned those again. Now the vias are planned last, after the detour repair and its refinement and filling, and again while that plans anything (three times at most), since what is filled after may go through vias again. With the detour repair off nothing else changes in a settle. Measured against `main` before it (perturbed runs; RAM Selector Tree one run each):
+
+| Board | Routed | Vias | Copper |
+|---|---|---|---|
+| RAM Selector Tree, the user's settings | 394 to 398 of 400 | 184 to 144 | -7.8 % |
+| RAM Selector Tree | 400 of 400 | 122 to 102 | -2.9 % |
+| blinkSP1 (18) | 55 (52 to 58) to 55 (50 to 58) | 39 to 40 | -3.4 % (-17.3 to +2.4) |
+| ALU (3) | 409 | 12 to 12 | -0.8 % (-2.4 to +1.4) |
+| ulx3s (6) | 203 (201 to 203) to 202 (201 to 203) | 32.5 to 31.5 | -0.4 % (-1.7 to +5.3) |
+| Word of RAM, Micromouse2026PCB | the same | the same | the same |
+
+No violation in any run. Times were not usable (the machine was loaded throughout: one run of unchanged code took 2,008 s against 15 s alone). After the change, planning the vias once more after a pass still finds 4 on RAM Selector Tree with the user's settings (144 to 140), as many as before the detour repair existed.
+
 ## 12. Layers and vias
 
 **The difficulty:** a via is a new obstacle inside a triangle, which changes the planar map.
