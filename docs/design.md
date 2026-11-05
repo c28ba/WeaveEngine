@@ -376,6 +376,19 @@ Not built: places counted between runs rather than wires (a gate holds 15 wires 
   The redundant wires were never violations (same-net copper owes no spacing), which is why nothing caught them.
 - A connection still starts and ends on pads. It does not end on a trace of its net, and cannot cross one except at a pad.
 
+**Tried on the branch `any-target` (2026-11), not kept: a connection joins the copper either side of it.** The question first: how much could branching save at all? Per net of three pads or more, the Euclidean Steiner tree (iterated 1-Steiner, obstacles ignored) is 0.9 to 1.8 % shorter than the spanning tree the connections are drawn from, on all six boards; the copper drawn is 12 to 46 % above that spanning tree, which is detours, not the shape of the tree. So true branching (traces from the middle of traces) was not built. What was built is the cheap part: an open connection may start from any pad or via its net's wires join to its first pad and end on any joined to its second (`Context.sides`; the search takes a set of goal pads, `own[e] = -1`, and an estimate to the nearest). A connection that relies on copper made by others is broken when that copper is taken out; rip-up and `ripup.mend` route those again, so a finished net is always joined. With the option off the routings are identical to `main` on five boards (hashes).
+
+| Board (runs) | Routed, off / on | Vias | Copper, runs with equal completion |
+|---|---|---|---|
+| blinkSP1 (18) | 55.5 (51 to 58) / 55.5 (50 to 58) | 40.5 / 38 | not comparable |
+| Word of RAM (6) | 85 / 85 | 0 / 0 | -1.2 % (-3.1 to +0.2) |
+| Micromouse2026PCB (6) | 69 / 69 | 0.5 / 1 | +0.2 % (-1.8 to +1.7) |
+| ulx3s (6) | 203 (201 to 203) / 202 (200 to 203) | 32 / 34 | -1.7 % (-4.4 to +1.0) |
+| ALU (3) | 409 / 409 | 10 / 8 | +2.0 % (-2.9 to +3.2) |
+| RAM Selector Tree (1) | 400 / 394 | 119 / 175 | +20 % (27,457 against 22,895 mm) |
+
+Within noise on the small boards and clearly worse on the board of large nets, where it was meant to help. Not diagnosed; the likely cause is that every connection of a net of 73 pads now depends on the wires around it, so a rip-up round breaks and reroutes far more than it takes out. Found on the way and kept on `main`: a state snapshot did not carry its wires' nets, so a routing restored in another process (a raced variant's parent, Improve) lost riding and the one-trace counting of same-net neighbours. The code stays on the branch `any-target` (option `any_target`, off by default), shelved.
+
 ---
 
 ## 12. Layers and vias
