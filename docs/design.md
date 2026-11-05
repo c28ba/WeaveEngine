@@ -391,6 +391,35 @@ Within noise on the small boards and clearly worse on the board of large nets, w
 
 ---
 
+## 11a. Where the copper goes, and undoing detours (`ripup.untangle`, branch `detour-repair`)
+
+**Measured first.** Each routed connection's drawn length against two references: the straight line between its pads, and the same connection routed alone on the empty board (same search and geometry). The gap from the straight line to alone is what the parts and keepouts cost; the gap from alone to drawn is what sharing the board costs.
+
+| Board | Alone, over straight | Drawn, over alone (both in % of straight) |
+|---|---|---|
+| blinkSP1 | +6.5 % | +63 % (224 of its 294 mm in the 18 connections through vias) |
+| ALU | +1.9 % | +22 % |
+| Word of RAM | +1.7 % | +5.6 % |
+
+And it is concentrated: on ALU half of the 1,670 mm in 15 of 380 connections, each two to three times as long as alone; on blinkSP1 half in 5 of 35. Refinement (Phase 4) moves one connection at a time and keeps any shorter route, so with everything else in place these have none: the short way is crossed by one to three other wires, or runs through gates that are full.
+
+**What is done.** Longest detour first (copper more than 1.25 times its length alone, and two pitches more): the relaxed search with crossings allowed and capacity ignored names the wires in its way, and those in the gates of that way with no room for it; at most twelve. If the short way is not two pitches shorter than the way it has, nothing is tried. Otherwise they are taken out with the connection, it goes in by its short way (hard capacity), they are put back where they fit (`fill`). Kept if nothing is open that was not, no gate is over-full, and the copper of the nets involved (vias at their worth, as in 13.2a) is less by a pitch; else the board is restored from a snapshot. Up to three sweeps, in every settle. The copper of a trace depends only on its own net's wires beside it, so only the nets involved are measured: measuring the whole board each try took 7 of ALU's 27 s.
+
+**Measured** against the same program without it (perturbed runs, median and range; copper where completion is equal):
+
+| Board | Routed, off / on | Vias | Copper | Time |
+|---|---|---|---|---|
+| Word of RAM (6) | 85 / 85 | 0 / 0 | -0.2 % (-1.9 to 0) | 1.55 to 1.65 s |
+| Micromouse2026PCB (6) | 69 / 69 | 0.5 / 1 | -3.0 % (-8.6 to -0.4) | 1.1 to 1.25 s |
+| ALU (3) | 409 / 409 | 10 / 12 | -1.6 % (-2.5 to -1.2) | 13.2 to 20.4 s |
+| ulx3s (6) | 203 / 203 | 32 / 32.5 | -1.7 % (-7.2 to -0.6) | 9.2 to 14.6 s |
+| blinkSP1 (18) | 55.5 / 55 (51 to 58 both) | 40.5 / 39 | -0.4 % (-11.7 to +6.8) | 6.4 to 8.1 s |
+| RAM Selector Tree (1) | 400 / 400 | 119 / 117 | -0.5 % | 139 to 194 s |
+
+No violation in any run. The time goes on tries that are undone: 20 to 100 per settle, of which 2 to 8 are kept, spread over the whole order (on RAM Selector Tree at tries 35 to 71 of 102), so capping the tries would lose gains. A first version without the pre-check and with the whole board measured kept twice as many moves on ALU and cost 2.7 times the time on RAM Selector Tree (377 s).
+
+**Tried and not kept: undoing a try by lifting instead of a snapshot.** The connections were lifted (`Context.lift`), and a try that did not pay was undone by ripping what it had put in and putting the lifted ones back, last first. Not exact (ALU: the same copper, a different routing) and on boards with vias it failed: rolling the log of the via sites back restores places on gates for wires that had been taken out since. Making it exact needs the journal of the sites to know about removals; not done.
+
 ## 12. Layers and vias
 
 **The difficulty:** a via is a new obstacle inside a triangle, which changes the planar map.
