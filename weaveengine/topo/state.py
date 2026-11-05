@@ -177,11 +177,15 @@ class TopoState:
         del self.weight[wire_id]
 
     def snapshot(self):
+        # The nets go too: a snapshot is also restored in another process (a raced
+        # variant's parent, a routing gone on from), whose state has never seen these wires.
         return ([list(o) for o in self.gate_order], [list(c) for c in self.corner_cnt],
-                {w: list(p) for w, p in self.wire_path.items()}, self.load.copy(), dict(self.weight))
+                {w: list(p) for w, p in self.wire_path.items()}, self.load.copy(), dict(self.weight),
+                {w: self.net[w] for w in self.wire_path if w in self.net})
 
     def restore(self, snap) -> None:
-        order, cnt, paths, load, weight = snap
+        order, cnt, paths, load, weight, nets = snap
+        self.net.update(nets)
         self.epoch += 1
         self.stamp = np.full(len(order), self.epoch, dtype=np.int64)
         self.load, self.weight = load.copy(), dict(weight)
