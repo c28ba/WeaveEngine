@@ -91,7 +91,7 @@ class Settings:
     margin: float = 0.01
     ignore_keepouts: bool = False
     slide_vias: bool = True
-    untangle: bool = True
+    untangle: bool = False
     smooth_corners: bool = True
     show_outlines: bool = True
     show_names: bool = True

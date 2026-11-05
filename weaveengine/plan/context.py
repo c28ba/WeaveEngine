@@ -110,7 +110,7 @@ class Options:
     vias: bool = True               # routes may change layer through vias (12.3)
     slide: bool = True              # move each via to where its traces run straighter (13.3)
     smooth: bool = True             # round sharp corners where the design rules leave room
-    untangle: bool = True           # undo long detours by moving the wires in their way (``ripup.untangle``)
+    untangle: bool = False          # undo long detours by moving the wires in their way (``ripup.untangle``)
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
     teardrop_max_width: float = 2.0    # mm across
