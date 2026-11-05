@@ -11,7 +11,7 @@ from weaveengine.board import Board, Pad
 from weaveengine.plan import candidates as cand_mod
 from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
-from weaveengine.plan.ripup import legalise, negotiate, settle
+from weaveengine.plan.ripup import legalise, mend, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
 from weaveengine.realize.relax import copper_length, polyline_length, realize
@@ -47,7 +47,7 @@ class Result:
         open_pairs = {w: self.connections[w] for w in self.unrouted}
         return Result(self.board, [], open_pairs, self.polylines, self.wire_net, self.wire_layer,
                       self.violations, self.unrouted, self.vias, self.teardrops, self.stats,
-                      {w: (c.src, c.dst) for w, c in self.connections.items() if w in self.polylines}, self.kept)
+                      {w: ends for w, ends in self.wire_pads.items() if w in self.polylines}, self.kept)
 
     @property
     def complete(self) -> bool:
@@ -115,7 +115,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     t_route = time.perf_counter()
 
     wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
-    used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
+    wire_pads = {w: ctx.wire_ends(w) for w in wire_layer}  # where each wire really starts and ends (``Context.sides``)
+    used = {p for ends in wire_pads.values() for p in ends}
     vias = [p for p in work.pads if p.is_via and p.pad_id in used]
     smoothed = (0, 0)
     if options.smooth:
@@ -128,7 +129,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         tasks = []
         for layer in ctx.layers:
             on_layer = {w: lines[w] for w, li in wire_layer.items() if li == layer.index}
-            ends = {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in on_layer}
+            ends = {w: wire_pads[w] for w in on_layer}
             tasks.append((on_layer, ends, layer.index))
         limits = (options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing)
         for found in parallel.run(_teardrop_task, (work, wire_net, limits), tasks, workers):
@@ -164,7 +165,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
-    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats,
+                  wire_pads, kept=routing)
 
 
 def _redundant(ctx: Context, lines: dict, vias: set[int]) -> set[int]:
@@ -193,7 +195,7 @@ def _redundant(ctx: Context, lines: dict, vias: set[int]) -> set[int]:
 
         kept = []
         for w in sorted(wires, key=lambda w: (polyline_length(lines[w]), w)):
-            a, b = root(ctx.conns[w].src), root(ctx.conns[w].dst)
+            a, b = (root(p) for p in ctx.wire_ends(w))
             if a == b:
                 out.add(w)
             else:
@@ -202,7 +204,7 @@ def _redundant(ctx: Context, lines: dict, vias: set[int]) -> set[int]:
         while True:  # a via one wire ends on is that wire's dead end
             ends: dict[int, list[int]] = {}
             for w in kept:
-                for p in (ctx.conns[w].src, ctx.conns[w].dst):
+                for p in ctx.wire_ends(w):
                     ends.setdefault(p, []).append(w)
             stubs = {ws[0] for p, ws in ends.items() if p in vias and len(ws) == 1}
             if not stubs:
@@ -224,7 +226,7 @@ def _print(pmap: PlanarMap) -> str:
 def _key(ctx: Context, lines: dict, violations: list) -> tuple:
     """How good a routing is, least best: connections open, violations, copper (a shared trunk once)."""
     copper = sum(copper_length([line for w, line in lines.items() if ctx.conns[w].layer == layer.index]) for layer in ctx.layers)
-    return (len(ctx.unrouted), len(violations), round(copper, 3))
+    return (len(ctx.unrouted) + len(ctx.broken()), len(violations), round(copper, 3))
 
 
 def _keep(ctx: Context, lines: dict, violations: list, wire_net: dict, maps: list | None = None) -> dict:
@@ -351,15 +353,21 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             negotiate(ctx, max_rounds=ctx.rounds + 5)
         legalise(ctx)
         lines, violations, wire_net = _realize(ctx)
-    # Whatever still violates is not a routed connection: drop it.
-    while violations and drop_violators:
-        dropped: set[int] = set()
-        for v in violations:
-            if not dropped.intersection(v.wires):
-                dropped.add(max(v.wires))
-        for w in dropped:
-            if w in ctx.conns:  # not a piece of a connection ripped up a moment ago
-                ctx.rip(w)
+    # Whatever still violates is not a routed connection: drop it. (What relied on
+    # it to join its pads is then routed again, or open: ``ripup.mend``.)
+    for _ in range(3):
+        while violations and drop_violators:
+            dropped: set[int] = set()
+            for v in violations:
+                if not dropped.intersection(v.wires):
+                    dropped.add(max(v.wires))
+            for w in dropped:
+                if w in ctx.conns:  # not a piece of a connection ripped up a moment ago
+                    ctx.rip(w)
+            disturbed = True
+            lines, violations, wire_net = _realize(ctx)
+        if not mend(ctx):
+            break
         disturbed = True
         lines, violations, wire_net = _realize(ctx)
     if opts.refine and disturbed:

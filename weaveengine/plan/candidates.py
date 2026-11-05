@@ -29,10 +29,11 @@ def generate(ctx: Context, conn: Connection, k: int | None = None, first: dict |
     search there, as ``find`` takes it.
     """
     k = ctx.params.K if k is None else k
+    sides = ctx.sides(conn)
     if _use_threads(ctx, conn):
-        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k, first), conn.layers))
+        found = list(_threads().map(lambda li: _layer_routes(ctx, conn, li, k, first, sides), conn.layers))
     else:
-        found = [_layer_routes(ctx, conn, li, k, first) for li in conn.layers]
+        found = [_layer_routes(ctx, conn, li, k, first, sides) for li in conn.layers]
     cands: list[Candidate] = []
     for li, routes in zip(conn.layers, found):
         pmap = ctx.layers[li].pmap
@@ -72,15 +73,16 @@ def _threads():
     return _pool
 
 
-def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict | None = None) -> list[Route]:
+def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict | None = None, sides=None) -> list[Route]:
     params = ctx.params
     layer = ctx.layers[li]
     pmap, state = layer.pmap, layer.state
+    ends = ctx.ends_on(sides, conn, li)
     first = None
     if plain is not None:  # the search ``find`` starts with: it may go through pads of its net, which a candidate does not
-        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, through=True)
+        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, through=True, **ends)
     if first is None or first.lead:
-        first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id)
+        first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, **ends)
     if first is None:
         return []
     found = {first.gates: first}
@@ -93,7 +95,7 @@ def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict |
         bump = params.alpha * max(first.length, 1e-6) / len(last.steps)
         for g in last.gates:
             penalty[g] = penalty.get(g, 0.0) + bump
-        r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight, net=conn.net_id)
+        r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight, net=conn.net_id, **ends)
         if r is None:
             break
         r.cost -= sum(penalty.get(g, 0.0) for g in r.gates)
@@ -171,9 +173,12 @@ def severed(ctx: Context, layer: Layer, conn: Connection, path: GatePath) -> set
 
 def plain_route(ctx: Context, conn: Connection, **kwargs) -> Route | None:
     """Cheapest in-search route on one layer, over the usable layers (searched at the same time)."""
+    sides = ctx.sides(conn)
+
     def one(li: int) -> Route | None:
         layer = ctx.layers[li]
-        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, net=conn.net_id, **kwargs)
+        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, net=conn.net_id,
+                     **ctx.ends_on(sides, conn, li), **kwargs)
 
     if _use_threads(ctx, conn):
         found = list(_threads().map(one, conn.layers))

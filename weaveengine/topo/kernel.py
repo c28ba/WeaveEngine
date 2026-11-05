@@ -91,7 +91,7 @@ class Tables:
         self.no_penalty = np.zeros(1)
         self.no_corridor = np.zeros(1, dtype=np.uint8)
         self.ride = np.zeros(e2 // 2 + 1, dtype=np.int64)  # per edge: the places beside a wire of the net being routed
-        self.own = np.zeros(e2 // 2 + 1, dtype=np.int32)   # per edge: 1 + which pad of that net it is an edge of (0: of none)
+        self.own = np.zeros(e2 // 2 + 1, dtype=np.int32)   # per edge: 1 + which pad of that net it is an edge of (0: of none; -1: a goal)
 
     def update(self, pmap, half_edges) -> bool:
         """Copies the transitions of ``half_edges`` from the map (its per-edge
@@ -110,15 +110,17 @@ class Tables:
 
 
 @njit(cache=True, nogil=True)
-def estimate(x, y, tx, ty, rad, hw, far, fx0, fy0, fcell):
-    """What it costs at least from x y to the goal at tx ty (radius ``rad``):
-    the straight line, of which only the way to the nearest wire of the
+def estimate(x, y, gx, gy, grad, hw, far, fx0, fy0, fcell):
+    """What it costs at least from x y to the nearest goal (pads with centres
+    gx gy and radii ``grad``): the straight line, of which only the way to the nearest wire of the
     wire's own net has to be new. ``far`` is a coarse map of that distance
     (cells of side ``fcell`` from fx0 fy0; one cell holding infinity if the
     net has no wire here). Beside its own net a wire costs ``RIDE`` of its
     length, and the search has to know: an estimate that took every length in
     full would turn it away from the detour that leads to its own trace."""
-    d = np.hypot(x - tx, y - ty) - rad
+    d = np.inf
+    for i in range(gx.shape[0]):
+        d = min(d, np.hypot(x - gx[i], y - gy[i]) - grad[i])
     if d <= 0.0:
         return 0.0
     i = min(max(int((x - fx0) / fcell), 0), far.shape[0] - 1)
@@ -175,7 +177,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
           tr, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
           relaxed, pres, use_hist, cross_pen, hard_cap, weight, ride, own, own_ptr, own_edge, own_cost, own_node,
-          tx, ty, rad, hw, far, fx0, fy0, fcell, bound,
+          gx, gy, grad, hw, far, fx0, fy0, fcell, bound,
           g, parent, parent_tr, touched, heap_f, heap_g, heap_n, best, best_node):
     """The one search (design section 8). Cheapest way to ``dst_pad``.
 
@@ -197,7 +199,9 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
     no load on the gate, and from one such place to the next it adds next to
     no length.
 
-    ``own[e]`` is 1 + k on the edges of pad k of the net being routed, other
+    ``own[e]`` is -1 on the edges of the pads it may end on besides
+    ``dst_pad`` (the copper its net has on the far side of the connection),
+    and 1 + k on the edges of pad k of the net being routed, other
     than those the wire starts and ends on (11). Such a pad is the net's
     copper: the wire may run into it and go on from any of its edges
     (``own_edge[own_ptr[k]:own_ptr[k + 1]]``), as a new piece. ``own_cost``
@@ -234,7 +238,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
             continue
         if use_penalty:
             c += penalty[e]
-        h = estimate(mid[e, 0], mid[e, 1], tx, ty, rad, hw, far, fx0, fy0, fcell)
+        h = estimate(mid[e, 0], mid[e, 1], gx, gy, grad, hw, far, fx0, fy0, fcell)
         n_touched, size = enter(node0, first, last, c, over, e, root, 0, pres, hard_cap, use_hist, hist, ride, h,
                                 g, parent, parent_tr, touched, n_touched, heap_f, heap_g, heap_n, size)
         if size < 0:
@@ -267,7 +271,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
         p = node - he * SLOTS
         e = he >> 1
         if (he & 1) == 1 and kind[e] == 2:
-            if owner[e] == dst_pad:
+            if owner[e] == dst_pad or own[e] < 0:
                 return node, gn, n_touched
             # A pad of its net on the way: it goes on from any edge of the pad.
             # Across the pad it is the pad's copper, like a wire it runs beside.
@@ -287,7 +291,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
                 c = gn + RIDE * np.hypot(mid[b, 0] - mid[e, 0], mid[b, 1] - mid[e, 1])
                 if use_penalty:
                     c += penalty[b]
-                h = estimate(mid[b, 0], mid[b, 1], tx, ty, rad, hw, far, fx0, fy0, fcell)
+                h = estimate(mid[b, 0], mid[b, 1], gx, gy, grad, hw, far, fx0, fy0, fcell)
                 n_touched, size = enter((2 * b) * SLOTS, 0, nb, c, load[b] + weight - cap[b] if nb > 0 else 0.0, b, node, THROUGH,
                                         pres, hard_cap, use_hist, hist, ride, h,
                                         g, parent, parent_tr, touched, n_touched, heap_f, heap_g, heap_n, size)
@@ -346,7 +350,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
                     return -2, 0.0, n_touched
                 i = size
                 size += 1
-                f = c + estimate(mid[b, 0], mid[b, 1], tx, ty, rad, hw, far, fx0, fy0, fcell)
+                f = c + estimate(mid[b, 0], mid[b, 1], gx, gy, grad, hw, far, fx0, fy0, fcell)
                 while i > 0:
                     up = (i - 1) >> 1
                     if heap_f[up] <= f:

@@ -188,13 +188,16 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     best = None  # (cost, hop, layer, route)
     from_pad: dict = {}
     reached = {}  # per layer: what the search saw, the via points it started from, the layer each pad it started from was reached on
+    sides = ctx.sides(conn)
     for layer in ctx.layers:
-        if conn.src not in layer.pmap.pad_edges:
+        ends = ctx.ends_on(sides, conn, layer.index)
+        if conn.src not in layer.pmap.pad_edges and not ends.get("starts"):
             continue
         if first and layer.index in first and through:
             r, seen = first[layer.index]
         else:
-            r, seen = route(layer.pmap, layer.state, conn.src, conn.dst, params, penalty=penalty.get(layer.index), bound=bound, **search)
+            src = conn.src if conn.src in layer.pmap.pad_edges else None
+            r, seen = route(layer.pmap, layer.state, src, conn.dst, params, penalty=penalty.get(layer.index), bound=bound, **ends, **search)
         from_pad[layer.index] = (r, seen)
         reached[layer.index] = (seen if changes else None, None, {})
         if r is not None and (best is None or r.cost < best[0]):
@@ -224,7 +227,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
             tris, cost, pts, source = seeds if seeds is not None else (None, None, None, None)
             r, seen = route(layer.pmap, layer.state, None, conn.dst, params, starts={pad: c for pad, (c, _) in starts.items()},
                             seeds=None if seeds is None else (tris, cost, pts[:, 0], pts[:, 1]),
-                            bound=limit, penalty=penalty.get(layer.index), **search)
+                            bound=limit, penalty=penalty.get(layer.index), goals=ctx.ends_on(sides, conn, layer.index).get("goals"), **search)
             reached[layer.index] = (seen if hop < changes else None, (pts, source), {pad: la for pad, (_, la) in starts.items()})
             if r is not None and (best is None or r.cost < best[0]):
                 best = (r.cost, hop, layer.index, r)

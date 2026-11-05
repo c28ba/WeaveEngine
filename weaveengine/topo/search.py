@@ -120,7 +120,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
           mode: str = "normal", corridor: set[int] | None = None, penalty: dict[int, float] | None = None,
           congestion: bool = True, hard_cap: bool = False, weight: float = 1.0, seeds=None, reach: bool = False,
           target: tuple[float, float] | None = None, bound: float = math.inf, net: int = -1,
-          through: bool = False, starts: dict[int, float] | None = None):
+          through: bool = False, starts: dict[int, float] | None = None, goals=None):
     """Cheapest planar path to ``dst_pad`` on this layer, or None.
 
     It starts from ``src_pad``, from the pads ``starts`` (pad -> cost so far)
@@ -139,6 +139,9 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     net that is on its way and go on from there; the route then has a
     ``lead``, the pieces before the last.
 
+    ``goals``: other pads (and vias) it may end on as well as ``dst_pad``:
+    the copper its net has on the far side of the connection (11).
+
     With ``reach``, returns (route or None, Reach). ``target``: where the
     goal is, for a search on a layer the pad itself is not on (it then cannot
     end there, only say what it reached). ``bound``: nothing dearer than this
@@ -156,7 +159,8 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     from_costs = [start[pad] for pad in start for _ in pmap.pad_edges.get(pad, ())]
     tris, costs, xs, ys = seeds if seeds is not None else _NO_SEEDS
     here = dst_pad in pmap.pad_edges
-    if not (here or (reach and target is not None)) or src_pad == dst_pad or not (len(from_edges) or len(tris)):
+    ends = [p for p in goals or () if p != dst_pad and p not in start and p in pmap.pad_edges]
+    if not (here or ends or (reach and target is not None)) or src_pad == dst_pad or not (len(from_edges) or len(tris)):
         return (None, None) if reach else None
     pen = no_pen = np.zeros(1)
     if penalty:
@@ -167,8 +171,11 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     if mode == "corridor":
         cor = np.zeros(pmap.num_edges, dtype=np.uint8)
         cor[list(corridor)] = 1
-    tx, ty = pmap.pad_centre[dst_pad] if here else target
-    radius = pmap.pad_radius[dst_pad] if here else 0.0
+    aims = [dst_pad] * here + ends
+    gx = np.array([pmap.pad_centre[p][0] for p in aims] if aims else [target[0]], dtype=np.float64)
+    gy = np.array([pmap.pad_centre[p][1] for p in aims] if aims else [target[1]], dtype=np.float64)
+    grad = np.array([pmap.pad_radius[p] for p in aims] if aims else [0.0], dtype=np.float64)
+    end_edge = np.array([e for p in ends for e in pmap.pad_edges[p]], dtype=np.int64)
     best = np.full(pmap.num_triangles, np.inf)
     best_node = np.full(pmap.num_triangles, -1, dtype=np.int64)
     search = kernel.astar if kernel.AVAILABLE else kernel.astar_plain
@@ -176,7 +183,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
     found, seen = None, None
     tb = None
     (ride_at, ride_places), pads, far = _own(pmap, state, net, through) if net >= 0 else (_NO_RIDE, [], _NOWHERE)
-    pads = [p for p in pads if p != dst_pad and p not in start]
+    pads = [p for p in pads if p != dst_pad and p not in start and p not in ends]
     own_edges = [pmap.pad_edges[p] for p in pads]
     own_ptr = np.cumsum([0, *map(len, own_edges)]).astype(np.int64)
     own_edge = np.array([e for edges in own_edges for e in edges], dtype=np.int64)
@@ -189,6 +196,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
             tb.ride[ride_at] = ride_places
             for k, edges in enumerate(own_edges):
                 tb.own[edges] = k + 1
+            tb.own[end_edge] = -1
             best[:], best_node[:] = np.inf, -1
             own_cost[:], own_node[:] = np.inf, -1
             try:
@@ -201,7 +209,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor",
                     relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
                     tb.own, own_ptr, own_edge, own_cost, own_node,
-                    tx, ty, radius, params.h_weight, *far, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,
+                    gx, gy, grad, params.h_weight, *far, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,
                     tb.heap_f, tb.heap_g, tb.heap_n, best, best_node)
             except Exception as error:  # the compiled kernel itself failed: never crash, fall back for good
                 if search is kernel.astar_plain:
@@ -233,6 +241,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
         if tb is not None and pmap.__dict__.get("_kernel_tables") is tb:
             tb.ride[ride_at] = 0
             tb.own[own_edge] = 0
+            tb.own[end_edge] = 0
     return (found, seen) if reach else found
 
 

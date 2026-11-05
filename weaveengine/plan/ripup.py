@@ -24,7 +24,8 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
         else:
             stall += 1
         over = [(layer, e) for layer in ctx.layers for e in layer.state.overflowed_gates()]
-        open_conns = [w for w in ctx.unrouted if not ctx.conns[w].dead]
+        broken = ctx.broken()  # routed, but its pads no longer joined: it is open in all but name
+        open_conns = [w for w in ctx.unrouted if not ctx.conns[w].dead] + broken
         # Once nothing is over-full, a round only changes which connections
         # are the open ones: if that has stopped helping, it will not start again.
         if (not over and not open_conns) or stall >= (STALL_LIMIT if over else QUIET_STALL_LIMIT) or ctx.rounds >= max_rounds:
@@ -43,10 +44,12 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
 
         # 2. Rip-up set: wires on over-capacity gates, plus the blocking set
         #    of the cheapest relaxed path of each unrouted connection (8.5).
-        rip: set[int] = set()
+        rip: set[int] = set(broken)
         for layer, e in over:
             rip.update(layer.state.gate_order[e])
         for w in open_conns:
+            if w in broken:
+                continue
             conn = ctx.conns[w]
             r = find(ctx, conn, mode="relaxed")
             if r is None:
@@ -108,6 +111,27 @@ def fill(ctx: Context, hold=frozenset()) -> int:
         placed += before - len(ctx.unrouted)
 
 
+def mend(ctx: Context) -> bool:
+    """Routes again every connection whose pads the wires no longer join
+    (``Context.broken``): it is taken out and placed where it fits, as ``fill``
+    does; what does not fit is left open. Taking one out can break another
+    that relied on it, so this goes on while anything is broken (three times
+    at most, then what is still broken is left open). Returns whether anything changed."""
+    changed = False
+    for attempt in range(4):
+        broken = ctx.broken()
+        if not broken:
+            break
+        changed = True
+        for w in broken:
+            if ctx.conns[w].routed:
+                ctx.rip(w)
+        ctx.rebuild_barrier()
+        if attempt < 3:
+            fill(ctx)
+    return changed
+
+
 def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
     """From whatever negotiation left to a legal routing with nothing more to
     add: no gate over capacity, routes shortened (Phase 4), and every open
@@ -124,6 +148,7 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
         if vias and replan(ctx, hold=hold):
             refine(ctx, hold=hold)
             fill(ctx, hold)
+    mend(ctx)
 
 
 def refine(ctx: Context, passes: int = 2, hold=frozenset()) -> int:

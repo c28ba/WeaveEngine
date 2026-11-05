@@ -65,7 +65,7 @@ def routed(board: Board) -> Context:
     """The board routed, as the context the router worked in."""
     layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(board.layers, parallel.run(router._build_task, board, range(len(board.layers)), 1)))]
     pairs, _ = decompose(board, layers)
-    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap), Options(portfolio=1, slide=False), 0, 1, None, None)
+    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap), Options(portfolio=1, slide=False, any_target=False), 0, 1, None, None)
     router._route_once(ctx, 4, True)
     return ctx
 
@@ -101,7 +101,7 @@ def test_a_connection_joins_its_nets_trace_instead_of_running_beside_it():
 
 def test_a_trace_runs_through_a_pad_of_its_net_that_is_in_its_way():
     board = pad_at_the_wall()
-    result = route_board(board)
+    result = route_board(board, options=Options(any_target=False))   # (with it, 0 joins pad 2 and stops there: see below)
     assert result.unrouted == [] and net_is_connected(result, 0) and net_is_connected(result, 1)
     assert_clean(board, result)
     # The connection from 0 to 1 is in two pieces that end on pad 2 ...
@@ -118,7 +118,7 @@ def test_a_trace_runs_through_a_pad_of_its_net_that_is_in_its_way():
 
 def test_connections_of_a_net_share_a_via():
     board = one_front_two_back()
-    result = route_board(board, options=Options(portfolio=1), workers=1)
+    result = route_board(board, options=Options(portfolio=1, any_target=False), workers=1)
     assert result.unrouted == [] and net_is_connected(result, 0)
     assert_clean(board, result)
     assert len(result.vias) == 1   # each connection had its own
@@ -152,7 +152,7 @@ def test_a_through_hole_pad_of_the_net_is_the_layer_change():
     the tree joins 0 to 1 and 0 to 2, and the second needs no via."""
     board = Board.rectangle(24, 24, Rules(0.2, 0.2), layers=["F.Cu", "B.Cu"])
     board.pads += [Pad.rect(0, 10, 10, 1.2, 0.8, 0, layers=FRONT), Pad.circle(1, 13, 10, 0.6, 0), Pad.rect(2, 10, 16, 1.2, 0.8, 0, layers=BACK)]
-    result = route_board(filled(board), options=Options(portfolio=1), workers=1)
+    result = route_board(filled(board), options=Options(portfolio=1, any_target=False), workers=1)
     assert result.unrouted == [] and result.vias == [] and net_is_connected(result, 0)
     assert_clean(board, result)
     whole = next(c for c in result.connections.values() if c.parent is None and (c.src, c.dst) == (0, 2))
@@ -177,3 +177,38 @@ def test_pieces_that_share_a_gate_are_put_back_as_they_were():
         ctx.put_back(conn, saved)
         assert orders() == before and all(layer.state.check_invariants() for layer in ctx.layers)
     assert whole.routed
+
+
+def test_a_connection_ends_on_the_copper_joined_to_its_pad():
+    """With ``any_target`` a connection joins the copper either side of it: on
+    the wall board pad 2 is joined to one of pads 0 and 1 already, so the
+    connection between them is one wire from pad 2, not two pieces through it."""
+    board = pad_at_the_wall()
+    through = route_board(board, options=Options(any_target=False))
+    result = route_board(board, options=Options(any_target=True))
+    assert result.unrouted == [] and net_is_connected(result, 0) and net_is_connected(result, 1)
+    assert_clean(board, result)
+    whole = next(c for c in result.connections.values() if c.parent is None and (c.src, c.dst) == (0, 1))
+    assert not whole.pieces and 2 in result.wire_pads[whole.wire_id]   # one wire, from or to pad 2 (whichever side it is joined to)
+    assert copper(result) <= copper(through) + 1e-6
+
+
+def test_a_connection_whose_copper_is_taken_out_is_routed_again():
+    """A connection that ended on copper joined to its pad relies on what joins
+    them. Take that out and it is broken (routed, its pads not joined): rip-up
+    and ``mend`` route it again, so a finished net is always joined."""
+    from weaveengine.plan.ripup import mend
+    ctx = routed(pad_at_the_wall())
+    ctx.options.any_target = True
+    whole = next(c for c in ctx.conns.values() if c.parent is None and (c.src, c.dst) == (0, 1))
+    ctx.rip(whole.wire_id)
+    assert ctx.sides(whole) is not None
+    from weaveengine.plan.path import find
+    assert ctx.commit(whole, find(ctx, whole))
+    joiner = next(w for w, c in ctx.conns.items() if c.parent is None and c.routed and w != whole.wire_id and c.net_id == 0)
+    ends = ctx.wire_ends(whole.wire_id) if not whole.pieces else None
+    if ends is not None and ends != (0, 1) and ends != (1, 0):
+        ctx.rip(joiner)
+        assert whole.wire_id in ctx.broken()
+    mend(ctx)
+    assert not ctx.broken() and all(layer.state.check_invariants() for layer in ctx.layers)

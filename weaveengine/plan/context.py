@@ -115,6 +115,7 @@ class Options:
     teardrop_max_width: float = 2.0    # mm across
     teardrop_breathing: float = 1.5    # clearances a teardrop keeps from foreign copper, else it is left out
     portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
+    any_target: bool = False        # (experiment, not kept: design 11) a connection joins the copper on either side of it, pad or via, not its two pads (11)
 
 
 class Context:
@@ -162,6 +163,66 @@ class Context:
             from weaveengine.plan.path import Legal
             self._legal = Legal(self)
         return self._legal
+
+    # -- the copper a connection joins (11) -------------------------------------
+    def wire_ends(self, w: int) -> tuple[int, int]:
+        """The pads (or vias) wire ``w`` starts and ends on, as it lies in its layer's state."""
+        layer = self.layers[self.conns[w].layer]
+        steps, owner = layer.state.wire_path[w], layer.pmap.edge_owner_list
+        return owner[steps[0][0]], owner[steps[-1][0]]
+
+    def joined(self, net: int):
+        """What the wires of ``net`` join as they stand: a function giving, for a
+        pad or via, every pad and via joined to it (itself included)."""
+        parent: dict[int, int] = {}
+
+        def root(p: int) -> int:
+            while parent.setdefault(p, p) != p:
+                parent[p] = p = parent[parent[p]]
+            return p
+
+        for layer in self.layers:
+            for w in layer.state.by_net.get(net, ()):
+                a, b = self.wire_ends(w)
+                parent[root(a)] = root(b)
+        parts: dict[int, set[int]] = {}
+        for p in list(parent):
+            parts.setdefault(root(p), set()).add(p)
+        return lambda p: parts.get(root(p), {p}) if p in parent else {p}
+
+    def sides(self, conn: Connection) -> tuple[set[int], set[int]] | None:
+        """The copper on either side of an open connection: everything its
+        net's wires join to its first pad, and to its second. Joining any of
+        the one to any of the other does what the connection is for. None if
+        its two pads are joined already (or the option is off): then it goes
+        from pad to pad, as a spanning tree drew it."""
+        if not self.options.any_target:
+            return None
+        part = self.joined(conn.net_id)
+        a, b = part(conn.src), part(conn.dst)
+        return None if conn.dst in a else (a, b)
+
+    def ends_on(self, sides, conn: Connection, layer: int) -> dict:
+        """The search's arguments for ``conn`` on ``layer`` given its ``sides``:
+        it may start from any of the first side there and end on any of the second."""
+        if sides is None:
+            return {}
+        pads = self.layers[layer].pmap.pad_edges
+        return {"starts": {p: 0.0 for p in sides[0] if p != conn.src and p in pads},
+                "goals": [p for p in sides[1] if p != conn.dst and p in pads]}
+
+    def broken(self) -> list[int]:
+        """Routed connections whose two pads the wires no longer join. A
+        connection that joined the copper either side of it relies on the wires
+        that made that copper; when one of those is taken out, the connection
+        stands but no longer joins its pads. It is taken out and routed again."""
+        out, parts = [], {}
+        for w, c in self.conns.items():
+            if c.parent is None and c.routed:
+                part = parts.get(c.net_id) or parts.setdefault(c.net_id, self.joined(c.net_id))
+                if c.dst not in part(c.src):
+                    out.append(w)
+        return out
 
     def pad_centre(self, pad: int) -> tuple[float, float]:
         for layer in self.layers:
@@ -271,7 +332,10 @@ class Context:
             return True
         keep = sites.keep_off(self.board.rules)
         new = [not isinstance(j, int) for j in joints]     # per joint: a via to be made (else copper that is there)
-        pads = [conn.src, *(self.next_pad + sum(new[:n]) if new[n] else j for n, j in enumerate(joints)), conn.dst]
+        # The route's own ends: it may start and end on copper joined to the connection's pads (``sides``).
+        first, last = self.layers[routes[0].layer].pmap, self.layers[routes[-1].layer].pmap
+        ends = first.edge_owner_list[routes[0].steps[0][0]], last.edge_owner_list[routes[-1].steps[-1][0]]
+        pads = [ends[0], *(self.next_pad + sum(new[:n]) if new[n] else j for n, j in enumerate(joints)), ends[1]]
         pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id)
                   for n in range(len(routes))]
         def mark():
@@ -424,7 +488,8 @@ class Context:
 
     def _weld(self, layer: Layer, conn: Connection, path: GatePath) -> None:
         pmap, state = layer.pmap, layer.state
-        layer.barrier.weld(pmap.pad_obs[conn.src], pmap.pad_obs[conn.dst], path)
+        a, b = self.wire_ends(conn.wire_id)
+        layer.barrier.weld(pmap.pad_obs[a], pmap.pad_obs[b], path)
         for g in path.gates:
             if pmap.edge_kind_list[g] == GATE and state.full(g):
                 u, v = pmap.edge_v_list[g]
@@ -519,7 +584,8 @@ class Context:
                         continue  # not drawn: it would be a second trace (``router._redundant``)
                     pts = lines[w]
                 else:
-                    pts = [centre[conn.src]] + [mids[g] for g in path.gates] + [centre[conn.dst]]
+                    a, b = self.wire_ends(w)
+                    pts = [centre[a]] + [mids[g] for g in path.gates] + [centre[b]]
                 if len(pts) > 1:
                     wires.append((layer.index, conn.net_id))
                     shapes.append(pts)
@@ -542,7 +608,8 @@ class Context:
 
     # -- metrics ------------------------------------------------------------
     def violations(self) -> int:
-        return len(self.unrouted) + sum(l.state.overflow(e) for l in self.layers for e in l.state.overflowed_gates())
+        return (len(self.unrouted) + len(self.broken())
+                + sum(l.state.overflow(e) for l in self.layers for e in l.state.overflowed_gates()))
 
     @staticmethod
     def wire_copper(layer: Layer, w: int, first: bool = False) -> float:

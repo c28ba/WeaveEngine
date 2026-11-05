@@ -39,10 +39,10 @@ def assert_clean(board, result):
         for obs in board.obstacles_on(layer):
             assert line.distance(obs.shape) >= rules.clearance + half[w] - 1.1e-3
         assert board.outline.exterior.distance(line) >= rules.clearance + half[w] - 1.1e-3
-        conn = result.connections[w]
-        assert pads[conn.src].on(layer) and pads[conn.dst].on(layer)
-        assert math.dist(line.coords[0], pads[conn.src].centre) < 1e-6
-        assert math.dist(line.coords[-1], pads[conn.dst].centre) < 1e-6
+        a, b = result.wire_pads[w]   # where it really starts and ends: a pad or via of its net, not always its connection's own
+        assert pads[a].net_id == pads[b].net_id == result.wire_net[w] and pads[a].on(layer) and pads[b].on(layer)
+        assert math.dist(line.coords[0], pads[a].centre) < 1e-6
+        assert math.dist(line.coords[-1], pads[b].centre) < 1e-6
 
 
 def net_is_connected(result, net_id: int) -> bool:
@@ -56,9 +56,9 @@ def net_is_connected(result, net_id: int) -> bool:
         return x
 
     for w in result.polylines:
-        conn = result.connections[w]
-        if conn.net_id == net_id:
-            parent[find(conn.src)] = find(conn.dst)
+        if result.wire_net[w] == net_id:
+            a, b = result.wire_pads[w]
+            parent[find(a)] = find(b)
     return len({find(p) for p in pads}) == 1
 
 
