@@ -138,9 +138,13 @@ class TopoState:
             row = self.gate_order[edge_id]
             row.insert(slot, wire_id)
             self.stamp[edge_id] = self.epoch
-            if (mine >= 0 and ((slot and nets.get(row[slot - 1], -1) == mine) or (slot + 1 < len(row) and nets.get(row[slot + 1], -1) == mine))
+            # Its two neighbours: beside one of its own net it joins that run; between two of
+            # one net it splits theirs in two (``remove`` has the converse); at a via, the via decides.
+            a = nets.get(row[slot - 1], -1) if slot else -1
+            b = nets.get(row[slot + 1], -1) if slot + 1 < len(row) else -1
+            if ((mine >= 0 and (a == mine or b == mine)) or (a >= 0 and a == b)
                     or (vias and (edge_v[edge_id][0] in vias or edge_v[edge_id][1] in vias))):
-                self.load[edge_id] = self.tally(edge_id)  # beside one of its own net, or at a via
+                self.load[edge_id] = self.tally(edge_id)
             else:
                 self.load[edge_id] += weight
             self.count[edge_id] += 1

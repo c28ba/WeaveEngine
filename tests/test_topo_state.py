@@ -71,3 +71,25 @@ def test_random_insert_remove_keeps_invariants(grid):
         assert state.invariant_errors() == [], f"after {ops} operations"
         peak = max(peak, max(len(o) for o in state.gate_order))
     assert peak > 2  # the test did exercise shared gates
+
+
+def test_a_wire_between_two_of_one_net_splits_their_run():
+    """Neighbours of one net on a gate are one trace and count once; a foreign
+    wire put in between makes them two, and the load has to say so."""
+    from weaveengine.board import Board, Pad
+    from weaveengine.topo import planar_map
+    from weaveengine.topo.state import TopoState
+    board = Board.rectangle(10, 10)
+    board.pads += [Pad.circle(0, 2, 5, 0.3), Pad.circle(1, 8, 5, 0.3)]
+    pmap = planar_map.build(board)
+    state = TopoState(pmap)
+    e = next(i for i, k in enumerate(pmap.edge_kind_list) if k == 0)
+    t, side = pmap.edge_t_list[e][0], 0
+    k = next(c for c in range(3) if pmap.tri_e_list[t][c] != e)  # any corner: only the gate's row and load matter here
+    state.insert(1, [(e, -1, -1, 0)], 1.0, net=7)
+    state.insert(2, [(e, -1, -1, 1)], 1.0, net=7)
+    assert state.load[e] == state.tally(e) == 1.0      # one trace
+    state.insert(3, [(e, -1, -1, 1)], 1.0, net=8)    # between them
+    assert state.load[e] == state.tally(e) == 3.0      # now three
+    state.remove(3)
+    assert state.load[e] == state.tally(e) == 1.0
