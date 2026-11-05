@@ -418,7 +418,21 @@ And it is concentrated: on ALU half of the 1,670 mm in 15 of 380 connections, ea
 
 No violation in any run. The time goes on tries that are undone: 20 to 100 per settle, of which 2 to 8 are kept, spread over the whole order (on RAM Selector Tree at tries 35 to 71 of 102), so capping the tries would lose gains. A first version without the pre-check and with the whole board measured kept twice as many moves on ALU and cost 2.7 times the time on RAM Selector Tree (377 s).
 
-**Tried and not kept: undoing a try by lifting instead of a snapshot.** The connections were lifted (`Context.lift`), and a try that did not pay was undone by ripping what it had put in and putting the lifted ones back, last first. Not exact (ALU: the same copper, a different routing) and on boards with vias it failed: rolling the log of the via sites back restores places on gates for wires that had been taken out since. Making it exact needs the journal of the sites to know about removals; not done.
+**Made cheap (2026-11).** Three changes, measured in turn:
+- *An exact undo instead of a snapshot.* The connections of a try are lifted (`Context.lift`), and while it runs every `commit` records how to take itself out (`Context.record`): the same rollback commit uses when a via does not fit, in the reverse of the order things went in. A try that does not pay is undone by `Context.undo`, last first, and the lifted connections are put back, last first. A first attempt that ripped what the try had put in, instead of taking it out in order, was not exact and failed on boards with vias: rolling the log of the via sites back restored places on gates for wires that were gone. Checked with `WEAVEENGINE_CHECK_UNDO`, against a snapshot after every undone try, on nine runs of six boards: the same gate orders, corner counts, wires, vias and pieces (loads to 1e-9; a wire put back keeps its present place on each gate in its steps). The check found a bug outside this work: `TopoState.insert` did not count again a gate where a wire goes in between two wires of one net, which splits their run into two traces; the load was too low by the width of one. Fixed (on `main` too). It changes nothing on five boards and, on RAM Selector Tree without the detour repair, two of three perturbed runs: 119 to 123 vias and 22,894 to 23,698 mm, 119 to 123 and 24,946 to 25,165 mm (the third identical). Kept: the undo relies on loads that agree with the wires, and the under-count let a gate look roomier than it is; the check of the geometry had been catching what it cost.
+- *The over-full test counts only what the try made over-full.* Repair after the check can leave gates over capacity for rip-up; with two such gates every try of a settle was refused.
+- *Only the moved wires are put back,* each once, shortest first, and the first that does not fit ends the try (`fill` tried every open connection, and again while any was placed); and a try refused once is not made again in the same call (the same detour with the same wires in its way).
+
+| Board | Copper | Time, off / on |
+|---|---|---|
+| Word of RAM (6) | -0.2 % (-1.9 to +1.0) | 1.45 / 1.5 s |
+| Micromouse2026PCB (6) | -3.6 % (-8.6 to -0.4) | 1.05 / 1.15 s |
+| ALU (3) | -1.6 % (-2.5 to -1.2) | 12.7 / 14.2 s |
+| ulx3s (6) | -1.8 % (-7.2 to -0.6) | 8.7 / 10.4 s |
+| blinkSP1 (18) | -0.4 % (-1.9 to +6.8) | 5.95 / 6.5 s |
+| RAM Selector Tree (1) | -2.2 % | 152 / 172 s |
+
+Completion as without it on every board (blinkSP1 55 (52 to 58) against 55.5 (51 to 58)), no violation in any run. The extra time is now 3 to 20 %, against 6 to 170 % for the first version.
 
 ## 12. Layers and vias
 

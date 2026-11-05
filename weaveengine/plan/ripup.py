@@ -178,7 +178,7 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
         """Over-full gates, and by how much (repair after the check can leave some for rip-up)."""
         return {(layer.index, e): layer.state.overflow(e) for layer in ctx.layers for e in layer.state.overflowed_gates()}
 
-    kept = 0
+    kept, failed = 0, set()
     for _ in range(sweeps):
         was = ctx.copper()
         detours = sorted((w for w, cu in was.items() if w not in hold and cu > DETOUR * lone.get(w, math.inf) + 2.0 * pitch),
@@ -200,8 +200,8 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
                     if not state.fits(g, conn.weight):
                         move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
             move.discard(w)
-            if not move or len(move) > MOST_MOVED or move & hold:
-                continue
+            if not move or len(move) > MOST_MOVED or move & hold or (w, frozenset(move)) in failed:
+                continue  # (the same try, refused already in this call: it would be refused again but for chance)
             nets = {conn.net_id} | {ctx.conns[x].net_id for x in move} | {ctx.conns[x].net_id for x in ctx.unrouted}
             before, open_before, over_before = total(nets), set(ctx.unrouted), over()
             check = ctx.snapshot() if CHECK_UNDO else None
@@ -211,13 +211,18 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
             ctx.record()
             plan = find(ctx, conn, hard_cap=True, congestion=False)
             if plan is not None and ctx.commit(conn, plan):
-                fill(ctx, hold)
+                # What was moved goes back where it now fits, shortest first; the
+                # first that does not fit ends the try (it would be left open).
+                for x in sorted(move, key=lambda x: (ctx.conns[x].air_len, x)):
+                    if not place(ctx, ctx.conns[x], find(ctx, ctx.conns[x], hard_cap=True), hard_cap=True):
+                        break
             after = over()
             if (conn.routed and ctx.unrouted <= open_before and total(nets) < before - pitch
                     and all(n <= over_before.get(g, 0) for g, n in after.items())):  # (no gate over-full that was not, or more)
                 ctx.trail = None
                 changed += 1
             else:
+                failed.add((w, frozenset(move)))
                 ctx.undo()
                 for c, saved in reversed(lifted):
                     ctx.put_back(c, saved)
