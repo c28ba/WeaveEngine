@@ -4,9 +4,13 @@ import math
 from weaveengine.plan.candidates import route_batch
 from weaveengine.plan.context import Context
 from weaveengine.plan.path import find, place
+from weaveengine.topo.search import route
+from weaveengine.topo.state import TopoState
 
 STALL_LIMIT = 8
 QUIET_STALL_LIMIT = 3
+DETOUR = 1.25      # a connection this many times longer than it would be alone on the board is in a detour (``untangle``)
+MOST_MOVED = 12    # wires moved out of the way of one detour, at most
 
 
 def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
@@ -124,6 +128,94 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
         if vias and replan(ctx, hold=hold):
             refine(ctx, hold=hold)
             fill(ctx, hold)
+        if ctx.options.untangle and untangle(ctx, hold):
+            refine(ctx, hold=hold)
+            fill(ctx, hold)
+
+
+def alone(ctx: Context) -> dict[int, float]:
+    """What each connection's route would be on the board with nothing else on
+    it: its length through the middles of its gates on an empty state, the
+    least over the layers it can use (a connection that must change layer:
+    infinite). Worked out once per run; the board does not change."""
+    kept = ctx.__dict__.get("_alone")
+    if kept is None:
+        empty = [TopoState(layer.pmap) for layer in ctx.layers]
+        kept = ctx.__dict__["_alone"] = {}
+        for w, c in ctx.conns.items():
+            if c.parent is None:
+                found = [route(ctx.layers[li].pmap, empty[li], c.src, c.dst, ctx.params, congestion=False, weight=c.weight, net=c.net_id)
+                         for li in c.layers]
+                kept[w] = min((r.length for r in found if r is not None), default=math.inf)
+    return kept
+
+
+def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
+    """Detours undone by moving what is in the way (design 11a).
+
+    Most of the copper a routing has beyond what its connections would take
+    alone on the board is in a few long detours, and what forces each of them
+    is a handful of other wires: crossing its short way, or filling a gate on
+    it. Refinement moves one connection at a time, with everything else where
+    it is, so it never finds these. Here, longest detour first: the cheapest way
+    for the connection with crossings allowed and capacity ignored names what is
+    in the way; those wires are taken out with it, it is put in by its short way,
+    and they are put back wherever they now fit (``fill``). The result is kept
+    if nothing is left open that was not, no gate is over-full, and the copper
+    (vias at their worth, as ``replan`` counts them) is less by a pitch;
+    otherwise the board is restored exactly. Returns the number kept."""
+    pitch, worth = ctx.layers[0].pmap.pitch, via_worth(ctx)
+    lone = alone(ctx)
+
+    def total(nets: set[int]) -> float:
+        """The copper of these nets (a trace's copper depends only on its own net's
+        wires beside it), and every via at its worth."""
+        copper = sum(ctx.wire_copper(layer, w) for layer in ctx.layers for net in nets for w in layer.state.by_net.get(net, ()))
+        return copper + worth * sum(1 for s in ctx.layers[0].pmap.sites.values() if s.active)
+
+    kept = 0
+    for _ in range(sweeps):
+        was = ctx.copper()
+        detours = sorted((w for w, cu in was.items() if w not in hold and cu > DETOUR * lone.get(w, math.inf) + 2.0 * pitch),
+                         key=lambda w: lone[w] - was[w])
+        changed = 0
+        for w in detours:
+            conn = ctx.conns[w]
+            if not conn.routed:
+                continue
+            saved = ctx.lift(conn)
+            short = find(ctx, conn, mode="relaxed", congestion=False)
+            ctx.put_back(conn, saved)
+            if short is None or was[w] - short.length < 2.0 * pitch:
+                continue  # its short way is not much shorter than the way it has: nothing to win
+            move = {ctx.conns[x].parent or x for x in short.blocking}
+            for r in short.routes:  # and what fills the gates of the short way that have no room for it
+                state = ctx.layers[r.layer].state
+                for g in r.gates:
+                    if not state.fits(g, conn.weight):
+                        move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
+            move.discard(w)
+            if not move or len(move) > MOST_MOVED or move & hold:
+                continue
+            nets = {conn.net_id} | {ctx.conns[x].net_id for x in move} | {ctx.conns[x].net_id for x in ctx.unrouted}
+            before, open_before, snap = total(nets), set(ctx.unrouted), ctx.snapshot()
+            ctx.rip(w)
+            for x in move:
+                if ctx.conns[x].routed:
+                    ctx.rip(x)
+            plan = find(ctx, conn, hard_cap=True, congestion=False)
+            if plan is not None and ctx.commit(conn, plan):
+                fill(ctx, hold)
+            if (conn.routed and ctx.unrouted <= open_before and total(nets) < before - pitch
+                    and not any(layer.state.overflowed_gates() for layer in ctx.layers)):
+                changed += 1
+            else:
+                ctx.restore(snap)
+        ctx.rebuild_barrier()
+        kept += changed
+        if not changed:
+            break
+    return kept
 
 
 def refine(ctx: Context, passes: int = 2, hold=frozenset()) -> int:
