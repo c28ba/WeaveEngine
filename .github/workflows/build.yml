@@ -31,18 +31,11 @@ jobs:
           pip install -e . --no-deps
       - name: Test
         shell: bash
-        # Each failure is also posted as an annotation, readable without signing in.
+        # A failure is also posted as annotations, readable without signing in.
         run: |
-          python -m pytest -q -rf --tb=short > pytest.txt 2>&1; status=$?
+          python -m pytest -q -rfE --tb=short > pytest.txt 2>&1; status=$?
           tail -n 60 pytest.txt
-          python -c "
-          import re
-          text = open('pytest.txt', encoding='utf-8', errors='replace').read()
-          for name, body in re.findall(r'_{5,} (\S+) _{5,}\n(.*?)(?=\n_{5,} |\n={5,})', text, re.S)[:10]:
-              print('::error title=' + name + '::' + body[-1500:].replace('%', '%25').replace('\r', '').replace('\n', '%0A'))
-          for line in re.findall(r'^(?:FAILED|ERROR) .*$', text, re.M)[:10]:
-              print('::error::' + line)
-          "
+          if [ $status -ne 0 ]; then python .github/annotate.py pytest.txt; fi
           exit $status
       - name: Route a board from the command line
         run: python -m weaveengine.cli "boards/Word of RAM.dsn" -o word.ses --quiet
