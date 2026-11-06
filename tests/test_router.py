@@ -445,6 +445,18 @@ def test_racing_variants_never_does_worse_than_the_plain_run():
     assert_clean(board, raced)
 
 
+def test_racing_without_fork_routes_as_with_it(monkeypatch):
+    """Where processes cannot be forked (Windows), the raced variants run in
+    processes started afresh, each given a copy of the board's state: the same
+    routing comes out, whichever way the workers were made."""
+    board = random_grid(8, 8, nets=14, seed=4)
+    forked = route_board(board, options=Options(portfolio=3), workers=3)
+    monkeypatch.setenv("WEAVEENGINE_START", "spawn")
+    given = route_board(board, options=Options(portfolio=3), workers=3)
+    assert given.polylines == forked.polylines and given.unrouted == forked.unrouted
+    assert [v.centre for v in given.vias] == [v.centre for v in forked.vias]
+
+
 def test_progress_is_reported():
     seen = []
     route_board(demo_board(), options=Options(portfolio=1), progress=lambda phase, done=0.0, total=1.0: seen.append(phase))

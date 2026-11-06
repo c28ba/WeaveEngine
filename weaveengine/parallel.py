@@ -6,8 +6,11 @@ maps and the current topological state copy-on-write, so only small task
 arguments and results are pickled. A fork is a snapshot, so every batch gets
 fresh workers.
 
-Where fork is not available (Windows, or a start method that cannot inherit
-state) everything runs in this process: same results, one core.
+Where fork is not available (Windows) a batch runs in this process: same
+results, one core. Only the raced variants of a pass (``first_accepted``) are
+spread over processes there, started afresh, each given a copy of what it
+needs once: a variant is a whole pass, so the copy costs little beside it.
+(WEAVEENGINE_START=spawn does the same where fork exists, to try it.)
 """
 import multiprocessing
 import os
@@ -28,7 +31,16 @@ def cpu_count() -> int:
 
 
 def can_fork() -> bool:
-    return sys.platform != "win32" and "fork" in multiprocessing.get_all_start_methods()
+    return (sys.platform != "win32" and "fork" in multiprocessing.get_all_start_methods()
+            and os.environ.get("WEAVEENGINE_START") != "spawn")
+
+
+def travels(fn) -> bool:
+    """Whether the callable ``fn`` still works in a worker that was given a
+    copy of it: the ``put`` of a multiprocessing queue (it writes to a pipe the
+    worker is handed as it starts). Anything else may not survive the copy."""
+    import multiprocessing.queues
+    return isinstance(getattr(fn, "__self__", None), (multiprocessing.queues.SimpleQueue, multiprocessing.queues.Queue))
 
 
 def _call(item):
@@ -39,6 +51,12 @@ def _call(item):
 def _mark_worker():
     global _inside
     _inside = True
+
+
+def _given(task):
+    """Starts a worker that was not forked: it is given the task, as a copy."""
+    global _task, _inside
+    _task, _inside = task, True
 
 
 def run(fn, shared, items, workers: int | None = None, min_items: int = 2) -> list:
@@ -86,20 +104,26 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
     global _task
     items = list(items)
     workers = min(cpu_count() if workers is None else workers, len(items))
-    if workers <= 1 or _inside or not can_fork():
+    if workers <= 1 or _inside:
         out = []
         for item in items:
             out.append(fn(shared, item))
             if accept(out[-1]):
                 break
         return out
-    for halt in before_fork:
-        halt()
-    _task = (fn, shared)
+    fork = can_fork()
+    if fork:
+        for halt in before_fork:
+            halt()
+        _task = (fn, shared)
     try:
-        ctx = multiprocessing.get_context("fork")
+        if fork:
+            ctx = multiprocessing.get_context("fork")
+            pool = ctx.Pool(workers, initializer=_mark_worker)
+        else:
+            pool = multiprocessing.get_context("spawn").Pool(workers, initializer=_given, initargs=((fn, shared),))
         out = []
-        with ctx.Pool(workers, initializer=_mark_worker) as pool:
+        with pool:
             for result in pool.imap(_call, items):
                 out.append(result)
                 if accept(result):
@@ -118,5 +142,5 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
 
 
 def stop_flag():
-    """An event forked workers share with their parent, or None where there is no fork."""
-    return multiprocessing.get_context("fork").Event() if can_fork() else None
+    """An event the workers of ``first_accepted`` share with their parent."""
+    return multiprocessing.get_context("fork" if can_fork() else "spawn").Event()
