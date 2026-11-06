@@ -112,15 +112,21 @@ def _taken(ctx, struck) -> np.ndarray:
     return pts[np.argsort(pts[:, 0], kind="stable")]
 
 
-def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float, onward: float):
+def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float, onward: float, within=None):
     """Where a route that the search ``seen`` brought this far on layer ``la``
     may change layer: the points it reached where a via is legal and fits,
     each at its cost so far plus a via. Points that cannot lead to a route
     cheaper than ``bound`` are left out. Returns (points, costs, where each
     came from as (layer, triangle)), or None. ``onward``: the part of the
-    straight line from a point to the goal that the way on costs at least."""
+    straight line from a point to the goal that the way on costs at least.
+    ``within``: if given, the only triangles a via may stand in."""
     rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
-    x, y, cost, tris = kernel.via_points(seen.best, via_cost, bound, goal[0], goal[1], onward, pmap.tri_v, pmap.vx, pmap.vy,
+    best = seen.best
+    if within is not None:
+        best = np.full_like(seen.best, np.inf)
+        at = [t for t in within if t < len(best)]
+        best[at] = seen.best[at]
+    x, y, cost, tris = kernel.via_points(best, via_cost, bound, goal[0], goal[1], onward, pmap.tri_v, pmap.vx, pmap.vy,
                                          ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
                                          legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[:, 0]),
                                          np.ascontiguousarray(taken[:, 1]), rules.via_diameter + rules.clearance + 0.02)
@@ -163,7 +169,8 @@ def place(ctx, conn, path: "Path | None", **how) -> bool:
 
 
 def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None = None, first: dict | None = None,
-         via_cost: float | None = None, bound: float = math.inf, through: bool = True, **how) -> Path | None:
+         via_cost: float | None = None, bound: float = math.inf, through: bool = True, within: dict | None = None,
+         **how) -> Path | None:
     """Cheapest route for the connection, with at most ``max_vias`` new vias
     (default: as many as the parameters allow). It may run through pads and
     vias of its net and change layer at them (unless ``through`` is False:
@@ -173,7 +180,8 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     layer, the outcome of the search from the connection's own pad, where the
     caller has made it already. ``via_cost``: what a via costs, if not what
     the parameters say. ``bound``: only a route cheaper than this is of
-    interest (the searches stop short of anything else)."""
+    interest (the searches stop short of anything else). ``within``: per
+    layer, the triangles a new via may stand in (none elsewhere)."""
     params = ctx.params
     via_cost = params.via_cost if via_cost is None else via_cost
     if max_vias is None:
@@ -204,7 +212,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     had: dict[tuple[int, int], float] = {}  # (layer, pad of the net) -> the least cost at which a search has been at it there
     for hop in range(1, changes + 1):
         limit = best[0] if best else bound
-        sources = {la: _via_points(ctx, la, seen, goal, limit, taken, via_cost, onward)
+        sources = {la: _via_points(ctx, la, seen, goal, limit, taken, via_cost, onward, None if within is None else within.get(la, ()))
                    for la, (seen, _, _) in reached.items() if seen is not None} if hop <= max_vias else {}
         pads: dict[int, tuple[float, int]] = {}  # copper of the net that was reached: pad -> (cost, on which layer)
         for la, (seen, _, _) in reached.items():

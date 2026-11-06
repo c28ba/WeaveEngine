@@ -109,6 +109,7 @@ class Options:
     refine: bool = True             # Phase 4: reroute each wire once, keep it if shorter
     vias: bool = True               # routes may change layer through vias (12.3)
     slide: bool = True              # move each via to where its traces run straighter (13.3)
+    reseat: bool = True             # plan a connection again with a sharp via of it somewhere better (``slide.reseat``)
     smooth: bool = True             # round sharp corners where the design rules leave room
     untangle: bool = True           # undo long detours by moving the wires in their way (``ripup.untangle``)
     teardrops: bool = True          # teardrops where traces meet pads and vias

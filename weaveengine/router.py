@@ -13,7 +13,7 @@ from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
-from weaveengine.plan.slide import slide
+from weaveengine.plan.slide import reseat, slide
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.teardrop import teardrops as make_teardrops
@@ -377,6 +377,9 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             # the connections whose traces it names.
             hold |= {ctx.conns[w].parent or w for v in again[1] for w in v.wires if w in ctx.conns}
             ctx.restore(before)
+    if opts.vias and opts.reseat:
+        ctx.report("re-placing sharp vias")
+        lines, violations, wire_net = reseat(ctx, lines, violations, wire_net, _realize)
     if opts.vias and opts.slide:
         ctx.report("straightening vias")
         lines, violations, wire_net = slide(ctx, lines, violations, wire_net, _realize)
