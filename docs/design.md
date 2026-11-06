@@ -721,6 +721,20 @@ So the floods are not, as was supposed, a matter of the price of an over-full ga
 
 **Where that leaves it.** The lever is the search: a way from the pad that is a route, and one search over all layers instead of a chain that floods each layer again. Both are the same piece of work, and it changes what every board routes to, so it is to be judged as a change of the router and not as a speed-up.
 
+**Measured again (2026-11), and would a better first guess help? (A question about a learned guess: no.)** One variant, one process. Rip-up is 123 of 207 s on RAM Selector Tree with default settings and 263 of 420 s with the app's settings; the other boards take 1 to 15 s in all. Each round costs 3 to 8 s, 70 % of it planning routes and 20 % putting them in. Two stretches: the first 14 rounds bring the over-full count from about 3,400 to about 100 (58 s, 85 s); the rest (67 s, 168 s) bounce between 10 and 60 violations, and on the app's settings never reach zero (the best, 24 open and 9 over-full, at round 36 of 43).
+
+*Tried: ending the bouncing sooner.* Stall limit 5 or 3 instead of 8, or at most 20 rounds, two margins each, both settings: every cut that saves time leaves 6 to 11 more connections open, or 30 to 60 % more vias, or design-rule violations (app settings, 20 rounds: 389 of 400 and 7 violations, for 398 and none). Settle does not finish what rip-up leaves. Not kept.
+
+*Tried: the perfect guess (an oracle).* Route once, keep the history prices rip-up ended with (keyed by the gate's two corners, which survive vias flipping the map), route again from nothing with those prices in place, either before the candidates or when rip-up starts. If a guess of where the fight is could save time, this one would. Rounds of the main rip-up, recorded / seeded before everything / seeded at rip-up:
+
+| | Default, margin 0 | Default, margin 1 | App, margin 0 | App, margin 1 |
+|---|---|---|---|---|
+| Rounds | 47 / 24 / 42 | 26 / 31 / 41 | 43 / 44 / 45 | 27 / 38 / 30 |
+| Routed (of 400) | 400 / 400 / 400 | 400 / 399 / 398 | 398 / 400 / 398 | 399 / 400 / 391 |
+| Vias | 102 / 96 / 128 | 113 / 120 / 139 | 144 / 149 / 176 | 111 / 119 / 172 |
+
+One run in four is shorter; three are longer. Seeded before everything is about as good as without (within the spread margins make); seeded at rip-up is worse. Knowing *where* the fight is does not end it: every connection now avoids the same gates, and the fight moves. What rip-up works out over its rounds is *which* connections give way, and a map of prices does not hold that. So a learned guess of congestion (a network trained on the router's own results, or a hand-made estimate like RUDY) cannot do better than this oracle, and this oracle does nothing. Not pursued. The lever stays the one above: the search.
+
 ### 12.8 Why traces end up too close on RAM Selector Tree (diagnosis)
 
 Taken from the routing saved at its first geometry step: 32 of 400 connections open, 215 vias, 583 traces, 123 violations.
