@@ -17,6 +17,7 @@ from weaveengine.topo.planar_map import PlanarMap
 from weaveengine.topo.sites import FAR
 from weaveengine.topo.state import Step, TopoState
 
+SIMPLE = True  # the search keeps to ways that cross each gate once (``kernel.astar``)
 SLOT_CAP = 15  # node id is half_edge * 16 + slot; a gate with 15 wires is full
 _DEFAULT = CostParams()
 _NO_SEEDS = (np.zeros(0, dtype=np.int64), np.zeros(0), np.zeros(0), np.zeros(0))
@@ -199,7 +200,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     pmap.tri_e, pmap.tri_v, pmap.edge_v, pmap.edge_t,
                     tb.tr, tb.length, tb.n, pmap.edge_kind, pmap.edge_owner, pmap.edge_mid,
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor",
-                    relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
+                    relaxed, SIMPLE and not relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
                     tb.own, own_ptr, own_edge, own_cost, own_node,
                     tx, ty, radius, params.h_weight, *far, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,
                     tb.heap_f, tb.heap_g, tb.heap_n, best, best_node)

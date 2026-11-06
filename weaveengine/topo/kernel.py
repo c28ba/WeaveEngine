@@ -174,7 +174,7 @@ THROUGH = 2  # ``parent_tr`` of a node that goes on from a pad of the net the wi
 def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, edge_v, edge_t,
           tr, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
-          relaxed, pres, use_hist, cross_pen, hard_cap, weight, ride, own, own_ptr, own_edge, own_cost, own_node,
+          relaxed, simple, pres, use_hist, cross_pen, hard_cap, weight, ride, own, own_ptr, own_edge, own_cost, own_node,
           tx, ty, rad, hw, far, fx0, fy0, fcell, bound,
           g, parent, parent_tr, touched, heap_f, heap_g, heap_n, best, best_node):
     """The one search (design section 8). Cheapest way to ``dst_pad``.
@@ -202,6 +202,12 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
     copper: the wire may run into it and go on from any of its edges
     (``own_edge[own_ptr[k]:own_ptr[k + 1]]``), as a new piece. ``own_cost``
     and ``own_node`` are filled, per pad, with the cheapest arrival.
+
+    ``simple``: a step onto a gate the way to it has crossed already (in the
+    same piece) is not taken, so that the way found can be put in (8.4). The
+    test walks the way back, and only for a step that would make a node
+    cheaper. Not exact: a dearer way to the same node that had not crossed
+    that gate is not kept.
     """
     n_touched = 0
     size = 0
@@ -336,6 +342,8 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
                 c += penalty[b]
             nn = (nxt if nxt >= 0 else 2 * b + 1) * SLOTS + pb
             if c < g[nn]:
+                if simple and crossed(parent, parent_tr, node, b):
+                    continue
                 if g[nn] == np.inf:
                     touched[n_touched] = nn
                     n_touched += 1
@@ -355,6 +363,20 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
                     i = up
                 heap_f[i], heap_g[i], heap_n[i] = f, c, nn
     return -1, 0.0, n_touched
+
+
+@njit(cache=True, nogil=True)
+def crossed(parent, parent_tr, node, gate):
+    """Whether the piece of way that ends at ``node`` has crossed ``gate``."""
+    for _ in range(1 << 16):
+        if (node >> 5) == gate:
+            return True
+        if parent_tr[node] == THROUGH:
+            return False
+        node = parent[node]
+        if node < 0:
+            return False
+    return False
 
 
 @njit(cache=True, nogil=True)
