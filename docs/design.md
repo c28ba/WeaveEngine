@@ -735,6 +735,18 @@ So the floods are not, as was supposed, a matter of the price of an over-full ga
 
 One run in four is shorter; three are longer. Seeded before everything is about as good as without (within the spread margins make); seeded at rip-up is worse. Knowing *where* the fight is does not end it: every connection now avoids the same gates, and the fight moves. What rip-up works out over its rounds is *which* connections give way, and a map of prices does not hold that. So a learned guess of congestion (a network trained on the router's own results, or a hand-made estimate like RUDY) cannot do better than this oracle, and this oracle does nothing. Not pursued. The lever stays the one above: the search.
 
+**Tried again (2026-11, branch `simple-search`): the search keeps to ways that cross each gate once.** First, whether a short look back would do: on RAM Selector Tree 12,579 of 38,461 ways found (33 %) cross a gate twice, and the two crossings are never fewer than 11 steps apart, mostly 36 to 40, 15 % 64 or more (ulx3s: mostly 36). These are long ways along a wire, round its far end and back, not turns round a pad; only the whole walk catches them. So the whole walk, made cheaper than before by walking only for a step that would make a node cheaper (`kernel.crossed`). No way found crosses a gate twice any more. Judged on results first, the same spreads as always (one process; RAM Selector Tree against `main` runs of the same day):
+
+| | `main` | Walk |
+|---|---|---|
+| RAM Selector Tree, margin 0 / 1 | 400, 102 vias, 22,493 / 400, 113 vias, 23,846 | 400, 123 vias, 23,527 / 400, **231** vias, **28,326** |
+| The same, app settings | 398, 144 vias, 23,368 / 399 (1 violation), 111 vias, 22,489 | **400**, 121 vias, 22,081 / **400**, **280** vias, **26,301** |
+| ALU (3) | 12 vias, 10,625 | 6 vias, 10,844 |
+| blinkSP1 (18) | 55 (50 to 58), 40 vias, 1,057 | 55.5 (**47** to 58), 35 vias, 1,117 |
+| ulx3s, Word of RAM, Micromouse (6) | | within the spread |
+
+Every board 1.3 to 3 times slower (RAM Selector Tree 1.5 to 2.5). The app settings route all 400 for the first time, but one run in two on RAM Selector Tree doubles its vias and puts on 17 to 19 % copper, blinkSP1's worst run falls from 50 to 47, ALU has 2 % more copper. Not kept: the spread it opens is worse than what it closes. Kept on the branch.
+
 ### 12.8 Why traces end up too close on RAM Selector Tree (diagnosis)
 
 Taken from the routing saved at its first geometry step: 32 of 400 connections open, 215 vias, 583 traces, 123 violations.
