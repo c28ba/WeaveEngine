@@ -26,8 +26,8 @@ a = Analysis(
               "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf"],
 )
 pyz = PYZ(a.pure)
-# The icon: assets/icon.png, as an .icns for macOS (made from it with iconutil; other systems take the PNG).
-icon = "assets/WeaveEngine.icns" if sys.platform == "darwin" else "assets/icon.png"
+# The icon: assets/icon.png, as an .icns for macOS (made from it with iconutil) and an .ico for Windows; Linux takes the PNG.
+icon = {"darwin": "assets/WeaveEngine.icns", "win32": "assets/WeaveEngine.ico"}.get(sys.platform, "assets/icon.png")
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="WeaveEngine", console=False, upx=False, icon=icon)
 coll = COLLECT(exe, a.binaries, a.datas, name="WeaveEngine", upx=False)
 if sys.platform == "darwin":

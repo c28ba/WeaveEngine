@@ -8,3 +8,5 @@ build/
 dist/
 settings.json
 timings.json
+boards/output/
+examples/output/
