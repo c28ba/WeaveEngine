@@ -927,6 +927,18 @@ A via's position is part of the geometry, not of the topology: moving a site ins
 
 **Travelling further (M16).** A via pressed against the edge of its ring with force left over needs that edge flipped. The flip exists (`sites.flip`, 12.2); what remains is to use it while sliding. Decide from how often vias end pinned in M15.
 
+### 13.3a Sharp vias placed again (tried 2026-11, shelved; branch `reseat-vias`)
+
+**What the sharp vias are** (drawn and looked at, the sharpest dozen on two boards):
+- *blinkSP1*: fan-outs from fine-pitch pins. The stub from the pin goes out past the row to the via, and the trace on the other layer comes straight back under it. Round the pad, the only place a via is legal and makes the way shorter is where it already stands (U1-14, U1-28): between the row and the large pad beside it there is no room. Forced, and the way a person fans out such a part.
+- *RAM Selector Tree, app settings*: V's, not stubs (no short leg under 2 mm). One trace runs along the edge of a bundle of others to the via, the other comes back along the bundle on the other layer. The worst are on connections with two vias, and the board is full: from the pad of one of them the search with gates held to capacity reaches 504 of 13,902 triangles. The places that would straighten the V are walled off by full gates. Together the 15 under 90 degrees cost 61 mm against vias their traces would run straight through: 0.25 % of the copper. Mostly a matter of looks.
+
+**Tried: a pass before sliding** (`slide.reseat`, setting "Re-place sharp vias"). Each via whose traces meet at under 100 degrees: up to four places, the best expected first (the straight line between the traces' corners, back along either trace, or, for a stub from a pad under 4 mm, round the pad where a via is legal); the connection lifted and planned again with that via held to the triangles within 0.75 mm of the place (`path.find(within=...)`), its other vias to theirs, no running through pads of its net (else it escapes by its net's copper, up to 155 mm longer drawn); the board drawn, the place kept if the copper (vias at their worth) is shorter and the check no worse, else `Context.restore`. On a saved state it looked worthwhile: blinkSP1 2.2 % less copper, RAM Selector Tree 3 of 17 sharp vias straightened (one from 48 to 153 degrees, 30 mm shorter).
+
+**Measured in the router, against the same code with the pass off** (usual spreads): sharp vias blinkSP1 9.5 to 10, ulx3s 7 to 7, RAM Selector Tree 7.5 to 6 (default) and 15/10 to 17/8 (app settings); copper within 0.2 %; 3 to 20 % slower; ALU, Word of RAM and Micromouse unchanged. No gain. The likely cause, not confirmed: the copper it judged by was the plain sum of the drawn traces, which counts twice a trunk two wires of a net share, so it could "save" by splitting a shared trunk, and the moves it kept made sharp vias elsewhere. Judged by the copper as drawn (`copper_length`) and refusing a new sharp via, it might do somewhat better, but most sharp vias are forced, so at best about one in seven. Not pursued.
+
+One finding kept from it: on the test board of `test_connections_of_a_net_share_a_via`, the shared via costs one trace a way round 4.5 mm longer than a second via is worth, and `replan` does not see it through the middles of gates.
+
 ---
 
 ## 14. Post-optimisation (M8)
