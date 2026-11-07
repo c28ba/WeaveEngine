@@ -140,8 +140,11 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     routed = sorted(wire_layer)
     air = sum(ctx.conns[w].air_len for w in routed)
     length = sum(polyline_length(lines[w]) for w in routed)
-    total = len(pairs)
-    done = total - len(ctx.unrouted)
+    # A pad no trace can reach under the rules (packed closer than the clearance
+    # allows, outside the board, inside a keepout) leaves its connections open too.
+    unreachable = _unreachable(board, buried)
+    total = len(pairs) + unreachable
+    done = len(pairs) - len(ctx.unrouted)
     stats = {
         "connections": total,
         "routed": done,
@@ -157,6 +160,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "corners_left_sharp": smoothed[1],
         "via_sites": len(ctx.layers[0].pmap.sites),
         "buried_pads": buried,
+        "unreachable": unreachable,  # connections of those pads, counted as open
         "wires_per_layer": {l.name: sum(1 for li in wire_layer.values() if li == l.index) for l in ctx.layers},
         "time_route": t_route - t0,
         "time_total": t_end - t0,
@@ -165,6 +169,18 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+
+
+def _unreachable(board: Board, buried: list[int]) -> int:
+    """How many of the connections a net needs (one fewer than its pads) are
+    lost with the pads ``buried``: those can be made only among the others."""
+    lost = set(buried)
+    count = 0
+    for pads in board.nets().values():
+        gone = sum(1 for p in pads if p in lost)
+        if gone:
+            count += (len(pads) - 1) - max(len(pads) - gone - 1, 0)
+    return count
 
 
 def _redundant(ctx: Context, lines: dict, vias: set[int]) -> set[int]:

@@ -5,6 +5,7 @@ library (images and padstacks), network and fixed wiring. v1 routes a single
 layer, so pads are taken from one signal layer.
 """
 import math
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -60,6 +61,7 @@ class Design:
     via_shapes: list[list] = field(default_factory=list)  # raw shape descriptors of the via padstack
     defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
     dropped_wiring: str = ""                                 # what was done with routing already in the file
+    open_keepouts: str = ""                                  # keepouts that do not forbid traces, and are ignored
 
     @property
     def net_names(self) -> dict[int, str]:
@@ -108,6 +110,37 @@ def _outline(desc: list, scale: float) -> list[tuple[float, float]] | None:
         cx, cy = (nums[1], nums[2]) if len(nums) >= 3 else (0.0, 0.0)
         return [(cx + r * math.cos(2 * math.pi * i / 32), cy + r * math.sin(2 * math.pi * i / 32)) for i in range(33)]
     return None
+
+
+def kicad_open_areas(pcb_path: str) -> list[tuple[float, float, float, float]]:
+    """The bounds, in the coordinates of KiCad's DSN export (y turned over), of
+    the rule areas of a KiCad board that do not forbid traces: areas that keep
+    out only copper pours, or that group a channel for placement. KiCad writes
+    every rule area into the DSN as a plain keepout, whatever it forbids, so only
+    the board file can tell them apart. Empty if the file cannot be read."""
+    try:
+        text = open(pcb_path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return []
+    found = []
+    for start in (m.start() for m in re.finditer(r"\(zone\b", text)):
+        depth, end = 0, start
+        for end in range(start, len(text)):  # the zone's own parentheses
+            depth += {"(": 1, ")": -1}.get(text[end], 0)
+            if depth == 0:
+                break
+        if "(keepout" not in text[start:end]:
+            continue  # a copper zone, not a rule area
+        zone = parse_sexpr(text[start:end + 1])
+        keepout = _child(zone, "keepout")
+        if any(rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
+            continue  # it does keep traces out
+        for polygon in _children(zone, "polygon"):
+            pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts") or [], "xy")]
+            if pts:
+                xs, ys = [x for x, _ in pts], [y for _, y in pts]
+                found.append((min(xs), min(ys), max(xs), max(ys)))
+    return found
 
 
 def read_dsn(path: str, layers: list[str] | None = None) -> Design:
@@ -222,7 +255,14 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         defaulted["clearance"] = f"clearance {rules.clearance:g} mm"
     board = Board(outline=outline, rules=rules, layers=list(use))
 
+    # Of a KiCad board beside the DSN, the rule areas that let traces through.
+    pcb = os.path.splitext(path)[0] + ".kicad_pcb"
+    open_areas = kicad_open_areas(pcb) if os.path.exists(pcb) else []
+    ignored = 0
     for shape, layer, _ in keepouts:
+        if any(all(abs(a - b) < 0.01 for a, b in zip(shape.bounds, area)) for area in open_areas):
+            ignored += 1
+            continue
         on = layer_set([layer])
         if on is None or on:
             board.obstacles.append(Obstacle(shape, layers=on))
@@ -233,6 +273,9 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
 
     design = Design(root[1] if len(root) > 1 and isinstance(root[1], str) else "board", board, unit, resolution,
                     defaulted=defaulted)
+    if ignored:
+        design.open_keepouts = (f"{ignored} keepouts are rule areas of {os.path.basename(pcb)} that do not forbid traces "
+                                "(they keep out pours, or place parts) and are ignored")
     via = _child(structure, "via")
     circles = []
     if via and len(via) > 1 and via[1] in padstacks:
@@ -262,11 +305,9 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 if isinstance(name, str) and name in design.net_ids:
                     board.rules.net_width[design.net_ids[name]] = w
 
-    # Nets with a copper plane (a zone in the CAD tool) are connected by that
-    # plane, not by traces. Pours are not modelled, so those nets are left alone.
-    for plane in _children(structure, "plane"):
-        if plane[1] in design.net_ids:
-            board.plane_nets.add(design.net_ids[plane[1]])
+    # Copper planes (zones in the CAD tool): which nets they connect is decided once the pads are known.
+    planes = [(design.net_ids[plane[1]], got) for plane in _children(structure, "plane") if plane[1] in design.net_ids
+              for got in (_shape(d, scale) for d in plane[2:] if isinstance(d, list)) if got]
 
     # Pads from placed components.
     placement = _child(root, "placement") or []
@@ -322,6 +363,23 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                     on = layer_set([layer], back)
                     if on is None or on:
                         board.obstacles.append(Obstacle(on_board(shape), layers=on))
+
+    # Nets with a copper plane are connected by that plane, not by traces. Pours
+    # are not modelled, so those nets are left alone. KiCad writes every zone as
+    # a plane, teardrops too (zones since KiCad 7), so only a plane that spreads
+    # over two separate pads of its net (on any layer: one inside the board is
+    # reached through vias) and is larger than they are is taken for a pour. A
+    # teardrop touches one pad, or two that overlap (KiCad writes two pads of one
+    # number at one place as "U1-K9" and "U1-K9@1"), and is smaller than they are.
+    by_net: dict[int, list[Pad]] = {}
+    for pad in board.pads:
+        by_net.setdefault(pad.net_id, []).append(pad)
+    for net_id, (shape, _, _) in planes:
+        if net_id in board.plane_nets:
+            continue
+        reached = unary_union([pad.shape for pad in by_net.get(net_id, ()) if pad.shape.intersects(shape)])
+        if len(getattr(reached, "geoms", [reached] if not reached.is_empty else [])) >= 2 and shape.area > reached.area:
+            board.plane_nets.add(net_id)
 
     # Pre-existing copper that is marked fixed is an obstacle. The rest is
     # routing some earlier run left behind (a saved, already-routed design):

@@ -13,6 +13,15 @@ from weaveengine.router import route_board
 from weaveengine.viz.svg import export_result
 
 
+def unreachable_note(buried: list[int], pads: dict) -> str:
+    """What to tell the user about pads no trace can reach."""
+    names = sorted(pads[p].name for p in buried)
+    shown = ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "")
+    return (f"{len(names)} pads cannot be reached by any trace under these rules, and their connections are left open: {shown}. "
+            "Usually they sit closer together than the clearance allows (a fine-pitch part: give it a local clearance), "
+            "outside the board, or inside a keepout.")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter.")
     ap.add_argument("dsn", help="input Specctra DSN file")
@@ -62,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         print("not in the DSN, defaults used: " + ", ".join(missing))
     if design.dropped_wiring:
         print(design.dropped_wiring)
+    if design.open_keepouts:
+        print(design.open_keepouts)
     print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"
@@ -101,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         conn = result.connections[wire]
         print(f"  unrouted: net {names.get(conn.net_id, conn.net_id)}: {pads[conn.src].name} -> {pads[conn.dst].name}")
     if stats["buried_pads"]:
-        print(f"  {len(stats['buried_pads'])} pads have no reachable boundary (overlapping clearances)")
+        print(f"  {unreachable_note(stats['buried_pads'], pads)}")
     m = measure(design, out, want_clearance, want_edge)
     print(f"measured from {os.path.basename(out)}: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
           f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"
@@ -110,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
           f" -> {'OK' if m.ok else 'VIOLATIONS'}")
     if args.svg:
         export_result(result, args.svg)
-    return 0 if not result.unrouted else 1
+    return 0 if not result.unrouted and not stats["buried_pads"] else 1
 
 
 if __name__ == "__main__":

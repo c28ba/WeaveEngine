@@ -878,3 +878,17 @@ def test_a_routing_is_gone_on_from_and_never_made_worse():
     other.rules.clearance += 0.05
     with pytest.raises(ValueError, match="changed"):
         route_board(other, options=Options(portfolio=1), workers=1, resume=first.kept)
+
+
+def test_a_pad_no_trace_can_reach_leaves_its_connection_open_and_counted():
+    """A pad inside a keepout (or packed closer than the clearance allows, or off
+    the board) cannot be reached: its connection is open, and counted as such,
+    not left out of the count."""
+    from shapely.geometry import box
+    from weaveengine.board import Obstacle
+    board = Board.rectangle(30, 10, Rules(0.2, 0.2))
+    board.pads += [Pad.rect(0, 3, 5, 1, 1, net_id=0), Pad.rect(1, 27, 5, 1, 1, net_id=0), Pad.rect(2, 15, 5, 1, 1, net_id=0)]
+    board.obstacles.append(Obstacle(box(13, 3, 17, 7)))
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert result.stats["buried_pads"] == [2]
+    assert result.stats["connections"] == 2 and result.stats["routed"] == 1 and result.stats["unreachable"] == 1

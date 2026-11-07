@@ -101,6 +101,21 @@ def test_cli_writes_ses_and_svg(tmp_path, capsys):
     assert "<svg" in open(svg).read()
 
 
+def test_a_pour_is_left_to_itself_and_a_teardrop_is_not(tmp_path):
+    """KiCad writes every zone as a plane, teardrops too (zones since KiCad 7).
+    A net is left to its pour only if the plane spreads over two of its pads and
+    is larger than they are; a teardrop at one pad leaves the net to be routed."""
+    teardrop = '(plane GND (polygon F.Cu 0  4500 -5600  5200 -5000  4500 -4400))'
+    pour = '(plane GND (polygon B.Cu 0  0 0  20000 0  20000 -10000  0 -10000))'
+    found = {}
+    for name, planes in (("teardrop", teardrop), ("pour", pour), ("both", teardrop + " " + pour)):
+        path = tmp_path / f"{name}.dsn"
+        path.write_text(KICAD_STYLE.replace('    (via "Via[0-1]_800:400_um")', f'    {planes}\n    (via "Via[0-1]_800:400_um")'), encoding="utf-8")
+        design = read_dsn(str(path))
+        found[name] = design.net_ids["GND"] in design.board.plane_nets
+    assert found == {"teardrop": False, "pour": True, "both": True}
+
+
 def test_joined_quoted_pin_references():
     """KiCad writes a pin of a reference containing '-' as "Out-I"-1."""
     assert parse_sexpr('(pins "Out-I"-1 "D6-11"-2 D7-1 "/In 4")') == ["pins", "Out-I-1", "D6-11-2", "D7-1", "/In 4"]

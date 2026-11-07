@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from weaveengine import accel
+from weaveengine.cli import unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
@@ -1087,6 +1088,8 @@ class MainWindow(QMainWindow):
         how = {None: "Finished", True: "Bettered", False: "No better, the routing is as it was"}[stats.get("improved")]
         self.say(f"{how}: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "
                  f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
+        if stats.get("buried_pads"):
+            self.say(unreachable_note(stats["buried_pads"], {p.pad_id: p for p in result.board.pads}))
         self._idle()
         if stats.get("improved") is False:
             self.phase_label.setText(self.phase_label.text() + "; no better found, the routing is as it was")
