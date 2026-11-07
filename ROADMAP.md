@@ -33,6 +33,13 @@ Wanted:
   it enters, narrow it over its last stretch to the pin's width instead of
   routing the whole net narrower (`router.reach`) or running a wide trace
   into a narrow pad.
+- **Sharp vias at junctions.** About one via in five has its traces meeting
+  at under 90 degrees, mostly where several connections of a net meet or a
+  fan-out stub is pressed against its pad. Re-planning one connection cannot
+  move such a via (design 13.3a); moving a junction with all of its
+  connections might.
+- **Teardrop notches.** Where a teardrop's fan meets a rounded pad corner, the
+  round ends of its traces leave small gaps (cosmetic only).
 - **KiCad custom rules (`.kicad_dru`).** Read the rules that let fine-pitch
   parts be routed at less than the board's clearance.
 - **The Margin layer as board edge**, without burying pads that sit inside
