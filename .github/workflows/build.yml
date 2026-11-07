@@ -33,6 +33,7 @@ jobs:
         shell: bash
         # A failure is also posted as annotations, readable without signing in.
         run: |
+          set +e   # (steps run with -e: the status is wanted, not an exit)
           python -m pytest -q -rfE --tb=short > pytest.txt 2>&1; status=$?
           tail -n 60 pytest.txt
           if [ $status -ne 0 ]; then python .github/annotate.py pytest.txt; fi
