@@ -1,6 +1,6 @@
 # WeaveEngine: Design Document (v0.1)
 
-**WeaveEngine** (Python package `weaveengine`) is a TopoR-inspired topological PCB autorouter that converts a board into a planar topological map, solves routing as a choice of *topology* (which way each wire passes each obstacle), and then realises that topology as the shortest legal geometry.
+**WeaveEngine** (Python package `weaveengine`) is a topological PCB autorouter (the approach TopoR brought to commercial PCB design) that converts a board into a planar topological map, solves routing as a choice of *topology* (which way each wire passes each obstacle), and then realises that topology as the shortest legal geometry.
 
 ---
 
