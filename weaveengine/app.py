@@ -18,7 +18,7 @@ from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QPainter, QPain
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QFrame, QGraphicsScene, QGraphicsView, QGridLayout,
                                QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
-                               QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from weaveengine import HOME, __version__, accel, safe_output
 from weaveengine.cli import narrowed_note, plane_left_note, unreachable_note
@@ -535,7 +535,11 @@ class SettingsDialog(QDialog):
                 page = QWidget()
                 forms[group] = QFormLayout(page)
                 forms[group].setVerticalSpacing(4)
-                tabs.addTab(page, group)
+                scroll = QScrollArea()   # (a tab taller than the screen scrolls; the buttons stay below it)
+                scroll.setWidget(page)
+                scroll.setWidgetResizable(True)
+                scroll.setFrameShape(QFrame.NoFrame)
+                tabs.addTab(scroll, group)
             form = forms[group]
             value = getattr(Settings(), name)
             if name == "portfolio":
@@ -573,7 +577,8 @@ class SettingsDialog(QDialog):
         where.setWordWrap(True)
         layout.addWidget(where)
         layout.addWidget(buttons)
-        self.resize(520, 640)
+        screen = (parent.screen() if parent is not None else QApplication.primaryScreen()).availableGeometry()
+        self.resize(min(520, screen.width() - 40), min(640, screen.height() - 80))
 
     @staticmethod
     def _detected_label(name: str, detected: dict | None, board: str) -> QLabel:
