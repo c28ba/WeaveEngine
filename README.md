@@ -98,6 +98,10 @@ KiCad's own design rules check.
   KiCad's check holds traces to the edge clearance from them.
 - **Text on copper** is kept clear as a box around it, slightly larger than the
   letters.
+- **Large boards take a while.** A board of a few hundred connections routes
+  in seconds to a few minutes; a dense one with thousands of pads (KiCad's
+  video demo: 2,118 pads, 589 nets) can take over 20 minutes. The app shows
+  the routing as it grows, and **Stop** keeps the best result so far.
 - **On Windows** a routing pass runs on one core; several passes with different
   settings still race on all of them, as on macOS and Linux.
 - **Always run KiCad's design rules check** on the imported result before you
