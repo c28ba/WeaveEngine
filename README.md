@@ -27,8 +27,10 @@ Download the build for your system from the
 [Releases](https://github.com/c28ba/WeaveEngine/releases) page and unpack it.
 The builds are not signed, so the first time:
 
-- **macOS:** right-click `WeaveEngine.app` and choose **Open**, then **Open**
-  again in the warning (double-clicking only says it cannot be checked).
+- **macOS:** open `WeaveEngine.app` once (macOS says it cannot check it and
+  will not open it), then go to **System Settings → Privacy & Security**,
+  scroll down to the note about WeaveEngine and choose **Open Anyway**. Or, in
+  Terminal: `xattr -dr com.apple.quarantine WeaveEngine.app`.
 - **Windows:** run `WeaveEngine.exe` in the `WeaveEngine` folder; if
   SmartScreen warns, choose **More info**, then **Run anyway**.
 - **Linux:** run `WeaveEngine/WeaveEngine` from the unpacked folder.
