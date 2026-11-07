@@ -1,0 +1,39 @@
+# Roadmap
+
+What is planned after 1.0. Bugs are fixed as they are found; this is for
+features.
+
+## 1.1
+
+### Editing the routing before it is exported
+
+A way to correct the routing in WeaveEngine itself before writing the SES:
+move a via, reroute or delete a connection, pin a trace where you want it,
+then let the router fill in around what you fixed.
+
+Why here and not in KiCad: WeaveEngine's traces are taut curves and its
+teardrops are fans, and a session can carry them only as many short straight
+segments. Once imported, KiCad sees hundreds of tiny tracks per connection,
+which its push-and-shove router and drag tools handle badly. Editing before
+export keeps the routing as WeaveEngine models it (topology first, then the
+taut geometry, rounded corners and teardrops drawn again after each change),
+so an edit costs a drag, not a cleanup.
+
+Wanted:
+- select a trace, a via or a whole connection on the board view;
+- move a via, with the traces through it redrawn taut as it moves;
+- delete a connection, or rip it up and route it again;
+- mark copper as fixed, so later routing works around it;
+- undo and redo;
+- the same rule checks as a full routing, live, before export.
+
+## Later
+
+- **Traces tapered to fine-pitch pins.** Where a trace is wider than the pin
+  it enters, narrow it over its last stretch to the pin's width instead of
+  routing the whole net narrower (`router.reach`) or running a wide trace
+  into a narrow pad.
+- **KiCad custom rules (`.kicad_dru`).** Read the rules that let fine-pitch
+  parts be routed at less than the board's clearance.
+- **The Margin layer as board edge**, without burying pads that sit inside
+  it.
