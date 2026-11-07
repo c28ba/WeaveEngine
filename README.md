@@ -63,7 +63,42 @@ measures the written SES against the rules and says whether it is clean.
 
 ## Known limitations
 
-<!-- filled in from the 1.0 board sweep -->
+Found by routing 44 open-source KiCad boards and checking each result with
+KiCad's own design rules check.
+
+- **Keep the KiCad files beside the DSN.** A DSN leaves out much of what KiCad
+  checks: the hole clearance and drill sizes, local clearances of parts and
+  pads, text and drawings on copper layers, what a rule area forbids, the
+  board's own minimum clearance, track width and via ring, and the true shape
+  of custom pads (the DSN gives only the convex hull of their copper, which
+  can cover a neighbouring pin). WeaveEngine reads these from the
+  `.kicad_pcb` and `.kicad_pro` of the same name next to the DSN, and says what
+  it took. Without them (a DSN from another tool, or moved elsewhere) the
+  result can break those rules.
+- **Fine-pitch parts.** Where a net's pins cannot be reached at its class's
+  trace width, WeaveEngine routes that net narrower, down to the board's
+  minimum track width (never below 0.127 mm), and says which nets it narrowed.
+  Settings can turn this off.
+- **Custom design rules (`.kicad_dru`) are not read.** Pins closer together
+  than the clearance itself are usually routed in KiCad under a custom rule.
+  WeaveEngine cannot reach them; it leaves their connections open and names
+  the pads.
+- **Copper pours are left to KiCad.** A net with a zone is not routed as
+  traces. After importing the session, refill the zones (**B**): until then
+  KiCad shows the pour it filled around the old routing, running straight over
+  the new traces. Where the pour does not reach a pad (an inner plane needs a
+  via down to it), that pad stays unconnected until you add the via in KiCad.
+- **Old routing.** Remove existing traces, vias and teardrops before exporting
+  if you want them redone: KiCad keeps its own teardrops as zones, and those
+  are not taken out when the session is imported.
+- **Drawings on the Margin layer** are not treated as board edge, though
+  KiCad's check holds traces to the edge clearance from them.
+- **Text on copper** is kept clear as a box around it, slightly larger than the
+  letters.
+- **On Windows** a routing pass runs on one core; several passes with different
+  settings still race on all of them, as on macOS and Linux.
+- **Always run KiCad's design rules check** on the imported result before you
+  order a board.
 
 ## Building from source
 
