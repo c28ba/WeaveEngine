@@ -115,8 +115,10 @@ python -m venv .venv
 
 The app is built on the system it is for: `dist/WeaveEngine.app` on macOS,
 `dist/WeaveEngine/` on Windows and Linux. The GitHub Actions workflow in
-`.github/workflows/build.yml` builds all three when a version tag (`v1.0.0`) is
-pushed, or when started by hand from the Actions tab.
+`.github/workflows/build.yml` builds all three on every push, or when started
+by hand from the Actions tab. For a version tag (`v1.0.0`) it also drafts a
+GitHub Release with the three attached, to be looked over and published by
+hand.
 
 ## License
 
