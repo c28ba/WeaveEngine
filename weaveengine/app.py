@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
-from weaveengine import accel, safe_output
+from weaveengine import HOME, __version__, accel, safe_output
 from weaveengine.cli import narrowed_note, unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
@@ -672,7 +672,7 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str | None = None):
         super().__init__()
-        self.setWindowTitle("WeaveEngine")
+        self.setWindowTitle(f"WeaveEngine {__version__}")
         self.resize(1400, 900)
         self.interactive = True  # False in the self-test: no dialogs that wait for a click
         self.settings_path = settings_path or default_path()
@@ -732,6 +732,8 @@ class MainWindow(QMainWindow):
         bar.addSeparator()
         self.act_settings = action("Settings…", self.edit_settings, "Ctrl+,", tip="Edit settings.json")
         self.act_fit = action("Zoom to Fit", self.view.fit, "Ctrl+0", tip="Zoom out so the whole board is visible (scroll to zoom, drag to pan)")
+        bar.addSeparator()
+        self.act_about = action("About", self.about, tip="Version, license, and how WeaveEngine was made")
 
     def _build_panel(self) -> None:
         panel = QWidget()
@@ -1093,7 +1095,7 @@ class MainWindow(QMainWindow):
         if stats.get("narrowed"):
             self.say(narrowed_note(stats["narrowed"], self.routed_design.net_names))
         if stats.get("buried_pads"):
-            self.say(unreachable_note(stats["buried_pads"], {p.pad_id: p for p in result.board.pads}))
+            self.say(unreachable_note(stats["buried_pads"], result.board))
         self._idle()
         if stats.get("improved") is False:
             self.phase_label.setText(self.phase_label.text() + "; no better found, the routing is as it was")
@@ -1159,6 +1161,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Export failed", str(error))
 
     # -- settings ---------------------------------------------------------------
+    def about(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("About WeaveEngine")
+        box.setTextFormat(Qt.RichText)
+        box.setText(f"<b>WeaveEngine {__version__}</b><br>A topological PCB autorouter.")
+        box.setInformativeText(
+            "Most of WeaveEngine was written by large language models (Anthropic's Claude), directed, reviewed and "
+            "tested by its author. Check what it gives you as you would any autorouter's output: run your CAD tool's "
+            "design rules check before you order a board.<br><br>"
+            "Free software under the GNU General Public License, version 3 or later.<br>"
+            f'<a href="{HOME}">{HOME}</a>')
+        box.exec()
+
     def edit_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self.settings_path, self, *self._detected())
         if dialog.exec() == QDialog.Accepted:

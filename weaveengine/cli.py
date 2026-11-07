@@ -3,7 +3,7 @@ import argparse
 import os
 import sys
 
-from weaveengine import accel, safe_output
+from weaveengine import __version__, accel, safe_output
 from weaveengine.io.check import kicad_project_rules, measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
@@ -13,13 +13,43 @@ from weaveengine.router import route_board
 from weaveengine.viz.svg import export_result
 
 
-def unreachable_note(buried: list[int], pads: dict) -> str:
-    """What to tell the user about pads no trace can reach."""
-    names = sorted(pads[p].name for p in buried)
-    shown = ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "")
-    return (f"{len(names)} pads cannot be reached by any trace under these rules, and their connections are left open: {shown}. "
-            "Usually they sit closer together than the clearance and the narrowest trace allow (a fine-pitch part, "
-            "routed in KiCad under a custom rule, which WeaveEngine does not read), outside the board, or inside a keepout.")
+WHY_BURIED = {
+    "outside": "lie outside the board edge (a part not yet placed on the board?)",
+    "edge": "sit closer to the board edge than the edge clearance allows",
+    "keepout": "are inside a keepout",
+    "crowded": "sit closer to other copper than the clearance and the narrowest trace allow (a fine-pitch part, "
+               "routed in KiCad under a custom rule, which WeaveEngine does not read)",
+}
+
+
+def why_buried(board, pad) -> str:
+    """Why no trace reaches ``pad``: a key of ``WHY_BURIED``."""
+    if not board.outline.contains(pad.shape):
+        return "outside"
+    rules = board.rules
+    edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
+    if pad.shape.distance(board.outline.boundary) < edge + rules.base_width / 2.0:
+        return "edge"
+    if any(o.net_id < 0 and not o.copper and o.shape.intersects(pad.shape)
+           and (pad.layers is None or any(o.on(layer) for layer in pad.layers)) for o in board.obstacles):
+        return "keepout"
+    return "crowded"
+
+
+def unreachable_note(buried: list[int], board) -> str:
+    """What to tell the user about pads no trace can reach, by why."""
+    pads = {p.pad_id: p for p in board.pads}
+    groups: dict[str, list[str]] = {}
+    for p in buried:
+        groups.setdefault(why_buried(board, pads[p]), []).append(pads[p].name)
+    parts = []
+    for why in WHY_BURIED:
+        names = sorted(groups.get(why, []))
+        if names:
+            shown = ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "")
+            parts.append(f"{len(names)} {WHY_BURIED[why]}: {shown}")
+    return (f"{len(buried)} pads cannot be reached by any trace under these rules, and their connections are left open. "
+            + "; ".join(parts) + ".")
 
 
 def narrowed_note(narrowed: dict[int, float], names: dict) -> str:
@@ -31,6 +61,7 @@ def narrowed_note(narrowed: dict[int, float], names: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter.")
+    ap.add_argument("--version", action="version", version=f"WeaveEngine {__version__}")
     ap.add_argument("dsn", help="input Specctra DSN file")
     ap.add_argument("-o", "--output", help="output SES file (default: input name with .ses)")
     ap.add_argument("--layers", nargs="+", metavar="LAYER", help="signal layers to route (default: all in the DSN)")
@@ -127,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     if stats["narrowed"]:
         print(f"  {narrowed_note(stats['narrowed'], names)}")
     if stats["buried_pads"]:
-        print(f"  {unreachable_note(stats['buried_pads'], pads)}")
+        print(f"  {unreachable_note(stats['buried_pads'], result.board)}")
     m = measure(design, out, want_clearance, want_edge)
     print(f"measured from {os.path.basename(out)}: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
           f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"

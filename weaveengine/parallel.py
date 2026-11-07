@@ -79,9 +79,32 @@ def run(fn, shared, items, workers: int | None = None, min_items: int = 2) -> li
         ctx = multiprocessing.get_context("fork")
         chunk = max(1, len(items) // (workers * 4))
         with ctx.Pool(workers, initializer=_mark_worker) as pool:
-            return pool.map(_call, items, chunksize=chunk)
+            return _watch(pool, pool.map_async(_call, items, chunksize=chunk).get)
+    except WorkerDied:  # the same work in this process: the same results, if slower
+        return [fn(shared, item) for item in items]
     finally:
         _task = None
+
+
+class WorkerDied(Exception):
+    """A worker process ended while it held work (killed, out of memory, crashed)."""
+
+
+POLL = 0.5  # s between looks at the workers while waiting for results
+
+
+def _watch(pool, wait):
+    """``wait(timeout)`` until it returns, raising ``WorkerDied`` if one of the
+    pool's workers has ended in the meantime. A pool replaces a worker that
+    dies, but the work that worker held is lost and its result never comes:
+    without this, the wait would never end."""
+    workers = list(pool._pool)
+    while True:
+        try:
+            return wait(POLL)
+        except multiprocessing.TimeoutError:
+            if any(p.exitcode not in (None, 0) for p in workers):
+                raise WorkerDied from None
 
 
 class Stopped(Exception):
@@ -124,7 +147,9 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
             pool = multiprocessing.get_context("spawn").Pool(workers, initializer=_given, initargs=((fn, shared),))
         out = []
         with pool:
-            for result in pool.imap(_call, items):
+            results = pool.imap(_call, items)
+            for _ in items:
+                result = _watch(pool, results.next)
                 out.append(result)
                 if accept(result):
                     if stop is not None:
@@ -136,6 +161,13 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
                             time.sleep(0.02)
                     pool.terminate()
                     break
+        return out
+    except WorkerDied:  # in this process, in order, as without workers
+        out = []
+        for item in items:
+            out.append(fn(shared, item))
+            if accept(out[-1]):
+                break
         return out
     finally:
         _task = None

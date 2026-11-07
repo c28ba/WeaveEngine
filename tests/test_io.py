@@ -408,3 +408,26 @@ def test_a_custom_pad_is_its_own_copper_not_the_hull_the_dsn_gives(tmp_path):
     assert real.shape.distance(found["beside"]["J1-2"].shape) > 0.5    # well clear of it
     assert real.centre == pytest.approx((8.0, -3.0))                   # joined at its anchor, on its copper
     assert real.shape.contains(Point(real.centre))
+
+
+def test_the_version_is_the_package_s():
+    import re
+    from pathlib import Path
+    from weaveengine import __version__
+    project = (Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert re.search(r'^version = "([^"]+)"', project, re.M)[1] == __version__
+
+
+def test_an_unreachable_pad_is_told_why():
+    from weaveengine.board import Board, Obstacle, Pad, Rules
+    from weaveengine.cli import unreachable_note, why_buried
+    from shapely.geometry import box
+    board = Board.rectangle(20, 10, Rules(0.2, 0.2, edge_clearance=0.5))
+    board.pads += [Pad.rect(0, 25, 5, 1, 1, 0, name="C1-1"),     # off the board
+                   Pad.rect(1, 0.3, 5, 0.4, 1, 0, name="J1-1"),   # over the edge clearance
+                   Pad.rect(2, 10, 5, 1, 1, 0, name="U1-1")]      # in a keepout
+    board.obstacles.append(Obstacle(box(9, 4, 11, 6), -1))
+    pads = {p.name: p for p in board.pads}
+    assert [why_buried(board, pads[n]) for n in ("C1-1", "J1-1", "U1-1")] == ["outside", "edge", "keepout"]
+    note = unreachable_note([0, 1, 2], board)
+    assert "outside the board edge (a part not yet placed on the board?): C1-1" in note and "keepout: U1-1" in note
