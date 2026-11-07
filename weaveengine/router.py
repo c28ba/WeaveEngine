@@ -13,7 +13,7 @@ from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
-from weaveengine.plan.slide import slide
+from weaveengine.plan.slide import reseat, slide
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.teardrop import teardrops as make_teardrops
@@ -463,9 +463,20 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             # the connections whose traces it names.
             hold |= {ctx.conns[w].parent or w for v in again[1] for w in v.wires if w in ctx.conns}
             ctx.restore(before)
+    if opts.vias and opts.reseat:
+        ctx.report("re-placing sharp vias")
+        lines, violations, wire_net = reseat(ctx, lines, violations, wire_net, _realize)
     if opts.vias and opts.slide:
         ctx.report("straightening vias")
+        import os
+        if os.environ.get("RESEAT_DEBUG"):
+            from weaveengine.plan.slide import _sharp, _drawn
+            print("before slide: sharp", _sharp(ctx, lines), "copper", round(_drawn(ctx, lines), 1))
         lines, violations, wire_net = slide(ctx, lines, violations, wire_net, _realize)
+        if os.environ.get("RESEAT_DEBUG"):
+            print("after slide: sharp", _sharp(ctx, lines), "copper", round(_drawn(ctx, lines), 1))
+            from weaveengine.plan.slide import _bends, _angle
+            print("   ", sorted((tuple(round(c, 1) for c in ctx.pad_centre(v)), round(_angle(i, o))) for w, v, a, b, i, o in _bends(ctx, lines) if _angle(i, o) < 100))
     ctx.emit_snapshot(force=True, lines=lines)
     ctx.report("finished", complete=not ctx.unrouted and not violations)
     return lines, violations, wire_net

@@ -65,7 +65,7 @@ def routed(board: Board) -> Context:
     """The board routed, as the context the router worked in."""
     layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(board.layers, parallel.run(router._build_task, board, range(len(board.layers)), 1)))]
     pairs, _ = decompose(board, layers)
-    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap), Options(portfolio=1, slide=False), 0, 1, None, None)
+    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap), Options(portfolio=1, slide=False, reseat=False), 0, 1, None, None)
     router._route_once(ctx, 4, True)
     return ctx
 
@@ -118,7 +118,9 @@ def test_a_trace_runs_through_a_pad_of_its_net_that_is_in_its_way():
 
 def test_connections_of_a_net_share_a_via():
     board = one_front_two_back()
-    result = route_board(board, options=Options(portfolio=1), workers=1)
+    # Without re-placing sharp vias: drawn, the shared via costs one trace a way round 4.5 mm
+    # longer than a second via is worth, and that pass splits them (as it should).
+    result = route_board(board, options=Options(portfolio=1, reseat=False), workers=1)
     assert result.unrouted == [] and net_is_connected(result, 0)
     assert_clean(board, result)
     assert len(result.vias) == 1   # each connection had its own
@@ -177,3 +179,17 @@ def test_pieces_that_share_a_gate_are_put_back_as_they_were():
         ctx.put_back(conn, saved)
         assert orders() == before and all(layer.state.check_invariants() for layer in ctx.layers)
     assert whole.routed
+
+
+def test_a_sharp_via_is_placed_again_where_the_board_comes_out_shorter():
+    """13.3a: the back trace that goes round by the shared via makes a sharp V
+    at it; planned again with a via of its own, the copper drawn is shorter by
+    more than the via is worth. Clean, connected, and the maps intact."""
+    board = one_front_two_back()
+    shared = route_board(board, options=Options(portfolio=1, reseat=False), workers=1)
+    placed = route_board(board, options=Options(portfolio=1), workers=1)
+    assert_clean(board, placed)
+    assert placed.unrouted == [] and net_is_connected(placed, 0)
+    assert len(placed.vias) == 2 and placed.stats["length"] < shared.stats["length"] - 2.0
+    for layer in placed.layers:
+        assert layer.state.check_invariants()
