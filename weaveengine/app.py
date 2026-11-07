@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from weaveengine import accel, safe_output
-from weaveengine.cli import unreachable_note
+from weaveengine.cli import narrowed_note, unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
@@ -78,6 +78,7 @@ class BoardView(QGraphicsView):
         self.gpu = False                # drawing with the graphics card (``draw_on_gpu``)
         self.viewport().grabGesture(Qt.PinchGesture)
         self.board = None
+        self.widths: dict[int, float] = {}
         self.visible: dict[int, bool] = {}
         self.show_outlines = True
         self.show_names = True
@@ -100,6 +101,7 @@ class BoardView(QGraphicsView):
         self.trace_items, self.detail_items, self._thin = [], [], None
         self.pad_items, self.selection = [], None
         self.board = board
+        self.widths = {}  # net -> width drawn, where the routing narrowed it (``router.reach``)
         self.visible = {i: True for i in range(len(board.layers))}
         scene = self.scene()
         x0, y0, x1, y1 = board.outline.bounds
@@ -451,7 +453,7 @@ class BoardView(QGraphicsView):
             self.live_items.append(item)
             # The rough picture while routing is redrawn twice a second: always as
             # hairlines, which draw 25 times faster than traces at their width.
-            self.trace_items.append((item, 0.0 if rough else rules.width(net), color))
+            self.trace_items.append((item, 0.0 if rough else self.widths.get(net, rules.width(net)), color))
         if changed:
             glow = QPainterPath()
             for layer, _, pts in changed:
@@ -1088,6 +1090,8 @@ class MainWindow(QMainWindow):
         how = {None: "Finished", True: "Bettered", False: "No better, the routing is as it was"}[stats.get("improved")]
         self.say(f"{how}: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "
                  f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
+        if stats.get("narrowed"):
+            self.say(narrowed_note(stats["narrowed"], self.routed_design.net_names))
         if stats.get("buried_pads"):
             self.say(unreachable_note(stats["buried_pads"], {p.pad_id: p for p in result.board.pads}))
         self._idle()
@@ -1104,6 +1108,7 @@ class MainWindow(QMainWindow):
         pad_name = {p.pad_id: (p.name or str(p.pad_id)) for p in result.board.pads}
         self.view.wire_info = {i: {"from": pad_name[result.wire_pads[w][0]], "to": pad_name[result.wire_pads[w][1]]}
                                for i, w in enumerate(result.polylines) if w in result.wire_pads}
+        self.view.widths = result.stats.get("narrowed", {})
         self.view.show_routing(wires, open_pairs, result.vias, teardrops, result.violations)
         self.stats["routed"].setText(f"{stats['routed']} / {stats['connections']}")
         self.stats["open"].setText(str(stats["connections"] - stats["routed"]))

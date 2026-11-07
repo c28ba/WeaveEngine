@@ -229,6 +229,8 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
             if held:
                 lines[w] = [centre[ends[w][0]]] + line + [centre[ends[w][1]]]
                 continue
+            if len(line) < 2:  # a piece between pads that touch, joined at one point (a custom pad on its pin's hole)
+                line = [centre[ends[w][0]], centre[ends[w][1]]]
             lines[w] = line
             where[w] = []
             for e, (ax, ay), (bx, by) in ((state.wire_path[w][0][0], line[0], line[1]), (state.wire_path[w][-1][0], line[-1], line[-2])):
@@ -304,6 +306,8 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     pressed: list[tuple[int, bool, tuple[float, float]]] = []
     for w, line in lines.items():
         result[w] = _simplify(line)
+        if len(result[w]) < 2:  # (a piece of no length: its one point twice)
+            result[w] = [line[0], line[-1]]
         # Ends pressed against a corner of their pad edge (they could not move
         # round the pad because another wire of the same pad is in the way).
         for first in (True, False):

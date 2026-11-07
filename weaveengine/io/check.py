@@ -5,6 +5,7 @@ the copper it describes is measured with shapely against the pads (round pads
 as true circles), the other traces and the board edge.
 """
 import json
+import math
 from dataclasses import dataclass, field
 
 import shapely
@@ -82,7 +83,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     by_layer: dict[str, list] = {}
     for net, layer, width, pts in wires:
         out.widths.setdefault(net, set()).add(round(width, 6))
-        want = rules.width(design.net_ids.get(net, -1))
+        want = min(rules.width(design.net_ids.get(net, -1)), rules.min_width or math.inf)  # narrowed to reach its pads: down to the rules' least
         if width < want - 1e-6:  # wider is fine: teardrops are written as short, wide traces
             out.wrong_width.append(net)
         line = LineString(pts)

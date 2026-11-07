@@ -1,4 +1,5 @@
 import pytest
+from shapely.geometry import Point
 
 from bench.generators import channel
 from weaveengine.cli import main
@@ -343,3 +344,67 @@ def test_rules_the_board_gives_and_does_not(tmp_path):
     found = detected_rules(design, str(path))
     assert found["edge_clearance"] == (0.5, "from demo.kicad_pro")
     assert Settings().apply_rules(read_dsn(str(path)), str(path))[1] == 0.5
+
+
+def test_a_custom_pad_is_its_own_copper_not_the_hull_the_dsn_gives(tmp_path):
+    """KiCad's DSN export writes a custom pad as the convex hull of its copper.
+    A bent one (a reversible part's jumper strip, round another pin) then covers
+    copper it does not: the board beside the DSN gives its real shape, and its
+    anchor is where traces join it (its centroid is off its copper)."""
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    strip = unary_union([Point(0, 0).buffer(0.125), LineString([(0, 0), (2, 0), (2, -2)]).buffer(0.125)])  # y up, mm
+    hull = " ".join(f"{round(x * 1000)} {round(y * 1000)}" for x, y in strip.convex_hull.exterior.coords)
+    dsn = f"""(pcb strip.dsn
+  (parser (string_quote ") (space_in_quoted_tokens on) (host_cad "KiCad's Pcbnew"))
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu (type signal) (property (index 0)))
+    (layer B.Cu (type signal) (property (index 1)))
+    (boundary (path pcb 0  0 0  20000 0  20000 -10000  0 -10000  0 0))
+    (via "Via[0-1]_600:300_um")
+    (rule (width 200) (clearance 200))
+  )
+  (placement
+    (component J (place J1 8000 -3000 front 0))
+    (component TP (place TP1 16000 -3000 front 0) (place TP2 4000 -8000 front 0))
+  )
+  (library
+    (image J (pin Cust[T]Strip 1 0 0) (pin Round[T]Pad_600_um 2 1000 -1000))
+    (image TP (pin Round[T]Pad_600_um 1 0 0))
+    (padstack Cust[T]Strip (shape (polygon F.Cu 0  {hull})) (attach off))
+    (padstack Round[T]Pad_600_um (shape (circle F.Cu 600)) (attach off))
+  )
+  (network
+    (net A (pins J1-1 TP1-1))
+    (net B (pins J1-2 TP2-1))
+  )
+  (wiring)
+)
+"""
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (footprint "J" (layer "F.Cu") (at 8 3)
+    (property "Reference" "J1" (at 0 0 0) (layer "F.SilkS"))
+    (pad "1" smd custom (at 0 0) (size 0.25 0.25) (layers "F.Cu") (net 1 "A")
+      (options (clearance outline) (anchor circle))
+      (primitives (gr_line (start 0 0) (end 2 0) (width 0.25)) (gr_line (start 2 0) (end 2 2) (width 0.25))))
+    (pad "2" smd circle (at 1 1) (size 0.6 0.6) (layers "F.Cu") (net 2 "B")))
+)
+"""
+    found = {}
+    for name, beside in (("alone", False), ("beside", True)):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "strip.dsn").write_text(dsn, encoding="utf-8")
+        if beside:
+            (folder / "strip.kicad_pcb").write_text(pcb, encoding="utf-8")
+        design = read_dsn(str(folder / "strip.dsn"))
+        found[name] = {p.name: p for p in design.board.pads}
+    hulled, real = found["alone"]["J1-1"], found["beside"]["J1-1"]
+    assert hulled.shape.intersects(found["alone"]["J1-2"].shape)       # the hull covers the other pin
+    assert abs(real.shape.area - strip.area) < 0.01 * strip.area       # the strip itself
+    assert real.shape.distance(found["beside"]["J1-2"].shape) > 0.5    # well clear of it
+    assert real.centre == pytest.approx((8.0, -3.0))                   # joined at its anchor, on its copper
+    assert real.shape.contains(Point(real.centre))

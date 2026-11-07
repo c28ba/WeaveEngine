@@ -904,3 +904,41 @@ def test_a_pad_no_trace_can_reach_leaves_its_connection_open_and_counted():
     result = route_board(board, options=Options(portfolio=1), workers=1)
     assert result.stats["buried_pads"] == [2]
     assert result.stats["connections"] == 2 and result.stats["routed"] == 1 and result.stats["unreachable"] == 1
+
+
+def test_pads_whose_copper_touches_are_joined_already():
+    """Two pads of a net that overlap (front and back of a pin, a custom pad's
+    pieces) are one piece of copper: no connection is made between them."""
+    board = Board.rectangle(20, 10, Rules(0.2, 0.2))
+    board.pads += [Pad.rect(0, 5, 5, 1.0, 1.0, 0), Pad.rect(1, 5.6, 5, 1.0, 1.0, 0), Pad.circle(2, 15, 5, 0.5, 0)]
+    pairs, buried = decompose(board, [Layer(0, "F.Cu", planar_map.build(board))])
+    assert buried == [] and len(pairs) == 1 and {pairs[0][1], pairs[0][2]} != {0, 1}
+    result = route_board(board)
+    assert result.unrouted == [] and len(result.polylines) == 1
+
+
+def pins_board(min_width: float) -> Board:
+    """Three pins 0.2 wide at 0.398 pitch, each to a pad of its own far off. A
+    trace joins a pin at its centre, 0.298 from the next pin's edge: room for a
+    0.2 trace at 0.19 clearance, not for the class's 0.25, nor for 0.2 with all
+    of the 0.01 margin (0.3)."""
+    rules = Rules(0.25, 0.19 + 0.01, margin=0.01, min_width=min_width)
+    board = Board.rectangle(20, 10, rules)
+    for net, y in enumerate((4.602, 5.0, 5.398)):
+        board.pads.append(Pad.rect(2 * net, 10, y, 0.875, 0.2, net))
+    board.pads += [Pad.circle(1, 3, 2, 0.5, 0), Pad.circle(3, 17, 5, 0.5, 1), Pad.circle(5, 3, 8, 0.5, 2)]
+    return board
+
+
+def test_a_net_is_narrowed_to_reach_a_fine_pitch_pin():
+    plain = route_board(pins_board(0.2), options=Options(narrow=False))
+    assert plain.stats["buried_pads"] == [0, 2, 4] and plain.stats["narrowed"] == {}
+    unknown = route_board(pins_board(0.0))  # no least width known: nothing is narrowed
+    assert unknown.stats["buried_pads"] == [0, 2, 4]
+    board = pins_board(0.2)
+    result = route_board(board)
+    assert result.stats["buried_pads"] == [] and result.unrouted == []
+    assert result.stats["narrowed"] == {n: pytest.approx(0.2) for n in range(3)}  # drawn at the least width the rules allow,
+    assert result.board.rules.width(1) == pytest.approx(0.19)                    # routed with half the margin
+    assert board.rules.net_width == {} and board.rules.net_drawn == {}   # the board routed is left as it was
+    assert_clean(board, result)

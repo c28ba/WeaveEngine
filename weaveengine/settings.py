@@ -42,6 +42,8 @@ DESCRIPTIONS = {
     "gpu_drawing": ("Draw with the graphics card", "Much faster on large boards. If this machine cannot do it, or it once failed, "
                     "the ordinary drawing is used instead", "View"),
     "untangle": ("Undo long detours", "Move the traces that force a connection the long way round, where that leaves less copper", "Routing"),
+    "narrow_to_reach": ("Narrow traces to reach fine-pitch pins", "Where a net's pads cannot be reached at its class's width, route it "
+                        "narrower, down to the board's minimum track width (from the KiCad project)", "Routing"),
     "slide_vias": ("Straighten vias", "Move each via to where its traces run through it with less of a bend", "Routing"),
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
     "teardrops": ("Teardrops", "Add teardrops where traces meet pads and vias", "Teardrops"),
@@ -92,6 +94,7 @@ class Settings:
     ignore_keepouts: bool = False
     slide_vias: bool = True
     untangle: bool = True
+    narrow_to_reach: bool = True
     smooth_corners: bool = True
     show_outlines: bool = True
     show_names: bool = True
@@ -133,7 +136,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, teardrops=self.teardrops, teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, teardrops=self.teardrops, teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        portfolio=self.portfolio)
 

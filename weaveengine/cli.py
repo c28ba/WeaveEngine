@@ -18,8 +18,15 @@ def unreachable_note(buried: list[int], pads: dict) -> str:
     names = sorted(pads[p].name for p in buried)
     shown = ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "")
     return (f"{len(names)} pads cannot be reached by any trace under these rules, and their connections are left open: {shown}. "
-            "Usually they sit closer together than the clearance allows (a fine-pitch part: give it a local clearance), "
-            "outside the board, or inside a keepout.")
+            "Usually they sit closer together than the clearance and the narrowest trace allow (a fine-pitch part, "
+            "routed in KiCad under a custom rule, which WeaveEngine does not read), outside the board, or inside a keepout.")
+
+
+def narrowed_note(narrowed: dict[int, float], names: dict) -> str:
+    """What to tell the user about nets routed narrower than their class to reach their pads."""
+    shown = sorted(f"{names.get(n, n)} {w:g} mm" for n, w in narrowed.items())
+    return (f"{len(shown)} nets routed narrower than their class, to reach fine-pitch pads: "
+            + ", ".join(shown[:12]) + (f" and {len(shown) - 12} more" if len(shown) > 12 else ""))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--svg", help="also write an SVG picture of the result")
     ap.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
     ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
+    ap.add_argument("--no-narrowing", action="store_true",
+                    help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
     ap.add_argument("--no-ses-teardrops", action="store_true",
                     help="keep teardrops out of the SES (they are written as short widening traces; "
                          "leave them out to use the CAD tool's own teardrops instead)")
@@ -98,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     rules.clearance = want_clearance + args.margin
     rules.edge_clearance = want_edge + args.margin
     rules.margin = args.margin
-    options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio)
+    options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing)
     bar = None if args.quiet else ProgressBar()
     result = route_board(design.board, options=options, seed=args.seed,
                          workers=args.workers, events=bar.event if bar else None)
@@ -115,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     for wire in result.unrouted:
         conn = result.connections[wire]
         print(f"  unrouted: net {names.get(conn.net_id, conn.net_id)}: {pads[conn.src].name} -> {pads[conn.dst].name}")
+    if stats["narrowed"]:
+        print(f"  {narrowed_note(stats['narrowed'], names)}")
     if stats["buried_pads"]:
         print(f"  {unreachable_note(stats['buried_pads'], pads)}")
     m = measure(design, out, want_clearance, want_edge)

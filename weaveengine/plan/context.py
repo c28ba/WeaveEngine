@@ -75,26 +75,73 @@ def thin(lines: list, tolerance: float) -> list[list[tuple[float, float]]]:
     return [[(round(x, 3), round(y, 3)) for x, y in g.coords] for g in geoms]
 
 
-def spanning_pairs(pads: list[int], centre: dict[int, tuple[float, float]]) -> list[tuple[int, int, float]]:
-    """Minimum spanning tree over pad positions (section 11)."""
+def spanning_pairs(pads: list[int], centre: dict[int, tuple[float, float]],
+                   touching: set[tuple[int, int]] = frozenset()) -> list[tuple[int, int, float]]:
+    """Minimum spanning tree over pad positions (section 11). Pads whose copper
+    touches (``touching``, pairs of indices into ``pads``) are joined already:
+    the tree is over the groups they make, each pair of groups joined at its
+    nearest two pads, and no connection is made inside a group."""
     pts = np.array([centre[p] for p in pads])
     dist = np.hypot(pts[:, None, 0] - pts[None, :, 0], pts[:, None, 1] - pts[None, :, 1])
-    tree = minimum_spanning_tree(dist).tocoo()
-    return [(pads[i], pads[j], w) for i, j, w in sorted(zip(tree.row.tolist(), tree.col.tolist(), tree.data.tolist()))]
+    group = list(range(len(pads)))
+    def root(i: int) -> int:
+        while group[i] != i:
+            group[i] = group[group[i]]
+            i = group[i]
+        return i
+    for i, j in touching:
+        group[root(i)] = root(j)
+    label = {r: n for n, r in enumerate(sorted({root(i) for i in range(len(pads))}))}
+    g = np.array([label[root(i)] for i in range(len(pads))])
+    k = len(label)
+    between = np.full((k, k), np.inf)
+    np.minimum.at(between, (g[:, None], g[None, :]), dist)
+    np.fill_diagonal(between, 0.0)
+    between[between <= 0.0] = 1e-6   # (no weight is no edge to scipy; a pad on each side of the board at one place)
+    np.fill_diagonal(between, 0.0)
+    tree = minimum_spanning_tree(between).tocoo()
+    out = []
+    for a, b in zip(tree.row.tolist(), tree.col.tolist()):
+        ia, ib = np.flatnonzero(g == a), np.flatnonzero(g == b)
+        block = dist[np.ix_(ia, ib)]
+        x, y = np.unravel_index(int(np.argmin(block)), block.shape)
+        i, j = sorted((int(ia[x]), int(ib[y])))
+        out.append((pads[i], pads[j], float(dist[i, j])))
+    return sorted(out)
+
+
+def _touching(pads: list) -> set[tuple[int, int]]:
+    """Index pairs of the pads whose copper meets on some layer (one piece of a
+    custom pad and another, a pad drawn twice, front and back of one pin)."""
+    shapes = [p.shape for p in pads]
+    a, b = shapely.STRtree(shapes).query(shapes, predicate="intersects")
+    return {(i, j) for i, j in zip(a.tolist(), b.tolist()) if i < j
+            and (pads[i].layers is None or pads[j].layers is None or pads[i].layers & pads[j].layers)}
 
 
 def decompose(board: Board, layers: list[Layer]) -> tuple[list[tuple[int, int, int]], list[int]]:
     """Multi-pin nets -> 2-pin connections (net, pad, pad). Also returns pads
-    that cannot be reached on any layer."""
+    that cannot be reached on any layer, other than through copper of their
+    own net that they touch."""
     reachable = set().union(*[set(layer.pmap.pad_edges) for layer in layers])
     centre = {p.pad_id: p.centre for p in board.pads}
+    by_id = {p.pad_id: p for p in board.pads}
     pairs: list[tuple[int, int, int]] = []
     buried: list[int] = []
     for net_id, pads in sorted(board.nets().items()):
+        touching = _touching([by_id[p] for p in pads]) if len(pads) >= 2 else set()
+        # A pad no trace reaches is joined all the same if its copper meets a pad that one does.
+        for _ in range(len(pads)):
+            more = {pads[k] for i, j in touching for k in (i, j) if pads[i] in reachable or pads[j] in reachable} - reachable
+            if not more:
+                break
+            reachable = reachable | more
         buried += [p for p in pads if p not in reachable]
-        pads = [p for p in pads if p in reachable]
-        if len(pads) >= 2:
-            pairs += [(net_id, a, b) for a, b, _ in spanning_pairs(pads, centre)]
+        keep = [k for k, p in enumerate(pads) if p in reachable]
+        index = {k: n for n, k in enumerate(keep)}
+        if len(keep) >= 2:
+            near = {(index[i], index[j]) for i, j in touching if i in index and j in index}
+            pairs += [(net_id, a, b) for a, b, _ in spanning_pairs([pads[k] for k in keep], centre, near)]
     return pairs, buried
 
 
@@ -111,6 +158,7 @@ class Options:
     slide: bool = True              # move each via to where its traces run straighter (13.3)
     smooth: bool = True             # round sharp corners where the design rules leave room
     untangle: bool = True           # undo long detours by moving the wires in their way (``ripup.untangle``)
+    narrow: bool = True             # narrower traces for nets whose pads their width cannot reach (``router.reach``)
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
     teardrop_max_width: float = 2.0    # mm across

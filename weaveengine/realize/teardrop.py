@@ -110,7 +110,8 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     notch at its waist.
 
     Round pads get tangent lines to the pad circle; other convex pads get lines
-    to the two pad corners that bound the pad as seen from the trace.
+    to the two pad corners that bound the pad as seen from the trace. Pads that
+    are not convex get none.
 
     Teardrops are added after routing, so they never take space a trace could
     have used. Each is limited to ``max_length`` beyond the pad and
@@ -135,6 +136,8 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     out: dict[int, list] = {}
     for w, line in polylines.items():
         net = wire_net[w]
+        if net in rules.net_drawn:  # routed with part of its margin given up: none to spare for a teardrop
+            continue
         half = rules.width(net) / 2.0
         # Each end: its pad, the trace seen from it, how far along the trace the pad reaches, the pad's size.
         ends = []
@@ -144,6 +147,10 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                 ends.append((None, pts, 0.0, 0.0))
             elif pad.radius is not None:
                 ends.append((pad, pts, pad.radius, pad.radius))
+            elif pad.shape.convex_hull.area > pad.shape.area * 1.01:
+                # Not convex (a custom pad, say an L joining a pin to a jumper): the
+                # lines to its bounding corners can run over what is not the pad.
+                ends.append((None, pts, 0.0, 0.0))
             else:
                 # Where the trace leaves the pad, and half the pad's smaller dimension (its inscribed radius).
                 leave = LineString(pts).intersection(pad.shape.exterior)

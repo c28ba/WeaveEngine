@@ -41,7 +41,7 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
         net = wire_net.get(wire, wire)
         layer = wire_layer.get(wire, 0)
         color = LAYER_COLORS[layer % len(LAYER_COLORS)] if by_layer else NET_COLORS[net % len(NET_COLORS)]
-        stroke = max(1.0, board.rules.width(net) * scale)
+        stroke = max(1.0, board.rules.drawn(net) * scale)
         label = f"wire {wire} (net {board.net_names.get(net, net)}, {board.layers[layer]})"
         out.append(f'<polyline points="{pts(line)}" fill="none" stroke="{color}" stroke-width="{stroke:.2f}" '
                    f'stroke-linecap="round" stroke-linejoin="round" opacity="0.85"><title>{label}</title></polyline>')

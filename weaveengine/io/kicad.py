@@ -26,6 +26,7 @@ from shapely.ops import unary_union
 ARC_STEPS = 16       # segments of a drawn arc or circle
 CHAR = 1.3           # width of a character of KiCad's stroke font, of the font width (its widest, '>', and room about it)
 LINE = 1.62          # line spacing, of the font height
+NARROWEST = 0.127    # mm: no trace is narrowed below this, whatever the rules allow (5 mil: what board makers make at their standard price)
 TALL = 1.8           # height of a line of text as KiCad's own check sees it, of the font height
 
 
@@ -41,6 +42,7 @@ class KicadPad:
     size: float = 0.0                      # the smaller side of the pad
     clearance: float = 0.0                 # its local clearance, else its part's (0: none)
     hole: object = None                    # the hole as a shape, if it has one
+    outlines: tuple = ()                   # a custom pad's copper, as placed and as placed mirrored (see ``apply``)
 
 
 @dataclass
@@ -182,6 +184,9 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
             layers.add(name)
     pad = KicadPad(ref, number, x, y, layers, plated=kind != "np_thru_hole", size=min(size) if size else 0.0,
                    clearance=_local_clearance(item) or own)
+    if len(item) > 3 and item[3] == "custom":
+        pad.outlines = tuple(o for o in (_custom(item, x, y, at[2] if len(at) > 2 else 0.0, size, mirrored) for mirrored in (False, True))
+                             if o is not None)
     drill = _child(item, "drill")
     if drill and kind in ("thru_hole", "np_thru_hole"):
         values = [float(v) for v in drill[1:] if isinstance(v, str) and _is_number(v)]
@@ -196,6 +201,30 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
             turn = (at[2] if len(at) > 2 else 0.0)  # the pad's angle in the file includes its part's
             pad.hole = affinity.translate(affinity.rotate(hole, turn), hx, hy)
     out.pads.append(pad)
+
+
+def _custom(item, x: float, y: float, turn: float, size: list, mirrored: bool):
+    """A custom pad's copper: its anchor and its primitives, turned by the pad's
+    angle (which includes its part's) and put at (x, y) in the board's
+    coordinates (y up); ``mirrored``, the same flipped about the pad's axis.
+    None if it is not one piece."""
+    c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+    flip = 1.0 if mirrored else -1.0  # the file's y is down
+    place = lambda u, v: (x + u * c - flip * v * s, y + u * s + flip * v * c)
+    options = _child(item, "options")
+    anchor = _child(options, "anchor") if options else None
+    w, h = (size + [0.0, 0.0])[:2]
+    if anchor and len(anchor) > 1 and anchor[1] == "rect":
+        parts = [Polygon([place(-w / 2, -h / 2), place(w / 2, -h / 2), place(w / 2, h / 2), place(-w / 2, h / 2)])]
+    else:
+        parts = [Point(x, y).buffer(w / 2.0, quad_segs=ARC_STEPS // 4)] if w > 0 else []
+    for prim in (_child(item, "primitives") or [])[1:]:
+        if isinstance(prim, list) and prim[0].startswith("gr_"):
+            shape = _shape(prim, place, prim[0])
+            if shape is not None:
+                parts.append(shape)
+    shape = unary_union(parts) if parts else None
+    return shape if isinstance(shape, Polygon) and not shape.is_empty else None
 
 
 def _is_number(text: str) -> bool:
@@ -239,15 +268,26 @@ def _drawing(item, place, out: KicadBoard, kind: str, ref: str = "") -> None:
     layers = [l for l in _layers(item) if l.endswith(".Cu")]
     if not layers:
         return
+    shape = _shape(item, place, kind)
+    if shape is None:
+        return
+    what = f"a drawing of {ref}" if ref else "a drawing"
+    for layer in layers:
+        out.copper.append((shape, layer, what))
+
+
+def _shape(item, place, kind: str):
+    """The copper of a drawn line, rectangle, circle, arc or polygon (``fp_``,
+    ``gr_``, or a custom pad's primitive), placed by ``place``; None if empty."""
     pt = lambda node: place(*_numbers(node, 2)) if node else None
     width = _width(item)
     shape, solid = None, _filled(item)
     name = kind[3:]
     if name == "line":
         shape = LineString([pt(_child(item, "start")), pt(_child(item, "end"))])
-    elif name == "rect":
-        (x0, y0), (x1, y1) = pt(_child(item, "start")), pt(_child(item, "end"))
-        shape = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    elif name == "rect":  # (its corners placed one by one: a turned part turns it)
+        (x0, y0), (x1, y1) = _numbers(_child(item, "start"), 2), _numbers(_child(item, "end"), 2)
+        shape = Polygon([place(x0, y0), place(x1, y0), place(x1, y1), place(x0, y1)]).buffer(0)
     elif name == "circle":
         c, e = pt(_child(item, "center")), pt(_child(item, "end"))
         shape = Point(c).buffer(math.dist(c, e), quad_segs=ARC_STEPS // 4)
@@ -268,13 +308,10 @@ def _drawing(item, place, out: KicadBoard, kind: str, ref: str = "") -> None:
         elif len(pts) >= 2:
             shape = LineString(pts)
     if shape is None or shape.is_empty:
-        return
+        return None
     if isinstance(shape, Polygon) and not solid:
         shape = shape.exterior
-    shape = shape.buffer(max(width, 1e-3) / 2.0, quad_segs=4) if not (isinstance(shape, Polygon) and width <= 0) else shape
-    what = f"a drawing of {ref}" if ref else "a drawing"
-    for layer in layers:
-        out.copper.append((shape, layer, what))
+    return shape.buffer(max(width, 1e-3) / 2.0, quad_segs=4) if not (isinstance(shape, Polygon) and width <= 0) else shape
 
 
 def _text(item, place, out: KicadBoard, kind: str, fp_angle: float = 0.0, ref: str = "") -> None:
@@ -345,6 +382,7 @@ def apply(design, kicad: KicadBoard) -> str:
     said = []
     index = {name: i for i, name in enumerate(board.layers)}
     on = lambda canonical: index.get(kicad.layer_names.get(canonical, canonical))
+    rules.min_width = max(r.get("min_track_width", 0.0), NARROWEST)
     if r.get("min_clearance", 0.0) > rules.clearance + 1e-9:
         rules.clearance = r["min_clearance"]
         said.append(f"the board's minimum clearance, {rules.clearance:g} mm")
@@ -358,6 +396,26 @@ def apply(design, kicad: KicadBoard) -> str:
     hole = r.get("hole_clearance", 0.0)
     if hole > (rules.via_diameter - rules.via_drill) / 2.0 + 1e-9:
         rules.via_clearance = hole - (rules.via_diameter - rules.via_drill) / 2.0
+    # Custom pads: their own copper. A DSN gives only its convex hull, which can
+    # cover another pad (a reversible part's jumpers, bent round each other's pins).
+    customs: dict[tuple[str, str], list[KicadPad]] = {}
+    for kp in kicad.pads:
+        if kp.outlines:
+            customs.setdefault((kp.ref, kp.number), []).append(kp)
+    shaped = 0
+    for pad in board.pads if customs else ():
+        ref, _, number = pad.name.split("@")[0].rpartition("-")
+        best = None
+        for kp in customs.get((ref, number), ()):
+            for outline in kp.outlines:  # (as placed and mirrored: the one whose hull is the DSN's)
+                off = outline.convex_hull.symmetric_difference(pad.shape).area / max(pad.shape.area, 1e-9)
+                if off < 0.05 and (best is None or off < best[0]):
+                    best = (off, outline, kp)
+        if best and best[1].area < pad.shape.area * 0.98:
+            pad.shape, pad.anchor = best[1], (best[2].x, best[2].y)
+            shaped += 1
+    if shaped:
+        said.append(f"the shapes of {shaped} custom pads (a DSN has only their outline's hull)")
     # Pads: their local clearance, and what the hole clearance asks where the ring is narrow.
     found: dict[tuple[str, str], list[KicadPad]] = {}
     for pad in kicad.pads:

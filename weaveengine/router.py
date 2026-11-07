@@ -84,9 +84,13 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     """
     t0 = time.perf_counter()
     options = options or Options()
-    layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(
-        board.layers, parallel.run(_build_task, board, range(len(board.layers)), workers)))]
+    layers = _layers(board, workers)
     pairs, buried = decompose(board, layers)
+    narrowed: dict[int, float] = {}
+    if options.narrow and buried:
+        board, layers, narrowed = reach(board, layers, buried, workers)
+        if narrowed:
+            pairs, buried = decompose(board, layers)
     run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
                   (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events)
@@ -105,7 +109,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
     loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
-    lines = {w: line for w, line in lines.items() if w not in loops}
+    lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
     violations = [v for v in violations if not loops.intersection(v.wires)]
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
@@ -160,6 +164,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "corners_left_sharp": smoothed[1],
         "via_sites": len(ctx.layers[0].pmap.sites),
         "buried_pads": buried,
+        "narrowed": narrowed,  # net -> the width its traces were narrowed to, to reach its pads (``reach``)
         "unreachable": unreachable,  # connections of those pads, counted as open
         "wires_per_layer": {l.name: sum(1 for li in wire_layer.values() if li == l.index) for l in ctx.layers},
         "time_route": t_route - t0,
@@ -169,6 +174,64 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+
+
+def _layers(board: Board, workers: int | None) -> list[Layer]:
+    return [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(
+        board.layers, parallel.run(_build_task, board, range(len(board.layers)), workers)))]
+
+
+def reach(board: Board, layers: list[Layer], buried: list[int], workers: int | None) -> tuple[Board, list[Layer], dict[int, float]]:
+    """Narrower traces for the nets of pads no trace reaches at the net's width
+    (design 11.1): a fine-pitch part whose pins are closer than its class's
+    width and clearance allow, which a designer routes by hand with thinner
+    traces. Such a net is narrowed halfway down to the narrowest trace the
+    board's rules allow (``Rules.min_width``; 0, not known: nothing is
+    narrowed) if that reaches all its pads, else down to it, else routed at
+    that less half the safety margin and drawn at it (where the pins leave
+    exactly the clearance, the margin is all that is in the way). A net none
+    of that helps keeps its width. Returns the board (a copy with rules of its
+    own, if any net was narrowed), its layers and the nets narrowed, with the
+    width they are drawn at."""
+    rules = board.rules
+    floor = rules.min_width
+    if not floor:
+        return board, layers, {}
+    net_of = {p.pad_id: p.net_id for p in board.pads}
+    left = {net_of[p] for p in buried if net_of[p] >= 0}
+    steps = [lambda n: ((rules.width(n) + floor) / 2.0, None), lambda n: (floor, None),
+             lambda n: (floor - rules.margin, floor)]
+    trial = copy.copy(board)
+    trial.rules = copy.copy(rules)
+    trial.rules.net_width, trial.rules.net_drawn = dict(rules.net_width), dict(rules.net_drawn)
+    done: dict[int, tuple[float, float | None]] = {}
+    built = None
+    for step in steps:
+        tried = {n: step(n) for n in left if step(n)[0] < rules.width(n) - 1e-9 and step(n)[0] > 0}
+        if not tried:
+            continue
+        for n, (width, drawn) in tried.items():
+            trial.rules.net_width[n] = width
+            if drawn is not None:
+                trial.rules.net_drawn[n] = drawn
+        built = _layers(trial, workers)
+        still = {net_of[p] for p in decompose(trial, built)[1]}
+        done.update({n: w for n, w in tried.items() if n not in still})
+        left -= set(done)
+        if not left:
+            break
+    if not done:
+        return board, layers, {}
+    if left:  # narrowed in vain: as they were, and the maps again without them
+        for n in left:
+            trial.rules.net_width.pop(n, None)
+            trial.rules.net_drawn.pop(n, None)
+            if n in rules.net_width:
+                trial.rules.net_width[n] = rules.net_width[n]
+            if n in rules.net_drawn:
+                trial.rules.net_drawn[n] = rules.net_drawn[n]
+        built = _layers(trial, workers)
+    return trial, built, {n: trial.rules.drawn(n) for n in done}
 
 
 def _unreachable(board: Board, buried: list[int]) -> int:

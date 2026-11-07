@@ -24,9 +24,16 @@ class Rules:
     via_drill: float = 0.3
     via_clearance: float = 0.0           # what a via asks of foreign copper beyond ``clearance`` (0: nothing; see ``apart``)
     margin: float = 0.0                  # safety margin, already in ``clearance``; added to every clearance an item asks for itself
+    min_width: float = 0.0               # narrowest trace the board's rules allow (0: not known); see ``router.reach``
+    net_drawn: dict[int, float] = field(default_factory=dict)  # width written for a net routed narrower than drawn (``router.reach``)
 
     def width(self, net_id: int) -> float:
         return self.net_width.get(net_id, self.trace_width)
+
+    def drawn(self, net_id: int) -> float:
+        """The width a net's traces are written with: its ``width``, unless it
+        was routed with some of its margin given up (``router.reach``)."""
+        return self.net_drawn.get(net_id, self.width(net_id))
 
     @property
     def base_width(self) -> float:
@@ -70,9 +77,12 @@ class Pad:
     radius: float | None = None      # set for circular pads (teardrops)
     is_via: bool = False
     clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
+    anchor: tuple[float, float] | None = None  # where traces join it, if not its centroid (which a bent custom pad's is not on)
 
     @property
     def centre(self) -> tuple[float, float]:
+        if self.anchor is not None:
+            return self.anchor
         c = self.shape.centroid
         return (c.x, c.y)
 

@@ -108,7 +108,7 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None
     for via in result.vias:
         vias_by_net.setdefault(via.net_id, []).append(via)
     for net in sorted(set(by_net) | set(vias_by_net)):
-        width = n(board.rules.width(net))
+        width = n(board.rules.drawn(net))
         out.append(f"      (net {q(names.get(net, f'N{net}'))}")
         for wire in sorted(by_net.get(net, [])):
             layer = board.layers[result.wire_layer.get(wire, 0)]
@@ -120,7 +120,7 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None
             out.append(f"        (wire (path {layer} {width} {' '.join(pts)}))")
             if teardrops:
                 for poly in result.teardrops.get(wire, []):
-                    for w, a, b in teardrop_tracks(poly, board.rules.width(net)):
+                    for w, a, b in teardrop_tracks(poly, board.rules.drawn(net)):
                         if (n(a[0]), n(a[1])) != (n(b[0]), n(b[1])):
                             out.append(f"        (wire (path {layer} {n(w)} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])}))")
         for via in vias_by_net.get(net, []):
