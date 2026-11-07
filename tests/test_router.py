@@ -394,35 +394,35 @@ def _mid(a, b):
     return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
 
 
-RAM = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", "Word of RAM.dsn")
+PIC = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", "pic-programmer", "pic-programmer.dsn")
 
 
-@pytest.mark.skipif(not os.path.exists(RAM), reason="example board not present")
-def test_word_of_ram_board(tmp_path):
-    """A real two-layer KiCad board: through-hole relays, two net classes."""
+@pytest.mark.skipif(not os.path.exists(PIC), reason="example board not present")
+def test_pic_programmer_board(tmp_path):
+    """A real two-layer KiCad board (KiCad's pic_programmer demo): two net classes."""
     from weaveengine.io.dsn import parse_sexpr, read_dsn
     from weaveengine.io.ses import write_ses
 
-    design = read_dsn(RAM)
+    design = read_dsn(PIC)
     board = design.board
-    assert len(board.pads) == 128 and board.layers == ["F.Cu", "B.Cu"]
-    assert {design.net_names[n] for n in board.rules.net_width} == {"+12V", "GND"}
+    assert len(board.pads) == 240 and board.layers == ["top_layer", "bottom_layer"]
+    assert {design.net_names[n] for n in board.rules.net_width} == {"GND", "VCC"}
     result = route_board(board)
-    assert result.unrouted == [] and result.stats["routed"] == result.stats["connections"] == 85
+    assert result.unrouted == [] and result.stats["routed"] == result.stats["connections"] == 86
     assert all(net_is_connected(result, n) for n in board.nets())
     assert_clean(board, result)
     assert min(result.stats["wires_per_layer"].values()) > 10  # both layers are used
 
-    out = str(tmp_path / "ram.ses")
+    out = str(tmp_path / "pic.ses")
     write_ses(design, result, out, teardrops=False)
     session = parse_sexpr(open(out, encoding="utf-8").read())
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
     wires = [w[1] for n in nets for w in n[2:] if w[0] == "wire"]
     assert len(wires) == len(result.polylines)
-    assert {w[1] for w in wires} == {"F.Cu", "B.Cu"}
-    gnd = next(n for n in nets if n[1] == "GND")
-    assert {w[1][2] for w in gnd[2:] if w[0] == "wire"} == {"5000"}  # 0.5 mm at 0.1 um
+    assert {w[1] for w in wires} == {"top_layer", "bottom_layer"}
+    vcc = next(n for n in nets if n[1] == "VCC")
+    assert {w[1][2] for w in vcc[2:] if w[0] == "wire"} == {"8000"}  # 0.8 mm at 0.1 um
 
 
 def test_result_does_not_depend_on_the_number_of_workers():

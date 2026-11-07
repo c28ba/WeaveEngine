@@ -16,7 +16,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xv
 echo "Ubuntu $version: libraries the app cannot find:"
 find dist/WeaveEngine -name "*.so*" -type f -exec ldd {} \; 2>/dev/null | grep "not found" | sort -u
 log="selftest/linux-$version.log"
-timeout -k 10 600 xvfb-run -a dist/WeaveEngine/WeaveEngine --self-test "boards/Word of RAM.dsn" \
+timeout -k 10 600 xvfb-run -a dist/WeaveEngine/WeaveEngine --self-test "boards/pic-programmer/pic-programmer.dsn" \
   --ses "selftest/linux-$version.ses" --screenshot "selftest/linux-$version.png" > "$log" 2>&1
 status=$?
 cat "$log"

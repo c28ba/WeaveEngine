@@ -103,11 +103,12 @@ def smd_two_layer(n: int = 6, pitch: float = 2.0, seed: int = 0, rules: Rules | 
 
 
 def real_boards() -> dict[str, Board]:
-    """Boards exported from a CAD tool, if present in the repository root."""
+    """Boards exported from a CAD tool, from the repository's boards folder."""
     import os
     from weaveengine.io.dsn import read_dsn
     boards = {}
-    for label, file in (("word_of_ram (KiCad, 2 layers)", "Word of RAM.dsn"), ("alu (KiCad, 2 layers)", "ALU.dsn")):
+    for label, file in (("pic_programmer (KiCad demo, 2 layers)", "pic-programmer/pic-programmer.dsn"),
+                        ("lily58_pro (keyboard, 2 layers)", "lily58-pro/lily58-pro.dsn")):
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", file)
         if os.path.exists(path):
             boards[label] = read_dsn(path).board

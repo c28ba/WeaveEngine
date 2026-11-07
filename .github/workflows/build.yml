@@ -51,7 +51,7 @@ jobs:
           if [ $status -ne 0 ]; then PYTHONIOENCODING=utf-8 python .github/annotate.py pytest.txt; fi
           exit $status
       - name: Route a board from the command line
-        run: python -m weaveengine.cli "boards/Word of RAM.dsn" -o word.ses --quiet
+        run: python -m weaveengine.cli "boards/pic-programmer/pic-programmer.dsn" -o pic.ses --quiet
       - name: Build the app
         run: pyinstaller --noconfirm WeaveEngine.spec
       # The app as packaged, not the source: open a board, route it, export the
@@ -59,7 +59,7 @@ jobs:
       - name: Run the packaged app (macOS)
         if: runner.os == 'macOS'
         timeout-minutes: 15
-        run: mkdir -p selftest && dist/WeaveEngine.app/Contents/MacOS/WeaveEngine --self-test "boards/Word of RAM.dsn" --ses app.ses --screenshot selftest/macos.png
+        run: mkdir -p selftest && dist/WeaveEngine.app/Contents/MacOS/WeaveEngine --self-test "boards/pic-programmer/pic-programmer.dsn" --ses app.ses --screenshot selftest/macos.png
       - name: Run the packaged app (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 15
@@ -68,7 +68,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force selftest | Out-Null
           $p = Start-Process -FilePath dist\WeaveEngine\WeaveEngine.exe -Wait -PassThru `
-            -ArgumentList '--self-test', '"boards/Word of RAM.dsn"', '--ses', 'app.ses', '--screenshot', 'selftest/windows.png'
+            -ArgumentList '--self-test', '"boards/pic-programmer/pic-programmer.dsn"', '--ses', 'app.ses', '--screenshot', 'selftest/windows.png'
           if ($p.ExitCode -ne 0) { throw "the packaged app's self-test ended with $($p.ExitCode)" }
           if (-not (Test-Path app.ses)) { throw "the packaged app wrote no session" }
       - name: Run the packaged app (Linux, on bare Ubuntu 22.04 and 24.04 with an X display)

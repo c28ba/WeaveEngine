@@ -54,6 +54,9 @@ Or build it yourself (see the end of this page).
 4. Back in KiCad: **File → Import → Specctra Session…**, then refill the zones
    (**B**) and run the design rules check.
 
+To try it without a board of your own, open one of the open-source examples
+in [boards](boards) (credited there).
+
 Copper pours are left to KiCad: a net that has a zone (GND, say) is not routed
 as traces, and its pads are connected by the pour when KiCad fills it.
 

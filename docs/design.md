@@ -8,6 +8,7 @@
 
 - This is a design, not a tested result. Anything marked **[HYPOTHESIS]** is a design bet that must be validated by the experiments in section 17 before it is relied on.
 - TopoR's internal algorithms are not public in anything I could verify. This design is built from general topological-routing ideas (homotopic routing, rubber-band sketches, negotiated congestion), not from TopoR's source. Do not describe it as a reimplementation.
+- Boards named in the measurements below (ALU, blinkSP1, Micromouse2026PCB, RAM Selector Tree, Word of RAM, ulx3s) were the development boards and are not in the repository. The example boards in `boards/` are four open-source designs (see `boards/README.md`); the 44-board sweep of 4.1 used open-source boards too.
 - The riskiest piece is the slot-aware topological search (section 8). Milestone M2 is a deliberate spike to prove or kill it early.
 - Geometry. Since M14e a trace is the taut line against discs at the vertices it passes (13.1). On the five benchmark boards every written result checks clean, and the board that needs most vias routes 368 of 400 in half the time, with no repair round (12.8, which also records that rip-up stops too soon there).
 - Vias. The machinery for putting a via into the map is built and tested (12.2, M13). The layer that decides *where* vias go has been prototyped (12.3) and is not good enough: it uses several vias per connection and no board that needs vias routes completely. It is to be reworked (12.5). Section 12.4 records what the prototype showed, with numbers.
