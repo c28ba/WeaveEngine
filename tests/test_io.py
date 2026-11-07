@@ -479,3 +479,29 @@ def test_copper_text_that_is_a_number_and_a_mounting_hole_s_own_clearance(tmp_pa
     texts = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(3, -2))]
     holes = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(16, -8))]
     assert texts and holes and holes[0].clearance == pytest.approx(1.55)
+
+
+def test_solder_mask_openings_are_kept_clear_of_other_nets(tmp_path):
+    """A trace inside another net's solder-mask opening is bared beside it
+    (KiCad's solder mask bridge): a pad whose opening reaches past the
+    clearance asks that of foreign copper, and mask left open on purpose (drawn
+    on a mask layer) keeps traces out on the copper below."""
+    dsn = KICAD_STYLE.replace("(pcb demo.dsn", "(pcb mask.dsn")
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (setup (pad_to_mask_clearance 0.3))
+  (gr_rect (start 1 1) (end 3 2) (layer "F.Mask") (fill yes))
+  (footprint "R_0805" (layer "F.Cu") (at 5 5)
+    (property "Reference" "R1" (at 0 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at -0.9 0) (size 1 1.3) (layers "F.Cu" "F.Mask"))
+    (pad "2" smd rect (at 0.9 0) (size 1 1.3) (layers "F.Cu" "F.Mask") (solder_mask_margin 0.05)))
+)
+"""
+    (tmp_path / "mask.dsn").write_text(dsn, encoding="utf-8")
+    (tmp_path / "mask.kicad_pcb").write_text(pcb, encoding="utf-8")
+    design = read_dsn(str(tmp_path / "mask.dsn"))
+    pads = {p.name: p for p in design.board.pads}
+    assert pads["R1-1"].clearance == pytest.approx(0.3)   # the board's opening, wider than the 0.2 clearance
+    assert pads["R1-2"].clearance == 0.0                  # its own, narrower: the clearance holds
+    opened = [o for o in design.board.obstacles if o.shape.contains(Point(2, -1.5))]
+    assert opened and opened[0].net_id == -1 and not opened[0].copper and opened[0].layers == frozenset({0})

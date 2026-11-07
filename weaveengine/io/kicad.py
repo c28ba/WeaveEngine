@@ -44,6 +44,8 @@ class KicadPad:
     clearance: float = 0.0                 # its local clearance, else its part's (0: none)
     hole: object = None                    # the hole as a shape, if it has one
     outlines: tuple = ()                   # a custom pad's copper, as placed and as placed mirrored (see ``apply``)
+    mask: float | None = None              # how far its solder-mask opening reaches past its copper, its own or its part's
+                                           # (None: the board's; -1: it has no opening)
 
 
 @dataclass
@@ -53,6 +55,9 @@ class KicadBoard:
     pads: list[KicadPad] = field(default_factory=list)
     copper: list[tuple] = field(default_factory=list)                 # (shape, canonical layer, what it is) on copper layers
     rules: dict[str, float] = field(default_factory=dict)             # the project's minimums (``project_rules``)
+    mask: float = 0.0                                                 # the board's solder-mask opening past a pad's copper
+    openings: list[tuple] = field(default_factory=list)               # (shape, canonical copper layer, how far the board's
+                                                                      # margin widens it): solder mask left open on purpose
 
 
 def project_rules(path: str) -> dict[str, float]:
@@ -88,6 +93,9 @@ def read_kicad(dsn_path: str) -> KicadBoard | None:
     for layer in _children(_child(root, "layers"), None):
         if len(layer) >= 3 and isinstance(layer[1], str) and layer[1].endswith(".Cu"):
             out.layer_names[layer[1]] = layer[3] if len(layer) > 3 and isinstance(layer[3], str) else layer[1]
+    setup = _child(root, "setup")
+    margin = _child(setup, "pad_to_mask_clearance") if setup else None
+    out.mask = float(margin[1]) if margin and len(margin) > 1 and _is_number(margin[1]) else 0.0
     for item in root[1:]:
         if not isinstance(item, list):
             continue
@@ -151,8 +159,11 @@ def _footprint(item, out: KicadBoard) -> None:
         if len(text) > 2 and text[1] == "reference":
             ref = text[2]
     own = _local_clearance(item)
+    mask = _mask_margin(item)
     for pad in _children(item, "pad"):
         _pad(pad, place, angle, ref, own, out)
+        out.pads[-1].mask = -1.0 if not any(l.endswith(".Mask") for l in _layers(pad)) else \
+            next((m for m in (_mask_margin(pad), mask) if m is not None), None)
     for x in item[1:]:
         if not isinstance(x, list):
             continue
@@ -160,6 +171,11 @@ def _footprint(item, out: KicadBoard) -> None:
             _text(x, place, out, x[0], angle, ref)
         elif x[0].startswith("fp_"):
             _drawing(x, place, out, x[0], ref)
+
+
+def _mask_margin(item) -> float | None:
+    node = _child(item, "solder_mask_margin")
+    return float(node[1]) if node and len(node) > 1 and _is_number(node[1]) else None
 
 
 def _local_clearance(item) -> float:
@@ -185,6 +201,21 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
             layers.add(name)
     pad = KicadPad(ref, number, x, y, layers, plated=kind != "np_thru_hole", size=min(size) if size else 0.0,
                    clearance=_local_clearance(item) or own)
+    bared = [MASKED[l] for l in _layers(item) if l in MASKED] or \
+        [c for m, c in MASKED.items() if "*.Mask" in _layers(item) or "F&B.Mask" in _layers(item)]
+    if not layers and bared and len(size) == 2:  # a pad of mask only: copper bared where there is no pad
+        w, h = size
+        shape = (item[3] if len(item) > 3 else "rect")
+        turn = at[2] if len(at) > 2 else 0.0
+        if shape in ("circle",) or (shape == "oval" and abs(w - h) < 1e-9):
+            opening = Point(x, y).buffer(w / 2.0 * AROUND, quad_segs=ARC_STEPS // 4)
+        else:
+            c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+            corner = lambda u, v: (x + u * c + v * s, y + u * s - v * c)
+            opening = Polygon([corner(-w / 2, -h / 2), corner(w / 2, -h / 2), corner(w / 2, h / 2), corner(-w / 2, h / 2)])
+        margin = _mask_margin(item)
+        opening = opening.buffer(margin) if margin else opening
+        out.openings += [(opening, layer, margin is None) for layer in bared]
     if len(item) > 3 and item[3] == "custom":
         pad.outlines = tuple(o for o in (_custom(item, x, y, at[2] if len(at) > 2 else 0.0, size, mirrored) for mirrored in (False, True))
                              if o is not None)
@@ -267,13 +298,19 @@ def _arc(start, mid, end) -> list[tuple[float, float]]:
     return [(ux + r * math.cos(t0 + span * i / ARC_STEPS), uy + r * math.sin(t0 + span * i / ARC_STEPS)) for i in range(ARC_STEPS + 1)]
 
 
+MASKED = {"F.Mask": "F.Cu", "B.Mask": "B.Cu"}  # a solder-mask layer and the copper it covers
+
+
 def _drawing(item, place, out: KicadBoard, kind: str, ref: str = "") -> None:
-    layers = [l for l in _layers(item) if l.endswith(".Cu")]
-    if not layers:
+    names = _layers(item)
+    layers = [l for l in names if l.endswith(".Cu")]
+    bared = [MASKED[l] for l in names if l in MASKED]
+    if not layers and not bared:
         return
     shape = _shape(item, place, kind)
     if shape is None:
         return
+    out.openings += [(shape, layer, False) for layer in bared]
     what = f"a drawing of {ref}" if ref else "a drawing"
     for layer in layers:
         out.copper.append((shape, layer, what))
@@ -423,7 +460,7 @@ def apply(design, kicad: KicadBoard) -> str:
     found: dict[tuple[str, str], list[KicadPad]] = {}
     for pad in kicad.pads:
         found.setdefault((pad.ref, pad.number), []).append(pad)
-    local = narrow = 0
+    local = narrow = masked = 0
     for pad in board.pads:
         ref, _, number = pad.name.split("@")[0].rpartition("-")
         mine = found.get((ref, number))
@@ -435,12 +472,19 @@ def apply(design, kicad: KicadBoard) -> str:
             continue
         need = kp.clearance
         local += kp.clearance > rules.clearance + 1e-9
+        # Foreign copper inside a pad's solder-mask opening is bared beside it: KiCad's "solder mask bridge".
+        opening = kicad.mask if kp.mask is None else kp.mask
+        if opening > rules.clearance - rules.margin + 1e-9:
+            masked += 1
+            need = max(need, opening)
         if kp.drill and kp.plated and hole > (kp.size - kp.drill) / 2.0 + 1e-9:
             narrow += hole - (kp.size - kp.drill) / 2.0 > rules.clearance + 1e-9
             need = max(need, hole - (kp.size - kp.drill) / 2.0)
         pad.clearance = max(pad.clearance, need)
     if local:
         said.append(f"local clearances on {local} pads")
+    if masked:
+        said.append(f"solder-mask openings wider than the clearance on {masked} pads")
     # Holes where no copper of their pad is: on every layer for one without plating, else on the layers it lacks.
     holes = 0
     every = frozenset(range(len(board.layers)))
@@ -455,8 +499,10 @@ def apply(design, kicad: KicadBoard) -> str:
             holes += 1
     kept = [x for x in ("vias" if rules.via_clearance else "", f"{narrow} pads with a narrow ring" if narrow else "",
                         f"{holes} holes" if holes else "") if x]
-    if kept:
+    if kept and hole > 0:
         said.append(f"the hole clearance, {hole:g} mm, kept from " + ", ".join(kept))
+    elif holes:
+        said.append(f"{holes} holes kept clear")
     # Copper that is not a pad: its net is that of the pads it touches; one that joins two nets is a net tie, and left alone.
     pads = [p for p in board.pads]
     tree = shapely.STRtree([p.shape for p in pads]) if pads else None
@@ -473,4 +519,21 @@ def apply(design, kicad: KicadBoard) -> str:
         drawn += 1
     if drawn:
         said.append(f"{drawn} texts and drawings on copper")
+    # Solder mask left open on purpose (drawn on a mask layer, or a pad of mask only): a trace of another net there
+    # would be bared beside what is there (KiCad's "solder mask bridge"). Copper of the one net it already bares may.
+    opened = 0
+    for shape, layer, widened in kicad.openings:
+        i = on(layer)
+        if i is None or shape.is_empty:
+            continue
+        if widened and kicad.mask > 0:
+            shape = shape.buffer(kicad.mask)
+        nets = {pads[j].net_id for j in tree.query(shape, predicate="intersects").tolist() if pads[j].layers is None or i in pads[j].layers} if tree else set()
+        if len(nets) > 1:
+            continue
+        net = next(iter(nets)) if nets else -1
+        board.obstacles.append(Obstacle(shape, net, frozenset({i}), copper=net >= 0))
+        opened += 1
+    if opened:
+        said.append(f"{opened} openings in the solder mask")
     return ", ".join(said)
