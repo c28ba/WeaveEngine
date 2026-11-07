@@ -93,6 +93,32 @@
 - Routing uses a small extra margin (`--margin`, default 0.01 mm) so that nothing sits exactly on a limit; the written SES is read back and measured against the unpadded rules.
 - SES writer emits each wire as a polyline `path` with width. Arcs are approximated by polylines until M8.
 
+### 4.1 What the KiCad board says that its DSN does not (`io/kicad.py`)
+
+Found by the board sweep (2026-11): 44 open-source KiCad boards (KiCad's own demos, HackRF, Solo, Corne, Lily58, Sweep, Olimex, UPduino and others), each exported to DSN, routed, imported back into KiCad, and checked by KiCad's DRC with the zones refilled, against the same board with its traces removed. KiCad's DSN export leaves out or misstates much of what that check holds the board to:
+
+| Lost in the DSN | What happened | Now |
+|---|---|---|
+| Teardrop zones (KiCad 7+) | written as planes like any zone: their net was taken to be poured and left unrouted; boards came out with 0 connections | a plane counts only if it spreads over two of its net's pads and is larger than they are (`dsn.py`) |
+| Rule areas that allow tracks | written as plain keepouts | a keepout whose bounds are a rule area that does not forbid tracks is left out |
+| Local clearances, hole clearance, drill sizes | not written | read per pad from the `.kicad_pcb`; `Pad.clearance`, `Rules.apart` |
+| The board's minimum clearance, via ring and drill, minimum track width | not written | from the `.kicad_pro`; vias are made as large as the minimums ask (the padstack name carries the drill to KiCad's SES import) |
+| Text and drawings on copper | not written | obstacles of their net (or none); text as a box a little larger than KiCad's stroke font draws it (checked to cover all 27 of KiCad's own text boxes on the demo boards) |
+| Holes on layers their pad has no copper on | not written | obstacles there, at the hole clearance |
+| Custom pads | written as the convex hull of their copper | the real outline (anchor and primitives), checked against that hull; joined at the anchor, since a bent pad's centroid is off its copper |
+
+The custom pads were the worst. A reversible Pro Micro footprint (the Sweep keyboards) bends each jumper strip round the next pin's hole; its hull is a solid trapezoid over that hole, and traces and teardrops were routed into copper that is not there. On sweep-bling-mx: 85 of 128 connections, 42 pads unreachable, 21 shorts and 199 dangling teardrop tracks before; 128 of 128, no shorts and no new DRC errors after, in 12.5 s instead of 49. Custom pads are on 16 of the 44 boards.
+
+Placement is verified against pcbnew itself: about 30,000 pads on 44 boards, positions and drills exact. A footprint's rotation turns its pads and drawings (rectangles corner by corner); a custom pad's primitives turn with the pad, whose angle in the file includes its part's, and the mirrored reading is tried as well, the one whose hull is the DSN's being taken.
+
+Without the `.kicad_pcb` beside the DSN none of this is known, and the result can break those rules; the command line and the app say what was read.
+
+**Fine-pitch pins (`router.reach`).** An RP2040 (0.2 mm pins at 0.4 mm pitch) cannot be joined by a 0.25 mm trace at 0.19 mm clearance: a trace joins a pad at its centre, 0.3 mm from the next pin's edge. Designers route such pins by hand with thinner traces. Where a net's pads cannot be reached, it is routed halfway down to the board's minimum track width (`Rules.min_width`: the project's, never below 0.127 mm; not known without a KiCad project, and then nothing is narrowed), else at it, else at it with half the safety margin given up (routed narrower, written at the minimum: `Rules.net_drawn`). Corne at 0.2 mm and 0.01 mm margin needs exactly 0.3 mm, so only the last step reaches it: 119 unreachable pads became 4, and 189 of 309 connections 281, clean in KiCad's DRC; but routing took 950 s instead of 85, the RP2040's fan-out being most of the board. A net routed with part of its margin given up gets no teardrops: there is none to spare. Pins closer than the clearance itself (lily58-pro-v2, tinytapeout) are routed in KiCad under custom `.kicad_dru` rules, which are not read; they stay open and are named.
+
+**Pads that touch.** Pads of one net whose copper meets (front and back of a pin, a custom pad's pieces, a pad drawn twice) are one piece of copper: the spanning tree (section 11) is over the groups they make, and no connection is made inside one. Before, royalblue's connectors asked for a trace from each pin to its own copy. A route may still pass through such a pair as a layer change; the piece between them has no length and is not written.
+
+**Measured.** Routing-caused DRC errors over the 44 boards (errors of a kind the stripped board did not already have): 3,075 before this section's first round (planes, rule areas, local and hole clearances, board minimums, text) and 1,160 after it. The rest were mostly the custom pads, the board edge on the Margin layer (Solo, not read: the margin layer as edge buried pads) and hole clearance on Corne and Lily58.
+
 Internal model: `Board` (outline, layers, rules), `Obstacle` (shapely polygon, net id, layer set), `Net` (list of pad ids). Units are float64 millimetres with a global epsilon of 1e-6.
 
 ---

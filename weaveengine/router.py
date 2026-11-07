@@ -183,7 +183,7 @@ def _layers(board: Board, workers: int | None) -> list[Layer]:
 
 def reach(board: Board, layers: list[Layer], buried: list[int], workers: int | None) -> tuple[Board, list[Layer], dict[int, float]]:
     """Narrower traces for the nets of pads no trace reaches at the net's width
-    (design 11.1): a fine-pitch part whose pins are closer than its class's
+    (design 4.1): a fine-pitch part whose pins are closer than its class's
     width and clearance allow, which a designer routes by hand with thinner
     traces. Such a net is narrowed halfway down to the narrowest trace the
     board's rules allow (``Rules.min_width``; 0, not known: nothing is
