@@ -505,3 +505,42 @@ def test_solder_mask_openings_are_kept_clear_of_other_nets(tmp_path):
     assert pads["R1-2"].clearance == 0.0                  # its own, narrower: the clearance holds
     opened = [o for o in design.board.obstacles if o.shape.contains(Point(2, -1.5))]
     assert opened and opened[0].net_id == -1 and not opened[0].copper and opened[0].layers == frozenset({0})
+
+
+def test_a_net_tie_is_copper_of_no_net_between_its_pads(tmp_path):
+    """Copper joining pads of two nets (a net tie) is of no net to KiCad: every
+    trace keeps clear of it, its pads apart."""
+    dsn = KICAD_STYLE.replace("(pcb demo.dsn", "(pcb tie.dsn")
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (footprint "R_0805" (layer "F.Cu") (at 5 5)
+    (property "Reference" "R1" (at 0 0 0) (layer "F.SilkS"))
+    (net_tie_pad_groups "1, 2")
+    (fp_poly (pts (xy -0.9 -0.1) (xy 0.9 -0.1) (xy 0.9 0.1) (xy -0.9 0.1)) (stroke (width 0)) (fill yes) (layer "F.Cu")))
+)
+"""
+    (tmp_path / "tie.dsn").write_text(dsn, encoding="utf-8")
+    (tmp_path / "tie.kicad_pcb").write_text(pcb, encoding="utf-8")
+    design = read_dsn(str(tmp_path / "tie.dsn"))
+    ties = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(5, -5))]
+    assert ties and ties[0].net_id == -1
+    assert all(ties[0].shape.intersection(p.shape).area < 1e-9 for p in design.board.pads)
+
+
+def test_a_zone_whose_fill_has_rounded_corners(tmp_path):
+    """The fill of a zone smoothed with a fillet does not reach the corners of
+    its outline, which is all a DSN gives."""
+    from weaveengine.io.kicad import read_kicad
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (zone (net 1) (net_name "GND") (layer "F.Cu") (min_thickness 0.25)
+    (fill yes (smoothing fillet) (radius 2))
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+  (zone (net 1) (net_name "GND") (layer "B.Cu") (fill yes)
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+)
+"""
+    (tmp_path / "zone.kicad_pcb").write_text(pcb, encoding="utf-8")
+    rounded = read_kicad(str(tmp_path / "zone.kicad_pcb")).rounded
+    assert [(name, layer, radius) for name, layer, _, radius in rounded] == [("GND", "F.Cu", 2.0)]
+    assert rounded[0][2].contains(Point(0.5, -0.5))

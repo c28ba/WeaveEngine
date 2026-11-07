@@ -61,6 +61,8 @@ class KicadBoard:
     margin: list = field(default_factory=list)                        # drawings on the Margin layer (lines, as drawn)
     openings: list[tuple] = field(default_factory=list)               # (shape, canonical copper layer, how far the board's
                                                                       # margin widens it): solder mask left open on purpose
+    rounded: list[tuple] = field(default_factory=list)                # (net name, canonical copper layer, outline, radius):
+                                                                      # zones whose fill has its corners rounded
 
 
 def project_rules(path: str) -> dict[str, float]:
@@ -112,6 +114,23 @@ def read_kicad(dsn_path: str) -> KicadBoard | None:
         elif kind.startswith("gr_"):
             _drawing(item, _place(0.0, 0.0, 0.0), out, kind)
     return out
+
+
+def _zone(item, out: KicadBoard) -> None:
+    """A copper zone whose fill has its corners rounded or cut (``smoothing``): the
+    DSN gives only its outline, which reaches further into each corner."""
+    fill = _child(item, "fill")
+    smoothing, radius = _child(fill, "smoothing") if fill else None, _child(fill, "radius") if fill else None
+    if not smoothing or len(smoothing) < 2 or smoothing[1] == "none" or not radius or not _is_number(radius[1]) or float(radius[1]) <= 0:
+        return
+    net = _child(item, "net_name") or _child(item, "net")
+    name = net[1] if net and len(net) > 1 and isinstance(net[1], str) and not _is_number(net[1]) else ""
+    for polygon in _children(item, "polygon"):
+        pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+        if len(pts) >= 3:
+            for layer in _layers(item):
+                if layer.endswith(".Cu"):
+                    out.rounded.append((name, layer, Polygon(pts).buffer(0), float(radius[1])))
 
 
 # -- the s-expression ----------------------------------------------------------
@@ -406,6 +425,7 @@ def _text(item, place, out: KicadBoard, kind: str, fp_angle: float = 0.0, ref: s
 def _rule_area(item, out: KicadBoard) -> None:
     keepout = _child(item, "keepout")
     if keepout is None:
+        _zone(item, out)
         return  # a copper zone, not a rule area
     if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
         return  # it does keep traces out
@@ -510,7 +530,8 @@ def apply(design, kicad: KicadBoard) -> str:
         said.append(f"the hole clearance, {hole:g} mm, kept from " + ", ".join(kept))
     elif holes:
         said.append(f"{holes} holes kept clear")
-    # Copper that is not a pad: its net is that of the pads it touches; one that joins two nets is a net tie, and left alone.
+    # Copper that is not a pad: its net is that of the pads it touches. One that joins two nets is a net tie, of no
+    # net to KiCad: every trace keeps clear of the part of it outside those pads.
     pads = [p for p in board.pads]
     tree = shapely.STRtree([p.shape for p in pads]) if pads else None
     drawn = 0
@@ -518,10 +539,13 @@ def apply(design, kicad: KicadBoard) -> str:
         i = on(layer)
         if i is None:
             continue
-        nets = {pads[j].net_id for j in tree.query(shape, predicate="intersects").tolist() if pads[j].layers is None or i in pads[j].layers} if tree else set()
+        touched = [pads[j] for j in tree.query(shape, predicate="intersects").tolist() if pads[j].layers is None or i in pads[j].layers] if tree else []
+        nets = {p.net_id for p in touched}
         if len(nets) > 1:
-            continue
-        net = next(iter(nets)) if nets else -1
+            shape = shape.difference(shapely.union_all([p.shape for p in touched]))
+            if shape.is_empty:
+                continue
+        net = next(iter(nets)) if len(nets) == 1 else -1
         board.obstacles.append(Obstacle(shape, net, frozenset({i}), copper=True))
         drawn += 1
     if drawn:
@@ -544,4 +568,12 @@ def apply(design, kicad: KicadBoard) -> str:
     if opened:
         said.append(f"{opened} openings in the solder mask")
     board.margin = list(kicad.margin)
+    # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
+    for k, (net, at, shape) in enumerate(board.pours):
+        for name, layer, outline, radius in kicad.rounded:
+            if on(layer) == at and design.net_ids.get(name) == net and outline.symmetric_difference(shape).area < 0.01 * shape.area:
+                smooth = shape.buffer(-radius).buffer(radius)
+                if smooth.area > 0.9 * shape.area:  # (KiCad rounds a corner less where its sides are short: those are left)
+                    board.pours[k] = (net, at, smooth)
+                break
     return ", ".join(said)

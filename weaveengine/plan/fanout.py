@@ -26,6 +26,7 @@ STEP = 0.1         # mm between the places tried along a ray
 SHARE = 1.0        # mm: a via of the net this near the pad is joined to instead of a new one
 GAP = 0.05         # mm between a pad and its via
 HOLES = 0.25       # mm a via keeps from a through-hole pad of its own net (drill to drill: KiCad's default minimum)
+FILL = 0.25        # mm: a pour's fill is not narrower than this (KiCad's default zone minimum width)
 
 
 def covered(board: Board, pad: Pad) -> bool:
@@ -68,9 +69,24 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     through = {p.shape for p in board.pads if not p.is_via and (p.layers is None or len(p.layers) == nlayers > 1)}
     trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
     widest = max([keep, rules.clearance] + [t[2] for ts in things for t in ts])
-    pours: dict[int, list] = {}  # net -> (layer, outline drawn in by a via's radius)
+    def filled(shape, net: int, layer: int):
+        """Roughly where KiCad's fill of a pour of ``net`` will be: its outline, held off the board edge and
+        foreign copper, without the parts narrower than a fill's minimum width."""
+        tree = trees[layer]
+        near = [things[layer][i] for i in tree.query(shape, predicate="dwithin", distance=widest).tolist()] if tree else []
+        held = [s.buffer(asks if other != -2 else 0.0, quad_segs=4) for s, other, asks in near if other != net]
+        fill = shape.intersection(board.outline.buffer(-edge))
+        if held:
+            fill = fill.difference(shapely.union_all(held))
+        return fill.buffer(-FILL / 2.0).buffer(FILL / 2.0)
+
+    # net -> (layer, its fill, for a trace that ends in it; its outline drawn in by a via's radius, for a via: the
+    # fill flows round a via of its net, wherever there is room for the via among foreign copper)
+    pours: dict[int, list] = {}
+    wanted = {p.net_id for p in lonely}
     for net, at, shape in board.pours:
-        pours.setdefault(net, []).append((at, shape, shape.buffer(-r)))
+        if net in wanted:
+            pours.setdefault(net, []).append((at, filled(shape, net, at), shape.buffer(-r)))
 
     def clear(shape, net: int, layer: int, need: float, drilled: bool = False) -> bool:
         """Whether ``shape`` (copper of ``net``) keeps ``need`` from everything foreign on ``layer``,

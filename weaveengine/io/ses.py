@@ -6,6 +6,7 @@ from weaveengine.realize.teardrop import tip_of
 
 
 TEARDROP_OVERLAP = 0.75  # spacing of the fill lines at the pad, in trace widths (below 1 so they overlap)
+SHORTEST = 0.01          # mm: a fill line shorter than this adds no copper, and KiCad calls its end unconnected
 
 
 def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, float], tuple[float, float]]]:
@@ -54,16 +55,27 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
     # its round end reaches that edge and no further. (Ending on the edge would
     # push the round end past a pad's corner, into the clearance of whatever is
     # beyond it.) The slivers this leaves between round ends are over the pad.
+    # Where the sides slant, that edge (moved in with them) can lie outside the
+    # pad: such a line is carried on until its round end is half its own
+    # radius across the chord t1 t2 itself, which is on the pad (KiCad calls a
+    # trace that stops short of the pad unconnected).
     out = []
     for i in order:
         (sx, sy), (ex, ey) = starts[i], ends[i]
         dx, dy = ex - sx, ey - sy
         length = math.hypot(dx, dy)
-        if length <= half + 1e-6:
+        if length <= half + SHORTEST:
             continue
-        f = (length - half) / length
+        reach = length - half
+        across = (t2[0] - t1[0]) * dy - (t2[1] - t1[1]) * dx
+        if abs(across) > 1e-12:
+            chord = ((t2[0] - t1[0]) * (t1[1] - sy) - (t2[1] - t1[1]) * (t1[0] - sx)) / across * length  # along the line, to the chord
+            reach = max(reach, chord - half / 2.0)
+        f = reach / length
         out.append((track_width, (sx, sy), (sx + dx * f, sy + dy * f)))
-    return out
+    # A line alone starts partway along its track, where KiCad sees no end of
+    # anything to join it to, and calls it unconnected; it adds little copper.
+    return out if len(out) > 1 else []
 
 
 def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None:

@@ -601,6 +601,18 @@ def flip(pmap: PlanarMap, state: TopoState, e: int) -> bool:
     wires = set(new_row) | set(along)
     for edge in (e_bp, e_qb, e_pd, e_dq):
         wires.update(order[edge])
+    home = {e_bp: t1, e_pd: t1, e_dq: t2, e_qb: t2}
+    for w in wires:  # a wire that starts or ends inside the quadrilateral cannot be carried over: not flipped
+        steps, m = state.wire_path[w], 0
+        while m < len(steps):
+            if steps[m][1] in (t1, t2):
+                if m == 0 or steps[m - 1][0] not in home:
+                    return False
+                while m + 1 < len(steps) and steps[m + 1][1] in (t1, t2) and steps[m][0] == e:
+                    m += 1
+                if steps[m][0] not in home:
+                    return False
+            m += 1
 
     notes = state.__dict__.get("_journal")
     if notes is not None:
@@ -611,7 +623,6 @@ def flip(pmap: PlanarMap, state: TopoState, e: int) -> bool:
     _flip_map(pmap, quad)
 
     tri_v = {t1: (b, p, d), t2: (b, d, q)}
-    home = {e_bp: t1, e_pd: t1, e_dq: t2, e_qb: t2}
     row = new_row if b < d else new_row[::-1]
     for w in wires:
         steps, out, m = state.wire_path[w], [], 0
