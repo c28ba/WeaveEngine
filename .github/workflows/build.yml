@@ -1,5 +1,5 @@
 # Tests WeaveEngine and builds the desktop app on macOS, Windows and Linux.
-# Runs on every push (branches and version tags such as v1.0.0) and by hand
+# Runs on every push to a branch, on version tags such as v1.0.0, and by hand
 # (Actions tab, "Run workflow"). Each build is uploaded as an artifact of the run.
 # For a version tag, once all three have built, a draft GitHub Release is made
 # with the three attached: nothing is public until it is published by hand.
@@ -7,6 +7,8 @@ name: build
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
