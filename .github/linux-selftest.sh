@@ -20,5 +20,10 @@ timeout -k 10 600 xvfb-run -a dist/WeaveEngine/WeaveEngine --self-test "boards/W
   --ses "selftest/linux-$version.ses" --screenshot "selftest/linux-$version.png" > "$log" 2>&1
 status=$?
 cat "$log"
-[ $status -eq 124 ] && echo "the self-test did not finish in 10 minutes"
+if [ $status -ne 0 ]; then
+  why="ended with $status"
+  [ $status -eq 124 ] && why="did not finish in 10 minutes"
+  # (an annotation, readable without signing in: the end of what the app printed)
+  echo "::error title=Linux self-test on Ubuntu $version $why::$(tail -c 3000 "$log" | sed -e 's/%/%25/g' | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/%0A/g')"
+fi
 exit $status
