@@ -14,14 +14,14 @@ def test_settings_round_trip_and_bad_files(tmp_path):
     custom = Settings(workers=3, margin=0.02, teardrops=False, heuristic_weight=1.5, ignore_keepouts=True)
     custom.save(path)
     assert Settings.load(path) == custom
-    data = json.load(open(path))
+    data = json.load(open(path, encoding="utf-8"))
     assert data["workers"] == 3 and data["teardrops"] is False
     # hand-edited: unknown keys ignored, bad values keep their defaults, the rest is read
     data.update({"no_such_setting": 1, "margin": "not a number", "seed": 7})
-    json.dump(data, open(path, "w"))
+    json.dump(data, open(path, "w", encoding="utf-8"))
     loaded = Settings.load(path)
     assert loaded.seed == 7 and loaded.margin == Settings().margin
-    open(path, "w").write("{ this is not json")
+    open(path, "w", encoding="utf-8").write("{ this is not json")
     assert Settings.load(path) == Settings()
     assert default_path().endswith("settings.json")
     # every setting has a label and a description for the editor
@@ -83,7 +83,7 @@ def test_job_can_be_cancelled(tmp_path):
 
 def test_job_reports_a_bad_file_instead_of_dying(tmp_path):
     path = tmp_path / "bad.dsn"
-    path.write_text("(pcb broken (structure))")
+    path.write_text("(pcb broken (structure))", encoding="utf-8")
     job = Job(str(path))
     job.start()
     last = job.wait(60)

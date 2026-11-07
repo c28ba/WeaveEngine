@@ -36,7 +36,7 @@ jobs:
           set +e   # (steps run with -e: the status is wanted, not an exit)
           python -m pytest -q -rfE --tb=short > pytest.txt 2>&1; status=$?
           tail -n 60 pytest.txt
-          if [ $status -ne 0 ]; then python .github/annotate.py pytest.txt; fi
+          if [ $status -ne 0 ]; then PYTHONIOENCODING=utf-8 python .github/annotate.py pytest.txt; fi
           exit $status
       - name: Route a board from the command line
         run: python -m weaveengine.cli "boards/Word of RAM.dsn" -o word.ses --quiet

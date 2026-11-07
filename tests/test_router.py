@@ -415,7 +415,7 @@ def test_word_of_ram_board(tmp_path):
 
     out = str(tmp_path / "ram.ses")
     write_ses(design, result, out, teardrops=False)
-    session = parse_sexpr(open(out).read())
+    session = parse_sexpr(open(out, encoding="utf-8").read())
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
     wires = [w[1] for n in nets for w in n[2:] if w[0] == "wire"]

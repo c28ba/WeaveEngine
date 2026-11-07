@@ -3,6 +3,7 @@ import pytest
 from bench.generators import channel
 from weaveengine.cli import main
 from weaveengine.io.dsn import parse_sexpr, read_dsn, write_dsn
+from weaveengine.plan.context import Options
 
 KICAD_STYLE = """(pcb demo.dsn
   (parser (string_quote ") (space_in_quoted_tokens on) (host_cad "KiCad's Pcbnew"))
@@ -42,7 +43,7 @@ def test_sexpr_reader():
 
 def test_read_kicad_style_dsn(tmp_path):
     path = tmp_path / "demo.dsn"
-    path.write_text(KICAD_STYLE)
+    path.write_text(KICAD_STYLE, encoding="utf-8")
     design = read_dsn(str(path))
     board = design.board
     assert board.layers == ["F.Cu", "B.Cu"]
@@ -89,7 +90,7 @@ def test_cli_writes_ses_and_svg(tmp_path, capsys):
     write_dsn(channel(4, seed=1), dsn)
     assert main([dsn, "-o", ses, "--svg", svg]) == 0
     assert "4/4 connections routed" in capsys.readouterr().out
-    session = parse_sexpr(open(ses).read())
+    session = parse_sexpr(open(ses, encoding="utf-8").read())
     assert session[0] == "session"
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
@@ -98,7 +99,21 @@ def test_cli_writes_ses_and_svg(tmp_path, capsys):
         path = net[2][1]
         assert path[0] == "path" and path[1] == "F.Cu" and int(path[2]) == 2000  # 0.2 mm at 0.1 um
         assert len(path[3:]) % 2 == 0 and all(float(v) == int(v) for v in path[3:])
-    assert "<svg" in open(svg).read()
+    assert "<svg" in open(svg, encoding="utf-8").read()
+
+
+def test_a_net_name_beyond_ascii_comes_back_as_written(tmp_path):
+    """KiCad writes UTF-8 (net names like "I_5µA" or "Ω_SENSE" are common). Read
+    and written as UTF-8 whatever the platform's own encoding (cp1252 on
+    Windows), the name reaches the SES as it was."""
+    from weaveengine.io.ses import write_ses
+    from weaveengine.router import route_board
+    path, ses = tmp_path / "b.dsn", tmp_path / "b.ses"
+    path.write_text(KICAD_STYLE.replace('"Net-(R1-Pad2)"', '"I_5µA→Ω"'), encoding="utf-8")
+    design = read_dsn(str(path))
+    assert "I_5µA→Ω" in design.net_ids
+    write_ses(design, route_board(design.board, options=Options(portfolio=1), workers=1), str(ses))
+    assert "I_5µA→Ω" in ses.read_text(encoding="utf-8")
 
 
 def test_joined_quoted_pin_references():
@@ -114,7 +129,7 @@ def test_net_class_widths_and_typed_clearance(tmp_path):
     text = text.replace('(rule (width 250) (clearance 200.1)))\n  )\n    (class Power', '(rule (width 250) (clearance 200.1)))\n    (class Power').replace(
         '(clearance 200.1)))\n  (wiring)', '(clearance 200.1)))\n  )\n  (wiring)')
     path = tmp_path / "classes.dsn"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     design = read_dsn(str(path))
     rules = design.board.rules
     gnd = design.net_ids["GND"]
@@ -153,7 +168,7 @@ def test_session_names_are_quoted(tmp_path):
     dsn, ses = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
     write_dsn(channel(4, seed=1), dsn)
     main([dsn, "-o", ses])
-    text = open(ses).read()
+    text = open(ses, encoding="utf-8").read()
     assert '(net "N0"' in text
     # No components are listed (nothing is ever moved), so the CAD tool has no reference to resolve.
     assert "(placement" in text and "(component" not in text and "(place " not in text
@@ -167,7 +182,7 @@ def test_session_names_are_quoted(tmp_path):
 def test_kicad_project_rules(tmp_path):
     from weaveengine.io.check import kicad_project_rules
     pro = tmp_path / "b.kicad_pro"
-    pro.write_text('{"board": {"design_settings": {"rules": {"min_copper_edge_clearance": 0.5, "min_hole_clearance": 0.25}}}}')
+    pro.write_text('{"board": {"design_settings": {"rules": {"min_copper_edge_clearance": 0.5, "min_hole_clearance": 0.25}}}}', encoding="utf-8")
     assert kicad_project_rules(str(pro)) == {"edge_clearance": 0.5, "hole_clearance": 0.25, "min_clearance": 0.0, "min_track_width": 0.0}
     dsn, ses = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
     write_dsn(channel(4, seed=1), dsn)  # the project file next to the DSN is picked up
@@ -181,7 +196,7 @@ def test_components_outlines_and_values_are_read(tmp_path):
     text = KICAD_STYLE.replace(
         "(image R_0805 (pin", "(image R_0805 (outline (path signal 100 -1000 -500 1000 -500)) (outline (rect signal -1000 -500 1000 500)) (pin")
     path = tmp_path / "parts.dsn"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     board = read_dsn(str(path)).board
     parts = {c.reference: c for c in board.components}
     assert set(parts) == {"R1", "R2", "TP1"}
@@ -213,7 +228,7 @@ def test_missing_rules_take_defaults(tmp_path):
     """A DSN need not carry rules (design section 4); each missing value is defaulted on its own and reported."""
     def load(text):
         path = tmp_path / "board.dsn"
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         return read_dsn(str(path))
 
     # KICAD_STYLE names a via padstack its library does not define: the via size is defaulted.
@@ -248,7 +263,7 @@ def test_cli_routes_a_dsn_without_rules(tmp_path, capsys):
     from tests.conftest import demo_board
     dsn = tmp_path / "bare.dsn"
     write_dsn(demo_board(), str(dsn))
-    dsn.write_text(_without(dsn.read_text(), "rule"))
+    dsn.write_text(_without(dsn.read_text(encoding="utf-8"), "rule"))
     assert main([str(dsn), "--quiet", "--workers", "1"]) == 0
     out = capsys.readouterr().out
     assert "not in the DSN, defaults used: trace width 0.2 mm, clearance 0.2 mm" in out and "-> OK" in out
@@ -283,7 +298,7 @@ def test_cutouts_holes_and_round_paths(tmp_path):
     layer, and a round pad as an oval of equal sides (a path of no length)."""
     from shapely.geometry import Point
     path = tmp_path / "cut.dsn"
-    path.write_text(KICAD_CUTOUT)
+    path.write_text(KICAD_CUTOUT, encoding="utf-8")
     board = read_dsn(str(path)).board
     assert len(board.outline.interiors) == 1 and abs(board.outline.area - (600 - 16)) < 1e-6   # board edge, not a keepout
     holes = sorted((round(o.shape.centroid.x, 3), round(o.shape.centroid.y, 3), sorted(o.layers)) for o in board.obstacles)
@@ -301,7 +316,7 @@ def test_rules_the_board_gives_and_does_not(tmp_path):
     import json
     from weaveengine.settings import Settings, detected_rules, undetected
     path = tmp_path / "demo.dsn"
-    path.write_text(KICAD_STYLE.replace("(rule (width 250) (clearance 200.1) (clearance 50 (type smd_smd)))", ""))
+    path.write_text(KICAD_STYLE.replace("(rule (width 250) (clearance 200.1) (clearance 50 (type smd_smd)))", ""), encoding="utf-8")
     design = read_dsn(str(path))
     found = detected_rules(design, str(path))
     assert found["trace_width"] == (0.25, "from the DSN")   # from the net class
@@ -309,7 +324,7 @@ def test_rules_the_board_gives_and_does_not(tmp_path):
     # (its via padstack is not in the library, so the via is not given either)
     assert [line.split(" not detected")[0] for line in undetected(found)] == ["via diameter", "via drill", "copper to board edge clearance"]
     assert undetected(found, Settings(edge_clearance=0.4, via_diameter=0.6, via_drill=0.3)) == []   # set by hand: nothing to warn about
-    (tmp_path / "demo.kicad_pro").write_text(json.dumps({"board": {"design_settings": {"rules": {"min_copper_edge_clearance": 0.5}}}}))
+    (tmp_path / "demo.kicad_pro").write_text(json.dumps({"board": {"design_settings": {"rules": {"min_copper_edge_clearance": 0.5}}}}), encoding="utf-8")
     found = detected_rules(design, str(path))
     assert found["edge_clearance"] == (0.5, "from demo.kicad_pro")
     assert Settings().apply_rules(read_dsn(str(path)), str(path))[1] == 0.5

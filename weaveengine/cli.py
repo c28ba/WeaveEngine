@@ -3,7 +3,7 @@ import argparse
 import os
 import sys
 
-from weaveengine import accel
+from weaveengine import accel, safe_output
 from weaveengine.io.check import kicad_project_rules, measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--quiet", action="store_true", help="no progress bar")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
+    safe_output()
 
     status = accel.check()
     print(status.warning if status.warning else status.message + (f" [{status.seconds:.0f} s to compile]" if status.seconds > 3 else ""),

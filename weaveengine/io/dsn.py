@@ -123,7 +123,7 @@ def read_dsn(path: str, layers: list[str] | None = None) -> Design:
 
 
 def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
-    with open(path) as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         root = parse_sexpr(f.read())
     if root[0].lower() != "pcb":
         raise ValueError("not a Specctra DSN file")
@@ -395,5 +395,5 @@ def write_dsn(board: Board, path: str, name: str = "board", layer: str = "F.Cu")
         net_name = board.net_names.get(net_id, f"N{net_id}")
         out.append(f'    (net "{net_name}" (pins ' + " ".join(f"P{p}-1" for p in pads) + "))")
     out += ["  )", "  (wiring)", ")"]
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(out) + "\n")

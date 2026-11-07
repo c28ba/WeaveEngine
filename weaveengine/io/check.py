@@ -37,7 +37,7 @@ class Measured:
 
 def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[float, float]]]], list[tuple[str, float, float]]]:
     """(wires, vias) of a SES file in mm: wires are (net, layer, width, points), vias (net, x, y)."""
-    root = parse_sexpr(open(path).read())
+    root = parse_sexpr(open(path, encoding="utf-8").read())
     routes = _child(root, "routes")
     res = _child(routes, "resolution")
     scale = UNIT_MM[res[1].lower()] / float(res[2])
@@ -105,7 +105,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
 
 def kicad_project_rules(path: str) -> dict[str, float]:
     """Board-level minimums from a .kicad_pro file that a DSN does not carry."""
-    rules = json.load(open(path))["board"]["design_settings"]["rules"]
+    rules = json.load(open(path, encoding="utf-8"))["board"]["design_settings"]["rules"]
     return {"edge_clearance": float(rules.get("min_copper_edge_clearance", 0.0)),
             "hole_clearance": float(rules.get("min_hole_clearance", 0.0)),
             "min_clearance": float(rules.get("min_clearance", 0.0)),

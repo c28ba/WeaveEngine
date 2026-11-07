@@ -128,5 +128,5 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None
             out.append(f"        (via {q(via_name)} {n(x)} {n(y)})")
         out.append("      )")
     out += ["    )", "  )", ")"]
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(out) + "\n")

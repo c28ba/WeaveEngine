@@ -86,7 +86,7 @@ class Timings:
 
     def _read(self) -> dict:
         try:
-            with open(self.path) as f:
+            with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             return data if isinstance(data, dict) else {}
         except (OSError, ValueError):
@@ -101,7 +101,7 @@ class Timings:
         data.pop(key, None)
         data[key] = round(seconds, 2)
         try:
-            with open(self.path, "w") as f:
+            with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(dict(list(data.items())[-200:]), f, indent=0)  # the most recent 200
         except OSError:
             pass  # nowhere to write: the next run is estimated like a first one

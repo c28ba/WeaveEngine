@@ -61,7 +61,7 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
         x, y = xy(v.at)
         out.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="7" fill="none" stroke="#ff00ff" stroke-width="2"><title>{v.kind} {v.wires}</title></circle>')
     out.append("</svg>")
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 
 

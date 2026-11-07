@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
+from weaveengine import safe_output
 from weaveengine import accel
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
@@ -1352,6 +1353,7 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
+    safe_output()
     if "--self-test" in argv:
         i = argv.index("--self-test")
         get = lambda flag: argv[argv.index(flag) + 1] if flag in argv else None
