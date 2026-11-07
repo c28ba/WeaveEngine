@@ -58,8 +58,11 @@ Settings are kept in `settings.json` next to the application.
 weaveengine board.dsn [-o board.ses] [--svg board.svg] [--kicad-pro board.kicad_pro]
 ```
 
-`weaveengine --help` lists every option. After routing, the command line also
-measures the written SES against the rules and says whether it is clean.
+`weaveengine --help` lists every option, and `weaveengine --version` prints the
+version. After routing, the command line also measures the written SES against
+the rules and says whether it is clean. Pads no trace can reach are named, each
+with the reason: outside the board, over the edge clearance, in a keepout, or
+too close to other copper.
 
 ## Known limitations
 
