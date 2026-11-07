@@ -163,8 +163,8 @@ class Settings:
         notes += [f"WARNING: {text}" for text in undetected(found, self)]
         if design.dropped_wiring:
             notes.append(design.dropped_wiring)
-        if design.open_keepouts:
-            notes.append(design.open_keepouts)
+        if design.kicad:
+            notes.append(design.kicad)
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
         elif found["edge_clearance"][0] is not None:
@@ -178,6 +178,7 @@ class Settings:
         want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
         rules.clearance = want_clearance + self.margin
         rules.edge_clearance = want_edge + self.margin
+        rules.margin = self.margin
         return want_clearance, want_edge, notes
 
 

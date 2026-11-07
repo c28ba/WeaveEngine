@@ -60,8 +60,9 @@ class Site:
 def keep_off(rules: Rules) -> float:
     """Distance a foreign base-width centreline keeps from a vertex of an active
     site: via copper (as the polygon it is checked as), clearance, half a trace,
-    and the hole's own radius, since the vertices are not at the centre."""
-    return rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + rules.clearance + rules.base_width / 2.0 + SITE_RADIUS
+    and the hole's own radius, since the vertices are not at the centre. (The
+    clearance is the via's own where it asks more: ``Rules.via_clearance``.)"""
+    return rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + rules.apart(rules.via_clearance) + rules.base_width / 2.0 + SITE_RADIUS
 
 
 def room(pmap: PlanarMap, t: int, point: tuple[float, float]) -> float:
@@ -1087,6 +1088,9 @@ def keep_at(pmap: PlanarMap) -> dict[int, tuple[float, int]]:
 
 def via_pads(pmap: PlanarMap, rules: Rules) -> list[Pad]:
     """The active sites as via pads, for the design-rule check and for output."""
-    return [Pad.circle(site.pad, site.centre[0], site.centre[1], rules.via_diameter / 2.0, site.net,
+    pads = [Pad.circle(site.pad, site.centre[0], site.centre[1], rules.via_diameter / 2.0, site.net,
                        name=f"via{site.pad}", is_via=True)
             for site in pmap.sites.values() if site.active]
+    for pad in pads:
+        pad.clearance = rules.via_clearance
+    return pads

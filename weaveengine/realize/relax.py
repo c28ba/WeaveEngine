@@ -419,7 +419,7 @@ def _merge_pressed_ends(result, pressed, pmap, wire_net, half, board) -> None:
             continue
         # ... and clear of the vias, which are not part of the free space.
         need = rules.clearance + rules.width(wire_net[w]) / 2.0
-        ok = all(p.net_id == wire_net[w] or seg.distance(p.shape) >= need for p in vias)
+        ok = all(p.net_id == wire_net[w] or seg.distance(p.shape) >= need + rules.apart(p.clearance) - rules.clearance for p in vias)
         for j in tree.query(seg, predicate="dwithin", distance=rules.pitch + 2 * max(half.values(), default=0.0) + 1e-3).tolist():
             other = ids[j]
             if other != w and wire_net[other] != wire_net[w]:

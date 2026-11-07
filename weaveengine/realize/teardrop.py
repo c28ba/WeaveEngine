@@ -123,7 +123,10 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     roomy = board.rules.clearance * max(1.0, breathing)
     rules = board.rules
     pads = {p.pad_id: p for p in board.pads_on(layer)}
-    copper = [(p.shape, p.net_id) for p in pads.values()] + [(o.shape, o.net_id) for o in board.obstacles_on(layer)]
+    # (with what each asks beyond the rule's clearance: ``Rules.apart``)
+    copper = [(p.shape, p.net_id, rules.apart(p.clearance) - rules.clearance) for p in pads.values()]
+    copper += [(o.shape, o.net_id, rules.apart(o.clearance) - rules.clearance) for o in board.obstacles_on(layer)]
+    beyond = max((c[2] for c in copper), default=0.0)
     ids = list(polylines)
     lines = [LineString(polylines[w]) for w in ids]
     tree_c = shapely.STRtree([c[0] for c in copper]) if copper else None
@@ -165,7 +168,8 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                 added = added.difference(pad.shape)
             if added.is_empty:
                 return False
-            if tree_c is not None and any(copper[c][1] != net for c in tree_c.query(added, predicate="dwithin", distance=room - 1e-6).tolist()):
+            if tree_c is not None and any(copper[c][1] != net and added.distance(copper[c][0]) < room + copper[c][2] - 1e-6
+                                          for c in tree_c.query(added, predicate="dwithin", distance=room + beyond - 1e-6).tolist()):
                 return False
             for j in tree_w.query(added, predicate="dwithin", distance=room + max(rules.net_width.values(), default=rules.trace_width)).tolist():
                 if wire_net[ids[j]] != net and added.distance(lines[j]) < room + rules.width(wire_net[ids[j]]) / 2.0 - 1e-6:

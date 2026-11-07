@@ -33,9 +33,10 @@ def preprocess(board: Board, layer: int = 0, max_segment: float = 2.0) -> FreeSp
     rules = board.rules
     delta = rules.inflation
 
-    inflated_pads = {p.pad_id: _inflate(p.shape, delta) for p in board.pads_on(layer)}
+    # (An item that asks more than the rule's clearance of foreign copper is inflated by that much more.)
+    inflated_pads = {p.pad_id: _inflate(p.shape, delta + rules.apart(p.clearance) - rules.clearance) for p in board.pads_on(layer)}
     inflated = list(inflated_pads.values())
-    inflated += [_inflate(o.shape, delta) for o in board.obstacles_on(layer)]
+    inflated += [_inflate(o.shape, delta + rules.apart(o.clearance) - rules.clearance) for o in board.obstacles_on(layer)]
 
     region = board.outline.buffer(-rules.outline_inset, join_style="mitre")
     free = region.difference(unary_union(inflated)) if inflated else region

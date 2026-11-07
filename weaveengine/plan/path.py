@@ -86,7 +86,8 @@ class Legal:
 
     def __init__(self, ctx):
         rules = ctx.board.rules
-        margin = rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) - rules.base_width / 2.0 + 0.01
+        # (A via that asks more than the rule's clearance of fixed copper keeps that much more off it.)
+        margin = rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) - rules.base_width / 2.0 + 0.01 + rules.apart(rules.via_clearance) - rules.clearance
         self.regions = []
         for layer in ctx.layers:
             region = layer.pmap.free_space.free.buffer(-margin)

@@ -23,8 +23,8 @@ def exit_windows(board: Board, layer: int, pmap) -> tuple[dict[int, tuple[float,
     no stub is legal. Edges not mentioned are legal along their whole length."""
     rules = board.rules
     pads = {p.pad_id: p for p in board.pads_on(layer)}
-    copper = [(p.shape, p.net_id, p.pad_id) for p in pads.values()]
-    copper += [(o.shape, o.net_id, -1) for o in board.obstacles_on(layer)]
+    copper = [(p.shape, p.net_id, p.pad_id, rules.apart(p.clearance) - rules.clearance) for p in pads.values()]
+    copper += [(o.shape, o.net_id, -1, rules.apart(o.clearance) - rules.clearance) for o in board.obstacles_on(layer)]
     edges = [e for e, kind in enumerate(pmap.edge_kind_list) if kind == 2 and pmap.edge_owner_list[e] in pads]
     if not edges or not copper:
         return {}, []
@@ -41,15 +41,15 @@ def exit_windows(board: Board, layer: int, pmap) -> tuple[dict[int, tuple[float,
     lines = shapely.linestrings(np.array(stubs))
     legal = np.ones(len(lines), dtype=bool)
     reach = np.repeat(need, SAMPLES)
-    li, ci = tree.query(lines, predicate="dwithin", distance=float(max(need)))
+    li, ci = tree.query(lines, predicate="dwithin", distance=float(max(need)) + max(c[3] for c in copper))
     for i, c in zip(li.tolist(), ci.tolist()):
         if not legal[i]:
             continue
         pad = pads[pmap.edge_owner_list[edges[i // SAMPLES]]]
-        shape, net, pad_id = copper[c]
+        shape, net, pad_id, more = copper[c]
         if pad_id == pad.pad_id or (net >= 0 and net == pad.net_id):
             continue
-        if lines[i].distance(shape) < reach[i] - SLACK:
+        if lines[i].distance(shape) < reach[i] + more - SLACK:
             legal[i] = False
     windows: dict[int, tuple[float, float]] = {}
     dead: list[int] = []

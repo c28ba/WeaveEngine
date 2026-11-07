@@ -32,15 +32,16 @@ def check(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_ne
     edge = rules.outline_inset - rules.base_width / 2.0
 
     # Trace centreline to foreign copper and keepouts: at least s + t/2.
-    copper = [(p.shape, p.net_id) for p in board.pads_on(layer)] + [(o.shape, o.net_id) for o in board.obstacles_on(layer)]
+    copper = [(p.shape, p.net_id, rules.apart(p.clearance)) for p in board.pads_on(layer)]
+    copper += [(o.shape, o.net_id, rules.apart(o.clearance)) for o in board.obstacles_on(layer)]
     if copper:
         tree = shapely.STRtree([c[0] for c in copper])
-        li, ci = tree.query(lines, predicate="dwithin", distance=rules.clearance + widest - TOL)
+        li, ci = tree.query(lines, predicate="dwithin", distance=max(c[2] for c in copper) + widest - TOL)
         for i, c in zip(li.tolist(), ci.tolist()):
             net = copper[c][1]
             if net >= 0 and net == wire_net.get(ids[i], -1):
                 continue
-            need = rules.clearance + half[i]
+            need = copper[c][2] + half[i]
             dist = lines[i].distance(copper[c][0])
             if dist < need - TOL:
                 out.append(Violation("clearance", (ids[i],), dist, need, _closest(lines[i], copper[c][0]), layer))

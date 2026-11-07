@@ -60,8 +60,10 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
     ids = list(polylines)
     lines = [LineString(polylines[w]) for w in ids]
     wire_tree = shapely.STRtree(lines) if lines else None
-    copper = [(p.shape, p.net_id) for p in board.pads_on(layer)] + [(o.shape, o.net_id) for o in board.obstacles_on(layer)]
+    copper = [(p.shape, p.net_id, rules.apart(p.clearance)) for p in board.pads_on(layer)]
+    copper += [(o.shape, o.net_id, rules.apart(o.clearance)) for o in board.obstacles_on(layer)]
     copper_tree = shapely.STRtree([c[0] for c in copper]) if copper else None
+    farthest = max((c[2] for c in copper), default=rules.clearance)
     widest = max([rules.trace_width, *rules.net_width.values()])
     edge = rules.outline_inset - rules.base_width / 2.0
     boundary = board.outline.boundary  # the edge and its cutouts
@@ -74,8 +76,8 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
         if line.distance(boundary) < edge + half + SLACK:
             return False
         if copper_tree is not None:
-            for i in copper_tree.query(line, predicate="dwithin", distance=rules.clearance + half + SLACK).tolist():
-                if copper[i][1] != net or net < 0:
+            for i in copper_tree.query(line, predicate="dwithin", distance=farthest + half + SLACK).tolist():
+                if (copper[i][1] != net or net < 0) and line.distance(copper[i][0]) < copper[i][2] + half + SLACK:
                     return False
             for i in copper_tree.query(swept, predicate="intersects").tolist():
                 if copper[i][1] != net or net < 0:

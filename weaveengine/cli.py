@@ -71,8 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         print("not in the DSN, defaults used: " + ", ".join(missing))
     if design.dropped_wiring:
         print(design.dropped_wiring)
-    if design.open_keepouts:
-        print(design.open_keepouts)
+    if design.kicad:
+        print(design.kicad)
     print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"
@@ -82,7 +82,9 @@ def main(argv: list[str] | None = None) -> int:
         project = kicad_project_rules(pro)
         rules.edge_clearance = max(project["edge_clearance"], rules.clearance)
         print(f"from {os.path.basename(pro)}: edge clearance {rules.edge_clearance:g} mm"
-              + (f" (hole clearance {project['hole_clearance']:g} mm is not checked: a DSN has no drill sizes)" if project["hole_clearance"] else ""))
+              + (f" (hole clearance {project['hole_clearance']:g} mm is not kept: a DSN has no drill sizes, and there is no "
+                 f"{os.path.basename(os.path.splitext(pro)[0])}.kicad_pcb beside it)" if project["hole_clearance"]
+                 and not os.path.exists(os.path.splitext(pro)[0] + ".kicad_pcb") else ""))
     else:
         print(f"edge clearance {rules.clearance:g} mm (the DSN does not carry one; set it with --edge-clearance or --kicad-pro)")
     if design.board.plane_nets:
@@ -94,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
     rules.clearance = want_clearance + args.margin
     rules.edge_clearance = want_edge + args.margin
+    rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio)
     bar = None if args.quiet else ProgressBar()
     result = route_board(design.board, options=options, seed=args.seed,

@@ -14,6 +14,7 @@ from shapely.geometry import LineString, Polygon, box
 from shapely.ops import unary_union
 
 from weaveengine.board import Board, Component, Obstacle, Pad, Rules, circle_polygon
+from weaveengine.io.kicad import apply as apply_kicad, read_kicad
 
 UNIT_MM = {"mm": 1.0, "um": 1e-3, "mil": 0.0254, "inch": 25.4, "cm": 10.0}
 
@@ -61,7 +62,7 @@ class Design:
     via_shapes: list[list] = field(default_factory=list)  # raw shape descriptors of the via padstack
     defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
     dropped_wiring: str = ""                                 # what was done with routing already in the file
-    open_keepouts: str = ""                                  # keepouts that do not forbid traces, and are ignored
+    kicad: str = ""                                          # what was taken from the KiCad board and project beside the DSN
 
     @property
     def net_names(self) -> dict[int, str]:
@@ -110,37 +111,6 @@ def _outline(desc: list, scale: float) -> list[tuple[float, float]] | None:
         cx, cy = (nums[1], nums[2]) if len(nums) >= 3 else (0.0, 0.0)
         return [(cx + r * math.cos(2 * math.pi * i / 32), cy + r * math.sin(2 * math.pi * i / 32)) for i in range(33)]
     return None
-
-
-def kicad_open_areas(pcb_path: str) -> list[tuple[float, float, float, float]]:
-    """The bounds, in the coordinates of KiCad's DSN export (y turned over), of
-    the rule areas of a KiCad board that do not forbid traces: areas that keep
-    out only copper pours, or that group a channel for placement. KiCad writes
-    every rule area into the DSN as a plain keepout, whatever it forbids, so only
-    the board file can tell them apart. Empty if the file cannot be read."""
-    try:
-        text = open(pcb_path, encoding="utf-8", errors="replace").read()
-    except OSError:
-        return []
-    found = []
-    for start in (m.start() for m in re.finditer(r"\(zone\b", text)):
-        depth, end = 0, start
-        for end in range(start, len(text)):  # the zone's own parentheses
-            depth += {"(": 1, ")": -1}.get(text[end], 0)
-            if depth == 0:
-                break
-        if "(keepout" not in text[start:end]:
-            continue  # a copper zone, not a rule area
-        zone = parse_sexpr(text[start:end + 1])
-        keepout = _child(zone, "keepout")
-        if any(rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
-            continue  # it does keep traces out
-        for polygon in _children(zone, "polygon"):
-            pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts") or [], "xy")]
-            if pts:
-                xs, ys = [x for x, _ in pts], [y for _, y in pts]
-                found.append((min(xs), min(ys), max(xs), max(ys)))
-    return found
 
 
 def read_dsn(path: str, layers: list[str] | None = None) -> Design:
@@ -255,9 +225,9 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         defaulted["clearance"] = f"clearance {rules.clearance:g} mm"
     board = Board(outline=outline, rules=rules, layers=list(use))
 
-    # Of a KiCad board beside the DSN, the rule areas that let traces through.
-    pcb = os.path.splitext(path)[0] + ".kicad_pcb"
-    open_areas = kicad_open_areas(pcb) if os.path.exists(pcb) else []
+    # A KiCad board beside the DSN says more than its export does (io/kicad.py); first, which rule areas let traces through.
+    kicad = read_kicad(path)
+    open_areas = kicad.open_areas if kicad else []
     ignored = 0
     for shape, layer, _ in keepouts:
         if any(all(abs(a - b) < 0.01 for a, b in zip(shape.bounds, area)) for area in open_areas):
@@ -273,9 +243,6 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
 
     design = Design(root[1] if len(root) > 1 and isinstance(root[1], str) else "board", board, unit, resolution,
                     defaulted=defaulted)
-    if ignored:
-        design.open_keepouts = (f"{ignored} keepouts are rule areas of {os.path.basename(pcb)} that do not forbid traces "
-                                "(they keep out pours, or place parts) and are ignored")
     via = _child(structure, "via")
     circles = []
     if via and len(via) > 1 and via[1] in padstacks:
@@ -380,6 +347,13 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         reached = unary_union([pad.shape for pad in by_net.get(net_id, ()) if pad.shape.intersects(shape)])
         if len(getattr(reached, "geoms", [reached] if not reached.is_empty else [])) >= 2 and shape.area > reached.area:
             board.plane_nets.add(net_id)
+
+    if kicad is not None:
+        taken = apply_kicad(design, kicad)
+        if ignored:
+            taken += (", " if taken else "") + f"{ignored} keepouts that do not forbid traces (pour keepouts, placement areas) left out"
+        if taken:
+            design.kicad = f"from {os.path.basename(os.path.splitext(path)[0])}.kicad_pcb/.kicad_pro: {taken}"
 
     # Pre-existing copper that is marked fixed is an obstacle. The rest is
     # routing some earlier run left behind (a saved, already-routed design):

@@ -17,7 +17,7 @@ from weaveengine.io.dsn import UNIT_MM, Design, _child, _children, parse_sexpr
 class Measured:
     required_clearance: float
     required_edge: float
-    track_to_pad: float = float("inf")      # smallest copper gap, trace to a pad or fixed copper of another net
+    track_to_pad: float = float("inf")      # smallest copper gap, trace to a pad or fixed copper of another net (less what it asks beyond the rule)
     track_to_keepout: float = float("inf")  # smallest gap, trace copper to a keepout (which it may not enter)
     track_to_track: float = float("inf")    # smallest copper gap between traces of different nets on a layer
     track_to_edge: float = float("inf")     # smallest gap, trace copper to the board edge
@@ -37,7 +37,7 @@ class Measured:
 
 def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[float, float]]]], list[tuple[str, float, float]]]:
     """(wires, vias) of a SES file in mm: wires are (net, layer, width, points), vias (net, x, y)."""
-    root = parse_sexpr(open(path).read())
+    root = parse_sexpr(open(path, encoding="utf-8").read())
     routes = _child(root, "routes")
     res = _child(routes, "resolution")
     scale = UNIT_MM[res[1].lower()] / float(res[2])
@@ -68,12 +68,16 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     # keepout is held to what the CAD tool asks of it: no copper inside (KiCad writes a hole
     # without copper as a keepout that includes the hole clearance already). The router keeps
     # the clearance from keepouts as well, except where a pad of the design meets one.
+    # Copper of no net (text, a logo) is held to the clearance like a pad. What an item
+    # asks beyond the rule (a local clearance, a hole's) counts against the gap to it.
     pads = [(Point(p.centre).buffer(p.radius, quad_segs=32) if p.radius else p.shape, p) for p in board.pads]
-    pads += [(o.shape, o) for o in board.obstacles if o.net_id >= 0]
-    keepouts = [o for o in board.obstacles if o.net_id < 0]
-    pad_net = [design.net_names.get(p.net_id, "") for _, p in pads]
+    pads += [(o.shape, o) for o in board.obstacles if o.net_id >= 0 or o.copper]
+    keepouts = [o for o in board.obstacles if o.net_id < 0 and not o.copper]
+    pad_net = [design.net_names.get(p.net_id, "") if p.net_id >= 0 else None for _, p in pads]
+    beyond = [max(0.0, p.clearance - clearance) for _, p in pads]
     pads += [(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32), None) for _, x, y in vias]
     pad_net += [net for net, _, _ in vias]
+    beyond += [max(0.0, rules.via_clearance - clearance)] * len(vias)
     tree = shapely.STRtree([g for g, _ in pads])
     by_layer: dict[str, list] = {}
     for net, layer, width, pts in wires:
@@ -90,7 +94,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
         for i in tree.query(line, predicate="dwithin", distance=rules.clearance + width / 2.0 + 1.0).tolist():
             pad = pads[i][1]
             if pad_net[i] != net and (pad is None or pad.on(layer_index.get(layer, 0))):
-                out.track_to_pad = min(out.track_to_pad, line.distance(pads[i][0]) - width / 2.0)
+                out.track_to_pad = min(out.track_to_pad, line.distance(pads[i][0]) - width / 2.0 - beyond[i])
     for items in by_layer.values():
         lines = [l for _, _, l in items]
         t = shapely.STRtree(lines)

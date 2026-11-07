@@ -22,6 +22,8 @@ class Rules:
     net_width: dict[int, float] = field(default_factory=dict)
     via_diameter: float = 0.6
     via_drill: float = 0.3
+    via_clearance: float = 0.0           # what a via asks of foreign copper beyond ``clearance`` (0: nothing; see ``apart``)
+    margin: float = 0.0                  # safety margin, already in ``clearance``; added to every clearance an item asks for itself
 
     def width(self, net_id: int) -> float:
         return self.net_width.get(net_id, self.trace_width)
@@ -39,6 +41,13 @@ class Rules:
     @property
     def pitch(self) -> float:
         return self.base_width + self.clearance
+
+    def apart(self, own: float) -> float:
+        """The clearance foreign copper keeps from an item that asks ``own`` of
+        it (a local clearance of its part, or what the hole clearance needs where
+        its copper ring is narrow), or only the rule's if that is more or ``own``
+        is 0. KiCad checks the larger of the two."""
+        return max(self.clearance, own + self.margin) if own > 0 else self.clearance
 
     @property
     def inflation(self) -> float:
@@ -60,6 +69,7 @@ class Pad:
     layers: frozenset | None = None  # layer indices; None = every layer (through-hole)
     radius: float | None = None      # set for circular pads (teardrops)
     is_via: bool = False
+    clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
 
     @property
     def centre(self) -> tuple[float, float]:
@@ -94,6 +104,8 @@ class Obstacle:
     shape: Polygon
     net_id: int = -1
     layers: frozenset | None = None
+    clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
+    copper: bool = False             # copper of no net (text, a logo): kept at the clearance, not only out of
 
     def on(self, layer: int) -> bool:
         return self.layers is None or layer in self.layers
