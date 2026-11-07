@@ -98,6 +98,19 @@ def _polygonal(centre, outline: list[tuple[float, float]], p, half_width: float,
     return [centre, best_l[1], _tangent(best_l[1], p, half_width, left), _tangent(best_r[1], p, half_width, right), best_r[1], tuple(p)]
 
 
+def _written(polys: list, width: float):
+    """The copper of teardrops as the session file draws them: each outline and
+    the fan of traces that fills it (``ses.teardrop_tracks``), whose round ends
+    can reach past the outline where the trace bends as the teardrop begins."""
+    from weaveengine.io.ses import teardrop_tracks
+    parts = [Polygon(poly[:5]) for poly in polys]
+    bad = next((part for part in parts if not part.is_valid), None)
+    if bad is not None:  # (an outline that crosses itself: refused as it was, ``fits``)
+        return bad
+    parts += [LineString([a, b]).buffer(w / 2.0, quad_segs=4) for poly in polys for w, a, b in teardrop_tracks(poly, width)]
+    return shapely.union_all(parts)
+
+
 def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_net: dict[int, int],
               wire_pads: dict[int, tuple[int, int]], layer: int = 0, max_length: float = MAX_LENGTH,
               max_width: float = MAX_WIDTH, breathing: float = BREATHING) -> dict[int, list[list[tuple[float, float]]]]:
@@ -208,7 +221,7 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                     if dx * (a[1] - mid[1]) - dy * (a[0] - mid[0]) < dx * (b[1] - mid[1]) - dy * (b[0] - mid[0]):
                         a, b = b, a
                     halves.append([poly[0], a, left, right, b, tuple(mid)])
-                if fits(shapely.union_all([Polygon(poly[:5]) for poly in halves]), (pad_a, pad_b), room):
+                if fits(_written(halves, rules.drawn(net)), (pad_a, pad_b), room):
                     out[w] = halves
                     break
             if w in out:
@@ -222,7 +235,7 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                                          (LENGTH / 2.0, max_width, rules.clearance), (LENGTH / 2.0, min(max_width, 2.0 * size) / 2.0, rules.clearance)):
                 p = _point_at(pts, reach + min(length * size, max_length, share))
                 poly = shaped(pad, p, widest) if p is not None else None
-                if poly is not None and fits(Polygon(poly[:5]), (pad,), room):
+                if poly is not None and fits(_written([poly], rules.drawn(net)), (pad,), room):
                     out.setdefault(w, []).append(poly)
                     break
     return out

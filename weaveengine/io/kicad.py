@@ -5,9 +5,11 @@ classes, and leaves out much the board's own design rules check holds traces
 to: text and drawings on copper layers, the local clearances of parts and pads,
 the drill of every hole (so the hole clearance), what a rule area forbids
 (every one is written as a plain keepout), and the board's own minimums.
-(Not taken: drawings on the Margin layer, which KiCad's check holds to the
-edge clearance. Boards draw there what is not an edge, closer to their own
-pads than that; taken as edge, those pads could not be reached.) When the board
+(Drawings on the Margin layer, which KiCad's check holds to the edge
+clearance, are not taken as edge: boards draw there what is not an edge,
+closer to their own pads than that, and taken as edge those pads could not be
+reached. Only the vias and traces that join pads to planes keep clear of
+them, being optional: ``Board.margin``.) When the board
 (``.kicad_pcb``) and project (``.kicad_pro``) of the same name lie beside the
 DSN, they are read for these.
 
@@ -56,6 +58,7 @@ class KicadBoard:
     copper: list[tuple] = field(default_factory=list)                 # (shape, canonical layer, what it is) on copper layers
     rules: dict[str, float] = field(default_factory=dict)             # the project's minimums (``project_rules``)
     mask: float = 0.0                                                 # the board's solder-mask opening past a pad's copper
+    margin: list = field(default_factory=list)                        # drawings on the Margin layer (lines, as drawn)
     openings: list[tuple] = field(default_factory=list)               # (shape, canonical copper layer, how far the board's
                                                                       # margin widens it): solder mask left open on purpose
 
@@ -305,6 +308,10 @@ def _drawing(item, place, out: KicadBoard, kind: str, ref: str = "") -> None:
     names = _layers(item)
     layers = [l for l in names if l.endswith(".Cu")]
     bared = [MASKED[l] for l in names if l in MASKED]
+    if "Margin" in names:
+        shape = _shape(item, place, kind)
+        if shape is not None:
+            out.margin.append(shape.boundary if shape.geom_type == "Polygon" else shape)
     if not layers and not bared:
         return
     shape = _shape(item, place, kind)
@@ -536,4 +543,5 @@ def apply(design, kicad: KicadBoard) -> str:
         opened += 1
     if opened:
         said.append(f"{opened} openings in the solder mask")
+    board.margin = list(kicad.margin)
     return ", ".join(said)

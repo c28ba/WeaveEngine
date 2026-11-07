@@ -68,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--svg", help="also write an SVG picture of the result")
     ap.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
     ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
+    ap.add_argument("--no-fanout", action="store_true",
+                    help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
     ap.add_argument("--no-narrowing", action="store_true",
                     help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
     ap.add_argument("--no-ses-teardrops", action="store_true",
@@ -138,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
     rules.clearance = want_clearance + args.margin
     rules.edge_clearance = want_edge + args.margin
     rules.margin = args.margin
-    options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing)
+    options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
+                      fanout=not args.no_fanout)
     bar = None if args.quiet else ProgressBar()
     result = route_board(design.board, options=options, seed=args.seed,
                          workers=args.workers, events=bar.event if bar else None)
@@ -155,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
     for wire in result.unrouted:
         conn = result.connections[wire]
         print(f"  unrouted: net {names.get(conn.net_id, conn.net_id)}: {pads[conn.src].name} -> {pads[conn.dst].name}")
+    if stats["fanout"]:
+        print(f"  {stats['fanout']} vias placed to join pads to their net's plane")
     if stats["narrowed"]:
         print(f"  {narrowed_note(stats['narrowed'], names)}")
     if stats["buried_pads"]:

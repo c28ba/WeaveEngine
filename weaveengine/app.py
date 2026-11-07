@@ -1092,6 +1092,8 @@ class MainWindow(QMainWindow):
         how = {None: "Finished", True: "Bettered", False: "No better, the routing is as it was"}[stats.get("improved")]
         self.say(f"{how}: {stats['routed']}/{stats['connections']} connections, {stats['vias']} vias, "
                  f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
+        if stats.get("fanout"):
+            self.say(f"{stats['fanout']} vias placed to join pads to their net's plane")
         if stats.get("narrowed"):
             self.say(narrowed_note(stats["narrowed"], self.routed_design.net_names))
         if stats.get("buried_pads"):

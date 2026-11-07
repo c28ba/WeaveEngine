@@ -159,6 +159,7 @@ class Options:
     smooth: bool = True             # round sharp corners where the design rules leave room
     untangle: bool = True           # undo long detours by moving the wires in their way (``ripup.untangle``)
     narrow: bool = True             # narrower traces for nets whose pads their width cannot reach (``router.reach``)
+    fanout: bool = True             # a via beside each pad its net's plane does not reach (``plan.fanout``)
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
     teardrop_max_width: float = 2.0    # mm across

@@ -6,11 +6,14 @@ import math
 import time
 from dataclasses import dataclass, field
 
+from shapely.geometry import Polygon
+
 from weaveengine import parallel
 from weaveengine.board import Board, Pad
 from weaveengine.plan import candidates as cand_mod
 from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
+from weaveengine.plan.fanout import fanout
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
@@ -137,11 +140,21 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         limits = (options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing)
         for found in parallel.run(_teardrop_task, (work, wire_net, limits), tasks, workers):
             drops.update(found)
+    planed, unplaned = [], []
+    if options.fanout and work.pours:  # vias down to the planes, among everything routed (``plan.fanout``)
+        shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drops.items() if w in wire_layer for poly in polys]
+        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes)
+        work.pads = work.pads + planed
+        vias = vias + planed
+        w = max(list(ctx.conns) + list(lines), default=-1) + 1
+        for net, layer_index, points in traces:
+            lines[w], wire_net[w], wire_layer[w] = points, net, layer_index
+            w += 1
 
     for layer in ctx.layers:
         assert layer.state.check_invariants(), "topological invariant broken"
     t_end = time.perf_counter()
-    routed = sorted(wire_layer)
+    routed = sorted(w for w in wire_layer if w in ctx.conns)
     air = sum(ctx.conns[w].air_len for w in routed)
     length = sum(polyline_length(lines[w]) for w in routed)
     # A pad no trace can reach under the rules (packed closer than the clearance
@@ -165,6 +178,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "via_sites": len(ctx.layers[0].pmap.sites),
         "buried_pads": buried,
         "narrowed": narrowed,  # net -> the width its traces were narrowed to, to reach its pads (``reach``)
+        "fanout": len(planed),  # vias placed to join pads to their net's plane (``plan.fanout``)
+        "plane_left": [p.pad_id for p in unplaned],  # pads of a plane net it does not reach, with no room for a via
         "unreachable": unreachable,  # connections of those pads, counted as open
         "wires_per_layer": {l.name: sum(1 for li in wire_layer.values() if li == l.index) for l in ctx.layers},
         "time_route": t_route - t0,

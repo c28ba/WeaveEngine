@@ -63,6 +63,7 @@ any it does not carry). The ones you are most likely to change:
 | Copper to board edge | From the KiCad project beside the DSN, else the clearance |
 | Safety margin | Extra clearance routed with, so nothing sits exactly on a limit |
 | Use vias | Off: every connection stays on one layer |
+| Join pads to planes with vias | A pad its net's pour does not reach gets a via beside it, down to the pour; on by default |
 | Narrow traces to reach fine-pitch pins | A net whose pins its class's width cannot reach is routed narrower, down to the board's minimum; on by default |
 | Undo long detours, Straighten vias, Round sharp corners | Clean-up after routing; all on by default |
 | Teardrops | Added where traces meet pads and vias; written to the SES as fans of traces |
@@ -106,8 +107,10 @@ KiCad's own design rules check.
 - **Copper pours are left to KiCad.** A net with a zone is not routed as
   traces. After importing the session, refill the zones (**B**): until then
   KiCad shows the pour it filled around the old routing, running straight over
-  the new traces. Where the pour does not reach a pad (an inner plane needs a
-  via down to it), that pad stays unconnected until you add the via in KiCad.
+  the new traces. A pad its pour does not reach on its own layer (a ground pad
+  on top of a board whose ground plane is inside or on the back) gets a via
+  beside it down to the pour, placed once everything else is routed; where
+  there is no room for one, the pad is named and left for you.
 - **Old routing.** Remove existing traces, vias and teardrops before exporting
   if you want them redone: KiCad keeps its own teardrops as zones, and those
   are not taken out when the session is imported.

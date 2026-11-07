@@ -942,3 +942,31 @@ def test_a_net_is_narrowed_to_reach_a_fine_pitch_pin():
     assert result.board.rules.width(1) == pytest.approx(0.19)                    # routed with half the margin
     assert board.rules.net_width == {} and board.rules.net_drawn == {}   # the board routed is left as it was
     assert_clean(board, result)
+
+
+def test_a_pad_its_plane_does_not_reach_gets_a_via_down_to_it():
+    """Ground poured on the back only: each front pad of ground gets a via
+    beside it, inside the pour, joined by a short trace; a pad the pour reaches
+    on its own layer gets none, and the signal is routed as before."""
+    from shapely.geometry import box as rect
+    from weaveengine.plan.fanout import covered
+    board = Board.rectangle(30, 20, Rules(0.25, 0.2), layers=["F.Cu", "B.Cu"])
+    front, back = frozenset({0}), frozenset({1})
+    board.pads += [Pad.rect(0, 5, 10, 1.0, 1.4, 0, layers=front), Pad.rect(1, 25, 10, 1.0, 1.4, 0, layers=front),
+                   Pad.rect(2, 15, 5, 1.0, 1.4, 0, layers=back),
+                   Pad.rect(3, 5, 15, 1.0, 1.0, 1, layers=front), Pad.rect(4, 25, 15, 1.0, 1.0, 1, layers=front)]
+    board.plane_nets = {0}
+    board.pours = [(0, 1, rect(1, 1, 29, 19))]
+    assert [covered(board, p) for p in board.pads[:3]] == [False, False, True]
+    result = route_board(board)
+    assert result.unrouted == [] and result.stats["fanout"] == 2 and result.stats["plane_left"] == []
+    placed = [v for v in result.vias if v.fanout]
+    rules = board.rules
+    for pad in board.pads[:2]:
+        via = min(placed, key=lambda v: math.dist(v.centre, pad.centre))
+        assert pad.shape.distance(Point(via.centre)) < rules.via_diameter / 2 + 0.5   # beside it
+        stub = [line for w, line in result.polylines.items() if result.wire_net[w] == 0 and math.dist(line[0], pad.centre) < 1e-9]
+        assert stub and math.dist(stub[0][-1], via.centre) < 1e-9 and result.wire_layer[[w for w, l in result.polylines.items() if l is stub[0]][0]] == 0
+    signal = [LineString(l).buffer(rules.width(1) / 2) for w, l in result.polylines.items() if result.wire_net[w] == 1]
+    for via in placed:  # clear of the signal's copper by the clearance
+        assert all(s.distance(via.shape) >= rules.clearance - 1e-6 for s in signal)

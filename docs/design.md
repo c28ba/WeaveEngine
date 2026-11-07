@@ -421,6 +421,14 @@ Within noise on the small boards and clearly worse on the board of large nets, w
 
 ---
 
+### 11.2 Pads joined to their plane (`plan.fanout`)
+
+A net with a plane is not routed as traces (section 4): the CAD tool's pour joins its pads. A pad the pour does not reach on a layer the pad has copper on stays open: a ground pad on top of a board whose ground is an inner plane, or poured only on the back. Sweep 3 left 1,933 such connections open over 28 boards (hackrf-one 411, marzipan 394, coldfire 167, the Cornes 140 each), every one a via for the designer to add by hand.
+
+Once the board is routed, each such pad gets a via beside it: the nearest place, along 24 rays out to 2 mm from the pad, where a via may stand among everything already there (pads, keepouts, the routed traces, teardrops and vias of other nets, on every layer; the hole-to-hole minimum from through-hole pads, even of its own net; the board edge, and KiCad's Margin drawings) and lands inside a plane of its net on a layer the pad has no copper on, joined by a straight trace that keeps its clearances too. A via of the net within 1 mm is shared. A plane of its net on the pad's own layer that stops short of it is reached by a short trace instead, with no via (a via there would join nothing: lumen-mobo's local pours, 13 vias KiCad called dangling). A pad that touches copper of its net the plane reaches (an exposed pad's own holes) needs nothing. Coverage is the pour's outline, as the DSN gives it; KiCad's fill keeps clear of other copper, so now and then a via or trace lands where the fill does not reach.
+
+Done after routing, it takes no room a trace needed. Placed first, the vias were in the way: on hackrf-lna915 four signal connections that routed before were left open. Measured: lna915 30 open items in KiCad to 11 (the rest the Margin layer and its four open signals), olimex POE-M2 77 to 66, lumen-mobo 217 to 104, with every signal routed as before.
+
 ## 11a. Where the copper goes, and undoing detours (`ripup.untangle`, branch `detour-repair`)
 
 **Measured first.** Each routed connection's drawn length against two references: the straight line between its pads, and the same connection routed alone on the empty board (same search and geometry). The gap from the straight line to alone is what the parts and keepouts cost; the gap from alone to drawn is what sharing the board costs.

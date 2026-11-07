@@ -341,12 +341,12 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     by_net: dict[int, list[Pad]] = {}
     for pad in board.pads:
         by_net.setdefault(pad.net_id, []).append(pad)
-    for net_id, (shape, _, _) in planes:
-        if net_id in board.plane_nets:
-            continue
+    for net_id, (shape, layer, _) in planes:
         reached = unary_union([pad.shape for pad in by_net.get(net_id, ()) if pad.shape.intersects(shape)])
         if len(getattr(reached, "geoms", [reached] if not reached.is_empty else [])) >= 2 and shape.area > reached.area:
             board.plane_nets.add(net_id)
+            if layer in board.layers:
+                board.pours.append((net_id, board.layers.index(layer), shape))
 
     if kicad is not None:
         taken = apply_kicad(design, kicad)

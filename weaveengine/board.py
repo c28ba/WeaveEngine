@@ -77,6 +77,7 @@ class Pad:
     radius: float | None = None      # set for circular pads (teardrops)
     is_via: bool = False
     clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
+    fanout: bool = False             # a via put beside a pad to join it to its net's plane (``plan.fanout``)
     anchor: tuple[float, float] | None = None  # where traces join it, if not its centroid (which a bent custom pad's is not on)
 
     @property
@@ -151,6 +152,8 @@ class Board:
     net_names: dict[int, str] = field(default_factory=dict)
     layers: list[str] = field(default_factory=lambda: ["F.Cu"])
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
+    pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
+    margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
     components: list[Component] = field(default_factory=list)
 
     @classmethod
