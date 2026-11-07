@@ -11,13 +11,21 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# A new push to a branch stops the run still going for the one before.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        # Linux: built on the oldest Ubuntu still supported, so the app runs on it
+        # and everything newer (a build needs at least the C library it was made with).
+        os: [macos-latest, windows-latest, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -50,9 +58,11 @@ jobs:
       # session, take a screenshot (``self_test``), on each system.
       - name: Run the packaged app (macOS)
         if: runner.os == 'macOS'
+        timeout-minutes: 15
         run: mkdir -p selftest && dist/WeaveEngine.app/Contents/MacOS/WeaveEngine --self-test "boards/Word of RAM.dsn" --ses app.ses --screenshot selftest/macos.png
       - name: Run the packaged app (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 15
         shell: pwsh
         # (a windowed program: no output to show, and the shell does not wait for it unless told to)
         run: |
@@ -61,22 +71,13 @@ jobs:
             -ArgumentList '--self-test', '"boards/Word of RAM.dsn"', '--ses', 'app.ses', '--screenshot', 'selftest/windows.png'
           if ($p.ExitCode -ne 0) { throw "the packaged app's self-test ended with $($p.ExitCode)" }
           if (-not (Test-Path app.ses)) { throw "the packaged app wrote no session" }
-      - name: Run the packaged app (Linux, on a bare Ubuntu with an X display)
+      - name: Run the packaged app (Linux, on bare Ubuntu 22.04 and 24.04 with an X display)
         if: runner.os == 'Linux'
-        # Only the libraries the README lists, beyond a minimal system: the
-        # check that they are all a Linux user needs to add.
+        timeout-minutes: 30
         run: |
-          docker run --rm -v "$PWD:/w" -w /w -e QT_QPA_PLATFORM=xcb ubuntu:24.04 bash -c '
-            set -e
-            mkdir -p selftest
-            apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb xauth \
-              libegl1 libgl1 libglib2.0-0t64 libfontconfig1 libdbus-1-3 libxkbcommon-x11-0 \
-              libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-randr0 libxcb-render-util0 \
-              libxcb-image0 libxcb-xinerama0 libxcb-xkb1 > /dev/null
-            echo "libraries the app cannot find:"
-            find dist/WeaveEngine -name "*.so*" -type f -exec ldd {} \; 2>/dev/null | grep "not found" | sort -u || true
-            xvfb-run -a dist/WeaveEngine/WeaveEngine --self-test "boards/Word of RAM.dsn" --ses app.ses --screenshot selftest/linux.png'
+          for image in ubuntu:22.04 ubuntu:24.04; do
+            docker run --rm -v "$PWD:/w" -w /w -e QT_QPA_PLATFORM=xcb "$image" .github/linux-selftest.sh || exit 1
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

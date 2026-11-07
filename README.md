@@ -33,7 +33,16 @@ The builds are not signed, so the first time:
   Terminal: `xattr -dr com.apple.quarantine WeaveEngine.app`.
 - **Windows:** run `WeaveEngine.exe` in the `WeaveEngine` folder; if
   SmartScreen warns, choose **More info**, then **Run anyway**.
-- **Linux:** run `WeaveEngine/WeaveEngine` from the unpacked folder.
+- **Linux:** run `WeaveEngine/WeaveEngine` from the unpacked folder. The build
+  is made on Ubuntu 22.04 and runs there and on later systems (Debian 12,
+  Fedora 36, Mint 21 and newer). If it does not start, it is usually a
+  library Qt needs that a desktop install leaves out, most often
+  `libxcb-cursor0`; on Ubuntu or Debian:
+
+  ```
+  sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 \
+    libxcb-shape0 libxcb-randr0 libxcb-render-util0 libxcb-image0 libxcb-xinerama0 libegl1
+  ```
 
 Or build it yourself (see the end of this page).
 
