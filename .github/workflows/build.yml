@@ -1,8 +1,8 @@
 # Tests WeaveEngine and builds the desktop app on macOS, Windows and Linux.
 # Runs on every push to a branch, on version tags such as v1.0.0, and by hand
 # (Actions tab, "Run workflow"). Each build is uploaded as an artifact of the run.
-# For a version tag, once all three have built, a draft GitHub Release is made
-# with the three attached: nothing is public until it is published by hand.
+# For a version tag, once all three have built and passed, a GitHub Release is
+# published with the three attached and .github/release-notes.md as its text.
 name: build
 
 on:
@@ -100,7 +100,7 @@ jobs:
           archive: false
 
   # On every push the three packages are gathered and checked; for a version
-  # tag they are also drafted as a release.
+  # tag they are also published as a release.
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -123,10 +123,10 @@ jobs:
           unzip -l packages/WeaveEngine-windows.zip | grep -qE "WeaveEngine[/\\]WeaveEngine\.exe" || { echo "::error::the Windows zip does not hold WeaveEngine/WeaveEngine.exe"; exit 1; }
           unzip -l packages/WeaveEngine-macos.zip | grep -q "WeaveEngine.app/Contents/MacOS/WeaveEngine" || { echo "::error::the macOS zip does not hold the app"; exit 1; }
           tar -tzf packages/WeaveEngine-linux.tar.gz | grep -q "^WeaveEngine/WeaveEngine$" || { echo "::error::the Linux archive does not hold WeaveEngine/WeaveEngine"; exit 1; }
-      - name: Draft the release
+      - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" packages/* --draft --verify-tag \
-            --title "WeaveEngine ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release create "$GITHUB_REF_NAME" packages/* --verify-tag --latest \
+            --title "WeaveEngine ${GITHUB_REF_NAME#v}" --notes-file .github/release-notes.md

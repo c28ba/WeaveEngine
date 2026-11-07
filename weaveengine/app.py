@@ -1176,9 +1176,7 @@ class MainWindow(QMainWindow):
         box.setTextFormat(Qt.RichText)
         box.setText(f"<b>WeaveEngine {__version__}</b><br>A topological PCB autorouter.")
         box.setInformativeText(
-            "Most of WeaveEngine was written by large language models (Anthropic's Claude), directed, reviewed and "
-            "tested by its author. Check what it gives you as you would any autorouter's output: run your CAD tool's "
-            "design rules check before you order a board.<br><br>"
+            "Run your CAD tool's design rules check on what it gives you before you order a board.<br><br>"
             "Free software under the GNU General Public License, version 3 or later.<br>"
             f'<a href="{HOME}">{HOME}</a>')
         box.exec()

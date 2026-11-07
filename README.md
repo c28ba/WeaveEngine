@@ -12,19 +12,16 @@ in detail: [docs/design.md](docs/design.md).
 
 ## How this was made
 
-**Most of WeaveEngine was written by large language models.** Its code, tests
-and documentation were produced in large part by an AI (Anthropic's Claude,
-working in Claude Code), directed, reviewed and tested by the project's author.
-The algorithms were chosen, measured and accepted or thrown out by the two
-together, and every change was checked against real boards and KiCad's own
-design rules check, but you should know how it was made when you decide how
-far to trust it, and check what it gives you as you would any autorouter's
-output: run KiCad's DRC before you send a board to be made.
+Most of WeaveEngine's code, tests and documentation were written by an AI
+(Anthropic's Claude, in Claude Code), directed, reviewed and tested by the
+project's author against real boards and KiCad's design rules check. As with
+any autorouter, run KiCad's DRC on the result before you order a board.
 
 ## Installing
 
 Download the build for your system from the
-[Releases](https://github.com/c28ba/WeaveEngine/releases) page and unpack it.
+[latest release](https://github.com/c28ba/WeaveEngine/releases/latest) and
+unpack it.
 The builds are not signed, so the first time:
 
 - **macOS:** open `WeaveEngine.app` once (macOS says it cannot check it and
@@ -160,9 +157,8 @@ python -m venv .venv
 The app is built on the system it is for: `dist/WeaveEngine.app` on macOS,
 `dist/WeaveEngine/` on Windows and Linux. The GitHub Actions workflow in
 `.github/workflows/build.yml` builds all three on every push, or when started
-by hand from the Actions tab. For a version tag (`v1.0.0`) it also drafts a
-GitHub Release with the three attached, to be looked over and published by
-hand.
+by hand from the Actions tab. For a version tag (`v1.0.0`) it also publishes a
+GitHub Release with the three attached.
 
 ## License
 
