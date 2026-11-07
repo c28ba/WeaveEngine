@@ -555,6 +555,21 @@ def test_teardrops_are_written_to_the_session_as_traces(tmp_path):
     assert measure(design, with_drops).ok  # the fill keeps every clearance too
 
 
+def test_a_teardrop_fill_met_from_a_long_pads_side_ends_on_the_pad():
+    """A QFP pin at 45 degrees met by its track from the side (hackrf-marzipan,
+    U23-72): the teardrop is short and wide, its outer fill lines nearly along
+    the pad's edge. Carried on to the chord's line, one ran 0.55 mm past the pad
+    and KiCad called it dangling; every line now ends with its round end over the pad."""
+    from weaveengine.io.ses import teardrop_tracks
+    from weaveengine.realize.teardrop import _polygonal
+    pad = Polygon([(135.7083, -139.1879), (135.9166, -138.9796), (134.8552, -137.9181), (134.6468, -138.1264)])
+    width = 0.2794
+    poly = _polygonal(pad.centroid.coords[0], list(pad.exterior.coords)[:-1], (134.9573, -138.6061), width / 2.0)
+    tracks = teardrop_tracks(poly, width)
+    assert len(tracks) >= 2
+    assert all(pad.distance(Point(b)) < width / 4.0 for _, _, b in tracks)
+
+
 def test_kernel_self_check_never_crashes_and_falls_back(monkeypatch):
     """A numba that loads but does not work must give a clear warning and a working router."""
     from weaveengine import accel

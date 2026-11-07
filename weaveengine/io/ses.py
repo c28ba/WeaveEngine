@@ -58,8 +58,13 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
     # Where the sides slant, that edge (moved in with them) can lie outside the
     # pad: such a line is carried on until its round end is half its own
     # radius across the chord t1 t2 itself, which is on the pad (KiCad calls a
-    # trace that stops short of the pad unconnected).
+    # trace that stops short of the pad unconnected). A line that would cross
+    # the chord's line beyond t1 or t2 (the teardrop of a long pad met from its
+    # side) is not carried on, and if its round end does not then reach a
+    # quarter of its radius over the chord, it is left out: it would end beside
+    # the pad, or only graze it.
     out = []
+    cx, cy = t2[0] - t1[0], t2[1] - t1[1]
     for i in order:
         (sx, sy), (ex, ey) = starts[i], ends[i]
         dx, dy = ex - sx, ey - sy
@@ -67,15 +72,28 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
         if length <= half + SHORTEST:
             continue
         reach = length - half
-        across = (t2[0] - t1[0]) * dy - (t2[1] - t1[1]) * dx
+        across = cx * dy - cy * dx
         if abs(across) > 1e-12:
-            chord = ((t2[0] - t1[0]) * (t1[1] - sy) - (t2[1] - t1[1]) * (t1[0] - sx)) / across * length  # along the line, to the chord
-            reach = max(reach, chord - half / 2.0)
+            along = (dx * (t1[1] - sy) - dy * (t1[0] - sx)) / across  # where the line crosses the chord, from t1 (0) to t2 (1)
+            if 0.0 <= along <= 1.0:
+                chord = (cx * (t1[1] - sy) - cy * (t1[0] - sx)) / across * length  # along the line, to the chord
+                reach = max(reach, chord - half / 2.0)
         f = reach / length
-        out.append((track_width, (sx, sy), (sx + dx * f, sy + dy * f)))
+        end = (sx + dx * f, sy + dy * f)
+        if _to_segment(end, t1, t2) > 0.75 * half:
+            continue
+        out.append((track_width, (sx, sy), end))
     # A line alone starts partway along its track, where KiCad sees no end of
     # anything to join it to, and calls it unconnected; it adds little copper.
     return out if len(out) > 1 else []
+
+
+def _to_segment(p, a, b) -> float:
+    """Distance from ``p`` to the segment a b."""
+    vx, vy = b[0] - a[0], b[1] - a[1]
+    n = vx * vx + vy * vy
+    t = 0.0 if n == 0.0 else max(0.0, min(1.0, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / n))
+    return math.hypot(p[0] - a[0] - t * vx, p[1] - a[1] - t * vy)
 
 
 def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None:

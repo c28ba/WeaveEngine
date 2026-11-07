@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from shapely.geometry import Point
 
@@ -542,5 +544,21 @@ def test_a_zone_whose_fill_has_rounded_corners(tmp_path):
 """
     (tmp_path / "zone.kicad_pcb").write_text(pcb, encoding="utf-8")
     rounded = read_kicad(str(tmp_path / "zone.kicad_pcb")).rounded
-    assert [(name, layer, radius) for name, layer, _, radius in rounded] == [("GND", "F.Cu", 2.0)]
+    assert [(name, layer, radius, chamfer) for name, layer, _, radius, chamfer in rounded] == [("GND", "F.Cu", 2.0, False)]
     assert rounded[0][2].contains(Point(0.5, -0.5))
+
+
+def test_a_zone_is_smoothed_as_kicad_smooths_it():
+    """Each corner rounded to the radius, or cut back by it; never by more than
+    half of a side, so a zone narrower than its radius (lumen-mobo: 2.5 mm, radius
+    2) is rounded less instead of lost."""
+    from shapely.geometry import box
+    from weaveengine.io.kicad import _smoothed
+    square = _smoothed(box(0, 0, 10, 10), 2.0, False)
+    assert abs(square.area - (100 - (4 - math.pi) * 4)) < 0.1  # (arcs drawn as chords)
+    assert not square.contains(Point(0.3, 0.3)) and square.contains(Point(2, 0.1))
+    cut = _smoothed(box(0, 0, 10, 10), 2.0, True)
+    assert abs(cut.area - (100 - 4 * 2)) < 1e-6
+    narrow = _smoothed(box(0, 0, 2.5, 4), 2.0, False)
+    assert abs(narrow.area - (10 - (4 - math.pi) * 1.25 ** 2)) < 0.1  # each corner at half the short side
+    assert not narrow.contains(Point(0.1, 3.9)) and narrow.contains(Point(1.25, 3.9))

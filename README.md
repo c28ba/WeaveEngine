@@ -116,6 +116,14 @@ KiCad's own design rules check.
   are not taken out when the session is imported.
 - **Drawings on the Margin layer** are not treated as board edge, though
   KiCad's check holds traces to the edge clearance from them.
+- **Closed solder jumpers and net ties.** Copper drawn in a footprint that joins
+  pads of two nets is kept clear by other nets' traces, but KiCad gives that
+  copper no net, so its check reports a clearance error or a short wherever a
+  trace meets one of those pads, however it is routed. Check them by eye.
+- **One via size.** Every via is the board's default via. A net class that
+  asks for a larger via is not given it, and where its drill is larger, KiCad
+  drills the class's hole in the default via on import, leaving a thin ring
+  (one via in 44 boards). Check the annular width in the design rules check.
 - **Text on copper** is kept clear as a box around it, slightly larger than the
   letters.
 - **Large boards take a while.** A board of a few hundred connections routes

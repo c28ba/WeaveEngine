@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from weaveengine import HOME, __version__, accel, safe_output
-from weaveengine.cli import narrowed_note, unreachable_note
+from weaveengine.cli import narrowed_note, plane_left_note, unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
@@ -1094,6 +1094,8 @@ class MainWindow(QMainWindow):
                  f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
         if stats.get("fanout"):
             self.say(f"{stats['fanout']} vias placed to join pads to their net's plane")
+        if stats.get("plane_left"):
+            self.say(plane_left_note(stats["plane_left"], result.board))
         if stats.get("narrowed"):
             self.say(narrowed_note(stats["narrowed"], self.routed_design.net_names))
         if stats.get("buried_pads"):

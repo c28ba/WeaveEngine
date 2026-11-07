@@ -40,6 +40,9 @@ Wanted:
   connections might.
 - **Teardrop notches.** Where a teardrop's fan meets a rounded pad corner, the
   round ends of its traces leave small gaps (cosmetic only).
+- **A via size per net class.** Route each net with its class's via (the
+  DSN's `use_via`), not the board's default: room for a larger via has to be
+  planned for in the triangulation, not added once the routing is done.
 - **KiCad custom rules (`.kicad_dru`).** Read the rules that let fine-pitch
   parts be routed at less than the board's clearance.
 - **The Margin layer as board edge**, without burying pads that sit inside

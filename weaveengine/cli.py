@@ -59,6 +59,14 @@ def narrowed_note(narrowed: dict[int, float], names: dict) -> str:
             + ", ".join(shown[:12]) + (f" and {len(shown) - 12} more" if len(shown) > 12 else ""))
 
 
+def plane_left_note(left: list[int], board) -> str:
+    """What to tell the user about pads of a plane net that the plane does not reach and no via could be placed for."""
+    pads = {p.pad_id: p for p in board.pads}
+    names = sorted(pads[p].name for p in left)
+    return (f"{len(names)} pads of a plane net are not reached by its plane and have no room beside them for a via: "
+            + ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "") + " (join them in KiCad)")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter.")
     ap.add_argument("--version", action="version", version=f"WeaveEngine {__version__}")
@@ -160,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  unrouted: net {names.get(conn.net_id, conn.net_id)}: {pads[conn.src].name} -> {pads[conn.dst].name}")
     if stats["fanout"]:
         print(f"  {stats['fanout']} vias placed to join pads to their net's plane")
+    if stats["plane_left"]:
+        print(f"  {plane_left_note(stats['plane_left'], result.board)}")
     if stats["narrowed"]:
         print(f"  {narrowed_note(stats['narrowed'], names)}")
     if stats["buried_pads"]:

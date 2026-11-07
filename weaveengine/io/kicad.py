@@ -61,8 +61,8 @@ class KicadBoard:
     margin: list = field(default_factory=list)                        # drawings on the Margin layer (lines, as drawn)
     openings: list[tuple] = field(default_factory=list)               # (shape, canonical copper layer, how far the board's
                                                                       # margin widens it): solder mask left open on purpose
-    rounded: list[tuple] = field(default_factory=list)                # (net name, canonical copper layer, outline, radius):
-                                                                      # zones whose fill has its corners rounded
+    rounded: list[tuple] = field(default_factory=list)                # (net name, canonical copper layer, outline, radius,
+                                                                      # chamfered): zones whose fill has its corners rounded or cut
 
 
 def project_rules(path: str) -> dict[str, float]:
@@ -130,7 +130,41 @@ def _zone(item, out: KicadBoard) -> None:
         if len(pts) >= 3:
             for layer in _layers(item):
                 if layer.endswith(".Cu"):
-                    out.rounded.append((name, layer, Polygon(pts).buffer(0), float(radius[1])))
+                    out.rounded.append((name, layer, Polygon(pts).buffer(0), float(radius[1]), smoothing[1] == "chamfer"))
+
+
+def _smoothed(shape, radius: float, chamfer: bool):
+    """``shape`` with each corner rounded to ``radius`` (or cut back by it), as
+    KiCad smooths a zone's fill: never by more than half of either side, so a
+    small zone is rounded less, not lost."""
+    def ring(coords):
+        pts, out = list(coords)[:-1], []
+        for i, c in enumerate(pts):
+            p, q = pts[i - 1], pts[(i + 1) % len(pts)]
+            ax, ay, bx, by = p[0] - c[0], p[1] - c[1], q[0] - c[0], q[1] - c[1]
+            la, lb = math.hypot(ax, ay), math.hypot(bx, by)
+            cos = (ax * bx + ay * by) / (la * lb) if la > 1e-9 and lb > 1e-9 else -1.0
+            if cos <= -1.0 + 1e-9:  # (no corner)
+                out.append(c)
+                continue
+            ax, ay, bx, by = ax / la, ay / la, bx / lb, by / lb
+            if chamfer:
+                d = min(radius, la / 2.0, lb / 2.0)
+                out += [(c[0] + ax * d, c[1] + ay * d), (c[0] + bx * d, c[1] + by * d)]
+                continue
+            half = math.acos(max(-1.0, min(1.0, cos))) / 2.0
+            r = min(radius, 0.5 * la * math.tan(half), 0.5 * lb * math.tan(half))
+            d, h = r / math.tan(half), r / math.sin(half)  # vertex to where the arc starts, and to its centre
+            ux, uy = ax + bx, ay + by
+            lu = math.hypot(ux, uy)
+            o = (c[0] + ux / lu * h, c[1] + uy / lu * h)
+            start = math.atan2(c[1] + ay * d - o[1], c[0] + ax * d - o[0])
+            sweep = (math.atan2(c[1] + by * d - o[1], c[0] + bx * d - o[0]) - start + math.pi) % (2.0 * math.pi) - math.pi
+            steps = max(2, math.ceil(abs(sweep) / (math.pi / 16.0)))
+            out += [(o[0] + r * math.cos(start + sweep * k / steps), o[1] + r * math.sin(start + sweep * k / steps)) for k in range(steps + 1)]
+        return out
+    parts = getattr(shape, "geoms", [shape])
+    return unary_union([Polygon(ring(g.exterior.coords), [ring(h.coords) for h in g.interiors]).buffer(0) for g in parts])
 
 
 # -- the s-expression ----------------------------------------------------------
@@ -570,10 +604,10 @@ def apply(design, kicad: KicadBoard) -> str:
     board.margin = list(kicad.margin)
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
-        for name, layer, outline, radius in kicad.rounded:
+        for name, layer, outline, radius, chamfer in kicad.rounded:
             if on(layer) == at and design.net_ids.get(name) == net and outline.symmetric_difference(shape).area < 0.01 * shape.area:
-                smooth = shape.buffer(-radius).buffer(radius)
-                if smooth.area > 0.9 * shape.area:  # (KiCad rounds a corner less where its sides are short: those are left)
+                smooth = _smoothed(shape, radius, chamfer)
+                if not smooth.is_empty:
                     board.pours[k] = (net, at, smooth)
                 break
     return ", ".join(said)
