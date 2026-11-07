@@ -21,11 +21,25 @@ design rules check, but you should know how it was made when you decide how
 far to trust it, and check what it gives you as you would any autorouter's
 output: run KiCad's DRC before you send a board to be made.
 
+## Installing
+
+Download the build for your system from the
+[Releases](https://github.com/c28ba/WeaveEngine/releases) page and unpack it.
+The builds are not signed, so the first time:
+
+- **macOS:** right-click `WeaveEngine.app` and choose **Open**, then **Open**
+  again in the warning (double-clicking only says it cannot be checked).
+- **Windows:** run `WeaveEngine.exe` in the `WeaveEngine` folder; if
+  SmartScreen warns, choose **More info**, then **Run anyway**.
+- **Linux:** run `WeaveEngine/WeaveEngine` from the unpacked folder.
+
+Or build it yourself (see the end of this page).
+
 ## Using it with KiCad
 
 1. In the PCB editor: **File → Export → Specctra DSN…** Save the `.dsn` next to
-   the `.kicad_pro`, with the same name, so WeaveEngine finds the project's
-   board-edge clearance (a DSN does not carry it).
+   the `.kicad_pcb` and `.kicad_pro`, with the same name (KiCad's default), so
+   WeaveEngine can read what a DSN leaves out (see Known limitations).
 2. In WeaveEngine: **Open DSN…**, then **Route**. You can watch the routing
    take shape; **Stop** at any time keeps the best result so far.
 3. **Export SES…**
@@ -47,6 +61,7 @@ any it does not carry). The ones you are most likely to change:
 | Copper to board edge | From the KiCad project beside the DSN, else the clearance |
 | Safety margin | Extra clearance routed with, so nothing sits exactly on a limit |
 | Use vias | Off: every connection stays on one layer |
+| Narrow traces to reach fine-pitch pins | A net whose pins its class's width cannot reach is routed narrower, down to the board's minimum; on by default |
 | Undo long detours, Straighten vias, Round sharp corners | Clean-up after routing; all on by default |
 | Teardrops | Added where traces meet pads and vias; written to the SES as fans of traces |
 
