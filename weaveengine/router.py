@@ -287,8 +287,15 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resume
     if count <= 0:
         workers = parallel.cpu_count() if ctx.workers is None else ctx.workers
         count = max(1, min(len(VARIANTS), workers))
-    if count == 1 or not parallel.can_fork() or parallel._inside:
+    if count == 1 or parallel._inside:
         return _route_once(ctx, drc_rounds, drop_violators, resumed)
+    given = ctx
+    if not parallel.can_fork():
+        # Each variant gets a copy (``parallel.first_accepted``): of what reports
+        # progress, only what writes to a pipe still reaches anyone from there.
+        given = copy.copy(ctx)
+        given.progress = None
+        given.events = ctx.events if parallel.travels(ctx.events) else None
     # Raced in heats of four: more at once than that only slows each other
     # down (shared caches, efficiency cores), and the plain variant is in the
     # first heat, so an easy board is not held up by the rest.
@@ -298,7 +305,7 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resume
         heat = range(start, min(count, start + HEAT))
         ctx.report("racing variants %d-%d of %d" % (heat[0] + 1, heat[-1] + 1, count))
         stop = parallel.stop_flag()
-        found = parallel.first_accepted(_variant_task, (ctx, drc_rounds, drop_violators, stop, resumed), heat,
+        found = parallel.first_accepted(_variant_task, (given, drc_rounds, drop_violators, stop, resumed), heat,
                                         lambda outcome: outcome is not None and complete(outcome), len(heat), stop)
         outcomes += [o for o in found if o is not None]
         if outcomes and complete(outcomes[-1]):

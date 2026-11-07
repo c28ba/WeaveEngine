@@ -1138,14 +1138,14 @@ Use more than one core wherever it is applicable, practical, and gives a real, s
 3. **Layers**: maps are built, and geometry (straightening, relaxation, DRC, teardrops) is done, one layer per worker. The two layers of a connection are searched at the same time in threads; the compiled kernel releases the interpreter lock.
 4. **Via proposals** for all open connections, and **benchmarks**.
 
-Workers are forked, so they inherit the maps and the state without copying; only small task data is pickled (a batch costs about 15 ms to start). Without fork (Windows) everything runs in one process with the same results.
+Workers are forked, so they inherit the maps and the state without copying; only small task data is pickled (a batch costs about 15 ms to start). Without fork (Windows) the batches of items 2 to 4 run in one process, with the same results. **The race (item 1) runs in parallel there too** (2026-11): its workers are started afresh, each given a copy of the context once (`parallel.first_accepted`, `_given`); a variant is a whole pass, so the copy costs little beside it. Live events still reach the app, whose events go through a queue that can be handed to a worker (`parallel.travels`); the command line's progress bar shows only the parent's. Tested: the same routing, to the byte, as the forked race (`WEAVEENGINE_START=spawn` forces it where fork exists).
 
 **What was tried and not kept as the default:** rerouting several connections at once against one snapshot of the state in Phases 2 and 3 (`CostParams.batch`). A compiled search takes about a millisecond, less than the cost of handing it to another process, and routes computed blind to each other conflict more. It stays available as a parameter; the default is 1.
 
 **Rules**
 - For a given portfolio size the result does not depend on the number of workers or on which finishes first (tested).
 - The portfolio size itself does change the result (more variants, better chance of a clean pass), so it is a setting, not an implementation detail.
-- Everything must still work in a frozen (PyInstaller) build: use `multiprocessing.freeze_support()`; where fork is unavailable the single-process path is used.
+- Everything must still work in a frozen (PyInstaller) build: use `multiprocessing.freeze_support()`; where fork is unavailable, batches run in one process and the race in processes started afresh.
 
 **With vias (12.2):** a variant's result also carries the log of what it did to its maps; the parent replays it, so the kept variant's snapshot restores exactly. Tested on a small board; not yet confirmed on a large one.
 

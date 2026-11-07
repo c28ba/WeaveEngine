@@ -109,7 +109,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
 
 def kicad_project_rules(path: str) -> dict[str, float]:
     """Board-level minimums from a .kicad_pro file that a DSN does not carry."""
-    rules = json.load(open(path))["board"]["design_settings"]["rules"]
+    rules = json.load(open(path, encoding="utf-8"))["board"]["design_settings"]["rules"]
     return {"edge_clearance": float(rules.get("min_copper_edge_clearance", 0.0)),
             "hole_clearance": float(rules.get("min_hole_clearance", 0.0)),
             "min_clearance": float(rules.get("min_clearance", 0.0)),

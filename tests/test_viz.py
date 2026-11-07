@@ -8,12 +8,12 @@ def test_svg_export(tmp_path):
     result = route_board(board)
     out = tmp_path / "board.svg"
     export_svg(board, str(out), result.polylines, result.wire_net, pmap=result.pmap)
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert text.startswith("<svg") and text.rstrip().endswith("</svg>")
     assert text.count("<title>wire") == 3
     assert text.count("<title>pad") == 6
     export_result(result, str(out))
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert text.count("<title>wire") == 3 and text.count("<polygon") >= 1 + 6 + 6  # keepout, pads, teardrops (the outline is a path)
 
 
@@ -85,7 +85,7 @@ def test_another_heat_is_said_beside_the_range():
 def test_a_run_on_record_is_estimated_by_the_time_it_took(tmp_path):
     from weaveengine.progress import Estimator, Timings
     board = tmp_path / "board.dsn"
-    board.write_text("(pcb)")
+    board.write_text("(pcb)", encoding="utf-8")
     timings = Timings(str(tmp_path / "timings.json"))
     key = Timings.key(str(board), {"seed": 0})
     assert timings.last(key) is None and key != Timings.key(str(board), {"seed": 1})

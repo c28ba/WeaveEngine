@@ -53,7 +53,7 @@ def test_app_warns_when_kernels_are_unavailable(tmp_path):
 
 def test_app_reports_a_bad_file_without_crashing(tmp_path):
     bad = tmp_path / "bad.dsn"
-    bad.write_text("this is not a board")
+    bad.write_text("this is not a board", encoding="utf-8")
     done = run_app("--self-test", str(bad))
     assert done.returncode == 2 and "could not open" in done.stdout
 

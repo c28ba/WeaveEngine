@@ -109,7 +109,7 @@ class Settings:
         path = path or default_path()
         settings = cls()
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, ValueError):
             return settings
@@ -124,7 +124,7 @@ class Settings:
     def save(self, path: str | None = None) -> str:
         path = path or default_path()
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2)
             f.write("\n")
         return path

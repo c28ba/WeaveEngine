@@ -1,11 +1,10 @@
 # Tests WeaveEngine and builds the desktop app on macOS, Windows and Linux.
-# Runs on a version tag (v1.0.0) or by hand (Actions tab, "Run workflow").
-# Each build is uploaded as an artifact of the run.
+# Runs on every push (branches and version tags such as v1.0.0) and by hand
+# (Actions tab, "Run workflow"). Each build is uploaded as an artifact of the run.
 name: build
 
 on:
   push:
-    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -31,7 +30,14 @@ jobs:
           pip install -r requirements-build.txt
           pip install -e . --no-deps
       - name: Test
-        run: python -m pytest -q
+        shell: bash
+        # A failure is also posted as annotations, readable without signing in.
+        run: |
+          set +e   # (steps run with -e: the status is wanted, not an exit)
+          python -m pytest -q -rfE --tb=short > pytest.txt 2>&1; status=$?
+          tail -n 60 pytest.txt
+          if [ $status -ne 0 ]; then PYTHONIOENCODING=utf-8 python .github/annotate.py pytest.txt; fi
+          exit $status
       - name: Route a board from the command line
         run: python -m weaveengine.cli "boards/Word of RAM.dsn" -o word.ses --quiet
       - name: Build the app
