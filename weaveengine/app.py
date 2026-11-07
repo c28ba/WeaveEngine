@@ -20,8 +20,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
-from weaveengine import safe_output
-from weaveengine import accel
+from weaveengine import accel, safe_output
 from weaveengine.cli import unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
