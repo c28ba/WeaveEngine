@@ -24,6 +24,7 @@ from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 
 ARC_STEPS = 16       # segments of a drawn arc or circle
+AROUND = 1.0 / math.cos(math.pi / ARC_STEPS)  # a circle's polygon is drawn round it, never inside (a 3.4 mm hole inside: 0.03 mm short)
 CHAR = 1.3           # width of a character of KiCad's stroke font, of the font width (its widest, '>', and room about it)
 LINE = 1.62          # line spacing, of the font height
 NARROWEST = 0.127    # mm: no trace is narrowed below this, whatever the rules allow (5 mil: what board makers make at their standard price)
@@ -196,8 +197,10 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
             pad.drill = min(w, h)
             offset = _numbers(_child(drill, "offset"), 2)
             hx, hy = place(px + (offset[0] if offset else 0.0), py + (offset[1] if offset else 0.0))
-            hole = Point(0, 0).buffer(1.0, quad_segs=ARC_STEPS // 4)
-            hole = affinity.scale(hole, w / 2.0, h / 2.0) if oval else affinity.scale(hole, w / 2.0, w / 2.0)
+            # An oval hole is a slot (a stadium: a line with round ends), not an ellipse, which falls inside it.
+            run = (abs(w - h) / 2.0, 0.0) if w >= h else (0.0, abs(w - h) / 2.0)
+            hole = LineString([(-run[0], -run[1]), run]).buffer(min(w, h) / 2.0 * AROUND, quad_segs=ARC_STEPS // 4) \
+                if oval and abs(w - h) > 1e-9 else Point(0, 0).buffer(w / 2.0 * AROUND, quad_segs=ARC_STEPS // 4)
             turn = (at[2] if len(at) > 2 else 0.0)  # the pad's angle in the file includes its part's
             pad.hole = affinity.translate(affinity.rotate(hole, turn), hx, hy)
     out.pads.append(pad)
@@ -217,7 +220,7 @@ def _custom(item, x: float, y: float, turn: float, size: list, mirrored: bool):
     if anchor and len(anchor) > 1 and anchor[1] == "rect":
         parts = [Polygon([place(-w / 2, -h / 2), place(w / 2, -h / 2), place(w / 2, h / 2), place(-w / 2, h / 2)])]
     else:
-        parts = [Point(x, y).buffer(w / 2.0, quad_segs=ARC_STEPS // 4)] if w > 0 else []
+        parts = [Point(x, y).buffer(w / 2.0 * AROUND, quad_segs=ARC_STEPS // 4)] if w > 0 else []
     for prim in (_child(item, "primitives") or [])[1:]:
         if isinstance(prim, list) and prim[0].startswith("gr_"):
             shape = _shape(prim, place, prim[0])
@@ -290,7 +293,7 @@ def _shape(item, place, kind: str):
         shape = Polygon([place(x0, y0), place(x1, y0), place(x1, y1), place(x0, y1)]).buffer(0)
     elif name == "circle":
         c, e = pt(_child(item, "center")), pt(_child(item, "end"))
-        shape = Point(c).buffer(math.dist(c, e), quad_segs=ARC_STEPS // 4)
+        shape = Point(c).buffer(math.dist(c, e) * AROUND, quad_segs=ARC_STEPS // 4)
     elif name == "arc":
         start, mid, end = (pt(_child(item, k)) for k in ("start", "mid", "end"))
         if start and mid and end:
@@ -325,10 +328,10 @@ def _text(item, place, out: KicadBoard, kind: str, fp_angle: float = 0.0, ref: s
         return
     text = next((x for x in item[1:] if isinstance(x, str) and x not in ("reference", "value", "user", "Reference", "Value")
                  and not _is_number(x)), "")
-    if kind == "property":
+    if kind in ("property", "fp_text"):  # (fp_text reference "R1"): its kind first
         text = item[2] if len(item) > 2 and isinstance(item[2], str) else ""
-    elif kind == "fp_text":
-        text = item[2] if len(item) > 2 and isinstance(item[2], str) else ""
+    elif kind in ("gr_text", "gr_text_box", "fp_text_box"):  # its text first, which may be a number ("4")
+        text = item[1] if len(item) > 1 and isinstance(item[1], str) else ""
     if not text.strip():
         return
     font = _child(effects, "font") if effects else None
@@ -447,7 +450,8 @@ def apply(design, kicad: KicadBoard) -> str:
         has = every if "*" in kp.layers else frozenset(i for i in (on(l) for l in kp.layers) if i is not None)
         bare = every if not kp.plated else every - has
         if bare:
-            board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=hole, copper=True))
+            # (a local clearance of the pad holds its hole too: a mounting hole's 1.55 mm, against the board's 0.15)
+            board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=max(hole, kp.clearance), copper=True))
             holes += 1
     kept = [x for x in ("vias" if rules.via_clearance else "", f"{narrow} pads with a narrow ring" if narrow else "",
                         f"{holes} holes" if holes else "") if x]

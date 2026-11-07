@@ -431,3 +431,51 @@ def test_an_unreachable_pad_is_told_why():
     assert [why_buried(board, pads[n]) for n in ("C1-1", "J1-1", "U1-1")] == ["outside", "edge", "keepout"]
     note = unreachable_note([0, 1, 2], board)
     assert "outside the board edge (a part not yet placed on the board?): C1-1" in note and "keepout: U1-1" in note
+
+
+def test_a_hole_is_kept_clear_of_all_of_its_circle(tmp_path):
+    """A hole is drawn as a polygon round its circle, not inside it: inside, a
+    3.4 mm switch hole came 0.03 mm short, and traces passed it at 0.21 mm
+    against a hole clearance of 0.25."""
+    import math
+    dsn = KICAD_STYLE.replace("(pcb demo.dsn", "(pcb hole.dsn")
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (footprint "SW" (layer "F.Cu") (at 10 3)
+    (property "Reference" "SW1" (at 0 0 0) (layer "F.SilkS"))
+    (pad "" np_thru_hole circle (at 0 0) (size 3.4 3.4) (drill 3.4) (layers "*.Cu" "*.Mask"))
+    (pad "" np_thru_hole oval (at 5 0) (size 1.5 2) (drill oval 1.5 2) (layers "*.Cu" "*.Mask")))
+)
+"""
+    (tmp_path / "hole.dsn").write_text(dsn, encoding="utf-8")
+    (tmp_path / "hole.kicad_pcb").write_text(pcb, encoding="utf-8")
+    design = read_dsn(str(tmp_path / "hole.dsn"))
+    holes = [o for o in design.board.obstacles if o.copper and o.shape.distance(Point(10, -3)) < 1e-9]
+    assert holes
+    circle = [Point(10 + 1.7 * math.cos(a / 100), -3 + 1.7 * math.sin(a / 100)) for a in range(629)]
+    assert all(holes[0].shape.covers(p) for p in circle)
+    # An oval hole is a slot, a line with round ends, wider at its corners than an ellipse would be.
+    slots = [o for o in design.board.obstacles if o.copper and o.shape.distance(Point(15, -3)) < 1e-9]
+    ends = [Point(15 + 0.75 * math.cos(a / 100), -3 + s * (0.25 + 0.75 * abs(math.sin(a / 100))))
+            for a in range(315) for s in (1, -1)]
+    assert slots and all(slots[0].shape.covers(p) for p in ends)
+
+
+def test_copper_text_that_is_a_number_and_a_mounting_hole_s_own_clearance(tmp_path):
+    """A pin number written on copper ("4") is copper all the same, and a
+    mounting hole's local clearance holds its hole, not the board's."""
+    dsn = KICAD_STYLE.replace("(pcb demo.dsn", "(pcb text.dsn")
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (gr_text "4" (at 3 2 0) (layer "F.Cu") (effects (font (size 0.8 0.8) (thickness 0.2))))
+  (footprint "MH" (layer "F.Cu") (at 16 8)
+    (property "Reference" "MH1" (at 0 0 0) (layer "F.SilkS"))
+    (pad "" np_thru_hole circle (at 0 0) (size 3 3) (drill 3) (layers "*.Cu" "*.Mask") (clearance 1.55)))
+)
+"""
+    (tmp_path / "text.dsn").write_text(dsn, encoding="utf-8")
+    (tmp_path / "text.kicad_pcb").write_text(pcb, encoding="utf-8")
+    design = read_dsn(str(tmp_path / "text.dsn"))
+    texts = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(3, -2))]
+    holes = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(16, -8))]
+    assert texts and holes and holes[0].clearance == pytest.approx(1.55)
