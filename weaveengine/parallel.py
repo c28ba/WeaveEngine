@@ -15,6 +15,7 @@ needs once: a variant is a whole pass, so the copy costs little beside it.
 import multiprocessing
 import os
 import sys
+import threading
 import time
 
 before_fork: list = []  # callables run before workers are forked (to stop helper threads: fork and threads do not mix)
@@ -48,15 +49,36 @@ def _call(item):
     return fn(shared, item)
 
 
+def _orphaned() -> None:
+    """In a worker: ends it once the process that started it has gone. A worker
+    can outlive it (the routing process cancelled while a sibling, killed, held
+    the lock of the pool's queue) and would then wait on that lock for ever,
+    holding pipes that keep its grandparent from exiting."""
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+    ppid = os.getppid()
+
+    def watch():
+        while True:
+            parent.join(1.0)
+            if not parent.is_alive() or os.getppid() != ppid:
+                os._exit(1)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def _mark_worker():
     global _inside
     _inside = True
+    _orphaned()
 
 
 def _given(task):
     """Starts a worker that was not forked: it is given the task, as a copy."""
     global _task, _inside
     _task, _inside = task, True
+    _orphaned()
 
 
 def run(fn, shared, items, workers: int | None = None, min_items: int = 2) -> list:
