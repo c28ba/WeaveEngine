@@ -1,5 +1,11 @@
 """post.py OUTDIR  (KiCad's python) -> routed.kicad_pcb (board.ses imported) and view.kicad_pcb (the same, pours unfilled, for pictures)."""
 import sys, os
+if sys.platform == "win32":
+    # Without a wx app, some of KiCad's checks on loading a board raise a wxWidgets assert, which on Windows is a
+    # dialog that waits, unseen, for a click when run over SSH or from a service: with one made and asserts off, none.
+    import wx
+    _app = wx.App(False)
+    wx.DisableAsserts()
 import pcbnew
 out = sys.argv[1]
 b = pcbnew.LoadBoard(os.path.join(out, "board.kicad_pcb"))
