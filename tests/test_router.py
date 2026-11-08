@@ -162,6 +162,25 @@ def test_vias_carry_connections_under_a_wall():
         assert board.outline.exterior.distance(via.shape) >= rules.clearance - 1e-6
 
 
+def test_no_via_touches_an_area_that_forbids_vias():
+    """A rule area that forbids vias but not tracks (a DSN's via_keepout,
+    ``Board.no_via``): the vias that stood in it go elsewhere, and traces
+    still cross it."""
+    band = Polygon([(8, 0), (14.4, 0), (14.4, 20), (8, 20)])   # the wall's left side, where vias go
+    board = two_layer_wall_board()
+    free = route_board(board, options=Options(portfolio=1), workers=1)
+    assert any(v.shape.intersects(band) for v in free.vias)
+    board.no_via = [band]
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert result.unrouted == [] and result.stats["routed"] == 3
+    assert not any(v.shape.intersects(band) for v in result.vias)
+    assert any(LineString(line).intersects(band) for line in result.polylines.values())
+    assert all(net_is_connected(result, n) for n in range(3))
+    assert_clean(board, result)
+    with pytest.raises(ValueError):   # the routing made without the area, its vias in it, is not gone on from
+        route_board(board, options=Options(portfolio=1), workers=1, resume=free.kept)
+
+
 def test_through_hole_pads_let_connections_change_layer_without_vias():
     """Two nets that cross: one layer cannot hold both straight, two layers can."""
     board = Board.rectangle(20, 20, Rules(0.2, 0.2), layers=["F.Cu", "B.Cu"])
@@ -985,3 +1004,23 @@ def test_a_pad_its_plane_does_not_reach_gets_a_via_down_to_it():
     signal = [LineString(l).buffer(rules.width(1) / 2) for w, l in result.polylines.items() if result.wire_net[w] == 1]
     for via in placed:  # clear of the signal's copper by the clearance
         assert all(s.distance(via.shape) >= rules.clearance - 1e-6 for s in signal)
+
+
+def test_a_via_down_to_a_plane_keeps_out_of_an_area_that_forbids_vias():
+    """A pad its plane does not reach gets its via on another side of it when
+    the nearest place for one is in an area no via may touch (``Board.no_via``)."""
+    from shapely.geometry import box as rect
+    front = frozenset({0})
+    board = Board.rectangle(30, 20, Rules(0.25, 0.2), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.rect(0, 5, 10, 1.0, 1.4, 0, layers=front), Pad.rect(1, 25, 10, 1.0, 1.4, 0, layers=front),
+                   Pad.rect(3, 5, 15, 1.0, 1.0, 1, layers=front), Pad.rect(4, 25, 15, 1.0, 1.0, 1, layers=front)]
+    board.plane_nets = {0}
+    board.pours = [(0, 1, rect(1, 1, 29, 19))]
+    area = rect(5.2, 8, 8, 12)   # the right of pad 0, where its via goes otherwise
+    beside = lambda result: min((v for v in result.vias if v.fanout), key=lambda v: math.dist(v.centre, (5, 10)))
+    assert beside(route_board(board, options=Options(portfolio=1), workers=1)).shape.intersects(area)
+    board.no_via = [area]
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert result.unrouted == [] and result.stats["fanout"] == 2 and result.stats["plane_left"] == []
+    assert not any(v.shape.intersects(area) for v in result.vias)
+    assert board.pads[0].shape.distance(Point(beside(result).centre)) < board.rules.via_diameter / 2 + 0.5   # still beside it

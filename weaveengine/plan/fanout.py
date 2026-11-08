@@ -49,6 +49,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance)
     inside_via = board.outline.buffer(-(edge + r))
     margin = shapely.union_all([m.buffer(edge) for m in board.margin]) if board.margin else None  # (KiCad holds copper off these too)
+    no_via = shapely.union_all(board.no_via) if board.no_via else None  # (areas no via may touch)
     nlayers = len(board.layers)
     # Everything a via or a stub must keep clear of, per layer: (shape, net, what it asks; -2 = keepout).
     things: list[list] = [[] for _ in range(nlayers)]
@@ -134,6 +135,8 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
                 return False
             disc = circle_polygon(x, y, r)
             if margin is not None and disc.intersects(margin):
+                return False
+            if no_via is not None and disc.intersects(no_via):
                 return False
             if any(math.dist((x, y), v.centre) < 2 * r + (0.0 if v.net_id == pad.net_id else keep) - 1e-9 for v in vias):
                 return False

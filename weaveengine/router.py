@@ -97,7 +97,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
                   (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events)
-    maps = [_print(layer.pmap) for layer in layers]  # (as built: before any via is put into them)
+    # (As built: before any via is put into them. With the areas no via may touch, which are not in them.)
+    maps = [_print(layer.pmap) for layer in layers] + [area.wkt for area in board.no_via]
     if resume is not None:
         if resume["maps"] != maps:
             raise ValueError("the board or its rules have changed since that routing was made: it cannot be gone on from (route it from nothing: Restart)")

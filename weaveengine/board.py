@@ -154,6 +154,7 @@ class Board:
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
+    no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
     components: list[Component] = field(default_factory=list)
 
     @classmethod

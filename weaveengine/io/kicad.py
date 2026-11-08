@@ -4,7 +4,8 @@ KiCad's DSN export carries the pads, the outline, the zones and the net
 classes, and leaves out much the board's own design rules check holds traces
 to: text and drawings on copper layers, the local clearances of parts and pads,
 the drill of every hole (so the hole clearance), what a rule area forbids
-(every one is written as a plain keepout), and the board's own minimums.
+(one that forbids neither tracks nor vias, only parts or pours, is written as
+a plain keepout all the same), and the board's own minimums.
 (Drawings on the Margin layer, which KiCad's check holds to the edge
 clearance, are not taken as edge: boards draw there what is not an edge,
 closer to their own pads than that, and taken as edge those pads could not be
