@@ -26,3 +26,5 @@ info = {"src": src, "layers": b.GetCopperLayerCount(), "footprints": len(b.GetFo
         "nets": b.GetNetCount(), "orig_tracks": len(tracks) - vias, "orig_vias": vias, "zones": len(b.Zones()), "dsn": bool(ok)}
 json.dump(info, open(os.path.join(out, "prep.json"), "w"))
 print(json.dumps(info))
+sys.stdout.flush()
+os._exit(0)  # (not a normal exit: on Windows the wx app made above can hang its teardown for ever)

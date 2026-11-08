@@ -16,3 +16,5 @@ for z in b.Zones():
     z.UnFill()
 b.Save(os.path.join(out, "view.kicad_pcb"))
 print("imported" if ok else "IMPORT FAILED", len(b.GetTracks()), "tracks")
+sys.stdout.flush()
+os._exit(0)  # (not a normal exit: on Windows the wx app made above can hang its teardown for ever)
