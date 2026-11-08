@@ -1,6 +1,6 @@
 [project]
 name = "weaveengine"
-version = "1.0.0"
+version = "1.0.1"
 description = "WeaveEngine: a topological PCB autorouter"
 license = {text = "GPL-3.0-or-later"}
 readme = "README.md"
