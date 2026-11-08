@@ -108,8 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     rules = design.board.rules
     if args.ignore_keepouts:
         kept = [o for o in design.board.obstacles if o.net_id >= 0]
-        print(f"ignoring {len(design.board.obstacles) - len(kept)} keepout areas")
-        design.board.obstacles = kept
+        print(f"ignoring {len(design.board.obstacles) - len(kept) + len(design.board.no_via)} keepout areas")
+        design.board.obstacles, design.board.no_via = kept, []
     if args.trace_width:
         rules.trace_width = args.trace_width
     if args.clearance:

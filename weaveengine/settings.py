@@ -155,8 +155,8 @@ class Settings:
         found = detected_rules(design, dsn_path)
         if self.ignore_keepouts:
             kept = [o for o in board.obstacles if o.net_id >= 0]
-            notes.append(f"ignoring {len(board.obstacles) - len(kept)} keepout areas")
-            board.obstacles = kept
+            notes.append(f"ignoring {len(board.obstacles) - len(kept) + len(board.no_via)} keepout areas")
+            board.obstacles, board.no_via = kept, []
         if self.trace_width > 0:
             rules.trace_width = self.trace_width
         if self.clearance > 0:

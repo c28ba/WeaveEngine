@@ -343,6 +343,61 @@ def test_cutouts_holes_and_round_paths(tmp_path):
     assert len(read_dsn(str(tmp_path / "again.dsn")).board.outline.interiors) == 1
 
 
+# Rule areas as KiCad 9.0.8 writes them: forbidding tracks and vias, vias only, tracks only; and a part's, vias only.
+KICAD_RULE_AREAS = """(pcb areas.dsn
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu (type signal)) (layer B.Cu (type signal))
+    (boundary (path pcb 0  0 0  40000 0  40000 -20000  0 -20000  0 0))
+    (keepout "" (polygon F.Cu 0  2000 -5000  8000 -5000  8000 -15000  2000 -15000  2000 -5000))
+    (via_keepout "" (polygon F.Cu 0  12000 -5000  18000 -5000  18000 -15000  12000 -15000  12000 -5000))
+    (via_keepout "" (polygon B.Cu 0  12000 -5000  18000 -5000  18000 -15000  12000 -15000  12000 -5000))
+    (wire_keepout "" (polygon F.Cu 0  22000 -5000  28000 -5000  28000 -15000  22000 -15000  22000 -5000))
+    (rule (width 200) (clearance 200))
+  )
+  (placement
+    (component J (place J1 34000 -10000 back 90))
+  )
+  (library
+    (image J (pin Round[A]Pad_1500_um 1 0 0) (pin Round[A]Pad_1500_um 2 0 -2540)
+      (via_keepout "" (polygon F.Cu 0  -1000 1000  3000 1000  3000 -3540  -1000 -3540  -1000 1000)))
+    (padstack Round[A]Pad_1500_um (shape (circle F.Cu 1500)) (shape (circle B.Cu 1500)) (attach off))
+  )
+  (network (net A (pins J1-1 J1-2)))
+  (wiring)
+)
+"""
+
+
+def test_rule_areas_that_forbid_tracks_or_vias_only(tmp_path):
+    """KiCad writes a rule area that forbids tracks and vias as a keepout, one
+    that forbids tracks only as a wire_keepout, and one that forbids vias only
+    as a via_keepout, on the board or in a part's image. The first two keep
+    traces out; the third keeps vias out, whatever its layer (``Board.no_via``)."""
+    path = tmp_path / "areas.dsn"
+    path.write_text(KICAD_RULE_AREAS, encoding="utf-8")
+    board = read_dsn(str(path)).board
+    assert sorted((o.shape.bounds, o.layers) for o in board.obstacles) == [((2.0, -15.0, 8.0, -5.0), frozenset({0})),
+                                                                           ((22.0, -15.0, 28.0, -5.0), frozenset({0}))]
+    assert len(board.no_via) == 3 and [area.bounds for area in board.no_via[:2]] == [(12.0, -15.0, 18.0, -5.0)] * 2
+    assert [round(v, 6) for v in board.no_via[2].bounds] == [33.0, -13.0, 37.54, -9.0]   # placed with its part: flipped, turned
+    assert len(read_dsn(str(path), layers=["B.Cu"]).board.no_via) == 3   # a via goes through layers that are not routed too
+    write_dsn(board, str(tmp_path / "again.dsn"))
+    assert [a.bounds for a in read_dsn(str(tmp_path / "again.dsn")).board.no_via] == [a.bounds for a in board.no_via]
+    # A rule area beside it in the KiCad board that lets tracks through (it forbids vias only) does not open a wire_keepout of its bounds.
+    (tmp_path / "areas.kicad_pcb").write_text("""(kicad_pcb (version 20241229)
+  (zone (net 0) (net_name "") (layer "F.Cu") (name "no vias") (hatch edge 0.5)
+    (keepout (tracks allowed) (vias not_allowed) (pads allowed) (copperpour allowed) (footprints allowed))
+    (polygon (pts (xy 22 5) (xy 28 5) (xy 28 15) (xy 22 15)))))
+""", encoding="utf-8")
+    assert len(read_dsn(str(path)).board.obstacles) == 2
+    # A wire_keepout over all of a layer is a single-sided board's, as a keepout is.
+    path.write_text(KICAD_STYLE.replace('(keepout "" (rect F.Cu 9000 -6000 11000 -4000))',
+                                        '(wire_keepout "" (rect F.Cu -1000 1000 21000 -11000))'), encoding="utf-8")
+    assert read_dsn(str(path)).walled == ["F.Cu"]
+
+
 def test_rules_the_board_gives_and_does_not(tmp_path):
     """The settings editor shows what the board gives for each rule, and warns
     about what it does not: a rule missing from the DSN, and the edge

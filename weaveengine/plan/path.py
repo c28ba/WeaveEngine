@@ -81,16 +81,21 @@ def locate(pmap: PlanarMap, pts: np.ndarray) -> np.ndarray:
 class Legal:
     """Where a via's centre may be: inside every layer's free space, shrunk so
     that the via copper keeps its clearance from fixed copper and the board
-    edge. The exact regions, and a coarse grid of them for testing many points
-    at once. Other vias and the traces are checked separately."""
+    edge, and not so near an area no via may touch (``Board.no_via``) that its
+    copper does. The exact regions, and a coarse grid of them for testing many
+    points at once. Other vias and the traces are checked separately."""
 
     def __init__(self, ctx):
         rules = ctx.board.rules
         # (A via that asks more than the rule's clearance of fixed copper keeps that much more off it.)
         margin = rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) - rules.base_width / 2.0 + 0.01 + rules.apart(rules.via_clearance) - rules.clearance
+        no_via = (shapely.union_all(ctx.board.no_via).buffer(rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + 0.01)
+                  if ctx.board.no_via else None)
         self.regions = []
         for layer in ctx.layers:
             region = layer.pmap.free_space.free.buffer(-margin)
+            if no_via is not None:
+                region = region.difference(no_via)
             shapely.prepare(region)
             self.regions.append(region)
         x0, y0, x1, y1 = ctx.board.outline.bounds

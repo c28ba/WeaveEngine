@@ -174,12 +174,20 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     # A keepout on every layer at once ("signal") is how KiCad writes a cutout
     # in the board (Edge.Cuts inside the outline); a keepout area it writes
     # per layer. A cutout is board edge, and keeps the edge clearance.
-    keepouts, cutouts = [], []
-    for k in _children(structure, "keepout"):
+    # A rule area that forbids tracks but not vias it writes as a wire_keepout,
+    # kept out of as a keepout (by vias too); one that forbids vias but not
+    # tracks, as a via_keepout: traces cross it, no via touches it, whatever
+    # its layer, since a via goes through them all (``Board.no_via``).
+    keepouts, cutouts, no_via = [], [], []  # keepouts: (shape, layer, whether it is a wire_keepout)
+    for k in _children(structure, "keepout") + _children(structure, "wire_keepout"):
         for desc in k[1:]:
             got = _shape(desc, scale) if isinstance(desc, list) else None
-            if got:
-                (cutouts if got[1] in ("signal", "pcb") else keepouts).append(got)
+            if got and k[0] == "keepout" and got[1] in ("signal", "pcb"):
+                cutouts.append(got)
+            elif got:
+                keepouts.append((got[0], got[1], k[0] == "wire_keepout"))
+    for k in _children(structure, "via_keepout"):
+        no_via += [got[0] for got in (_shape(desc, scale) for desc in k[1:] if isinstance(desc, list)) if got]
     if cutouts:
         outline = outline.difference(unary_union([g[0] for g in cutouts]))
         if outline.geom_type != "Polygon":
@@ -189,15 +197,16 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     kicad = read_kicad(path)
     open_areas = kicad.open_areas if kicad else []
 
-    def forbids(shape) -> bool:
-        return not any(all(abs(a - b) < 0.01 for a, b in zip(shape.bounds, area)) for area in open_areas)
+    def forbids(shape, wire: bool = False) -> bool:
+        """(A wire_keepout forbids tracks whatever rule area beside it has its bounds: one that forbids vias only, say.)"""
+        return wire or not any(all(abs(a - b) < 0.01 for a, b in zip(shape.bounds, area)) for area in open_areas)
 
     # A layer one keepout covers whole is not routed: how a single-sided board
     # is drawn in KiCad (two copper layers, a rule area forbidding tracks on one).
     walled = []
     if layers is None:
         for name in use:
-            shut = [shape for shape, layer, _ in keepouts if layer == name and forbids(shape)]
+            shut = [shape for shape, layer, wire in keepouts if layer == name and forbids(shape, wire)]
             if shut and outline.difference(unary_union(shut)).area < 1e-3 * outline.area:
                 walled.append(name)
         if len(walled) < len(use):
@@ -249,11 +258,11 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         rules.clearance = max(clearances)
     else:
         defaulted["clearance"] = f"clearance {rules.clearance:g} mm"
-    board = Board(outline=outline, rules=rules, layers=list(use))
+    board = Board(outline=outline, rules=rules, layers=list(use), no_via=no_via)
 
     ignored = 0
-    for shape, layer, _ in keepouts:
-        if not forbids(shape):
+    for shape, layer, wire in keepouts:
+        if not forbids(shape, wire):
             ignored += 1
             continue
         on = layer_set([layer])
@@ -348,11 +357,13 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 component.pads.append(len(board.pads))
                 board.pads.append(Pad(len(board.pads), pin_net.get(name, -1), shape, name, on, radius))
             # The part's own keepouts: KiCad writes a hole without copper (NPTH) as one per layer.
-            for k in _children(image, "keepout"):
+            for k in _children(image, "keepout") + _children(image, "wire_keepout"):
                 for shape, layer, _ in filter(None, (_shape(d, scale) for d in k[1:] if isinstance(d, list))):
                     on = layer_set([layer], back)
                     if on is None or on:
                         board.obstacles.append(Obstacle(on_board(shape), layers=on))
+            for k in _children(image, "via_keepout"):
+                board.no_via += [on_board(got[0]) for got in (_shape(d, scale) for d in k[1:] if isinstance(d, list)) if got]
 
     # Nets with a copper plane are connected by that plane, not by traces. Pours
     # are not modelled, so those nets are left alone. KiCad writes every zone as
@@ -434,6 +445,8 @@ def write_dsn(board: Board, path: str, name: str = "board", layer: str = "F.Cu")
         out.append('    (keepout "" (polygon signal 0 ' + " ".join(f"{u(x)} {u(y)}" for x, y in hole.coords) + "))")
     for obs in board.obstacles:
         out.append(f'    (keepout "" (polygon {layer} 0 ' + " ".join(f"{u(x)} {u(y)}" for x, y in obs.shape.exterior.coords) + "))")
+    for area in board.no_via:
+        out.append(f'    (via_keepout "" (polygon {layer} 0 ' + " ".join(f"{u(x)} {u(y)}" for x, y in area.exterior.coords) + "))")
     out += [f"    (rule (width {u(rules.trace_width)}) (clearance {u(rules.clearance)}))", "  )", "  (placement"]
     for pad in board.pads:
         x, y = pad.centre
