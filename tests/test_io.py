@@ -808,3 +808,30 @@ def test_measure_reports_a_via_inside_a_keepout_or_a_no_via_area(tmp_path, monke
     assert check.measure(design, ses).vias_in_keepout == 1
     monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", *far)]))
     assert check.measure(design, ses).vias_in_keepout == 0
+
+
+def test_a_blind_fixed_via_is_copper_on_its_layers_only(tmp_path):
+    """A fixed via whose padstack has copper on the front only (a blind or buried
+    one) is an obstacle there, not on every layer as a through via is."""
+    path = tmp_path / "blind.dsn"
+    path.write_text(KICAD_STYLE.replace("  )\n  (network", '    (padstack Blind (shape (circle F.Cu 800)) (attach off))\n'
+                                        "  )\n  (network").replace(
+        "  (wiring)", '  (wiring\n    (via Blind 8000 -5000 (net GND)(type fix))\n  )'), encoding="utf-8")
+    design = read_dsn(str(path))
+    via = next(o for o in design.board.obstacles if o.via)
+    assert via.layers == frozenset({0}) and via.on(0) and not via.on(1)
+
+
+def test_a_pad_a_locked_trace_leaves_is_not_buried():
+    from shapely.geometry import box
+    from weaveengine.board import Board, Obstacle, Pad, Rules
+    from weaveengine.plan.context import Layer, decompose
+    from weaveengine.topo import planar_map
+    board = Board.rectangle(30, 10, Rules(0.2, 0.2))
+    board.pads += [Pad.circle(0, 5, 5, 0.6, 0), Pad.circle(1, 25, 5, 0.6, 0)]
+    board.obstacles.append(Obstacle(box(4, 4, 6, 6), -1))   # a keepout over pad 0
+    layers = [Layer(0, "F.Cu", planar_map.build(board))]
+    assert decompose(board, layers)[1] == [0]
+    board.obstacles.append(Obstacle(box(5, 4.8, 12, 5.2), 0, frozenset({0})))   # a locked trace of the net, out of the pad
+    pairs, buried = decompose(board, layers)
+    assert buried == [] and pairs == []

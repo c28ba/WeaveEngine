@@ -119,6 +119,38 @@ def _touching(pads: list) -> set[tuple[int, int]]:
             and (pads[i].layers is None or pads[j].layers is None or pads[i].layers & pads[j].layers)}
 
 
+def _locked(board: Board, pads: list) -> tuple[set[tuple[int, int]], set[int]]:
+    """How locked wiring (fixed traces and vias from the DSN) of a net joins its ``pads``:
+    the index pairs it joins, and the indices of those it touches at all. Wiring joins
+    what it touches on a shared layer, a trace to a via to a trace."""
+    net = pads[0].net_id
+    fixed = [o for o in board.obstacles if o.net_id == net and not o.copper]
+    if not fixed:
+        return set(), set()
+    items = [(p.shape, p.layers) for p in pads] + [(o.shape, o.layers) for o in fixed]
+    tree = shapely.STRtree([shape for shape, _ in items])
+    seen: dict[int, int] = {}   # item -> the piece of wiring (first item) it was reached from
+    pairs, led = set(), set()
+    for start in range(len(pads), len(items)):
+        if start in seen:
+            continue
+        seen[start] = start
+        todo, group = [start], []
+        while todo:
+            i = todo.pop()
+            group.append(i)
+            shape, layers = items[i]
+            for j in tree.query(shape, predicate="intersects").tolist():
+                other = items[j][1]
+                if j not in seen and (layers is None or other is None or layers & other):
+                    seen[j] = start
+                    todo.append(j)
+        touched = sorted(i for i in group if i < len(pads))
+        led.update(touched)
+        pairs.update((a, b) for n, a in enumerate(touched) for b in touched[n + 1:])
+    return pairs, led
+
+
 def decompose(board: Board, layers: list[Layer]) -> tuple[list[tuple[int, int, int]], list[int]]:
     """Multi-pin nets -> 2-pin connections (net, pad, pad). Also returns pads
     that cannot be reached on any layer, other than through copper of their
@@ -130,13 +162,17 @@ def decompose(board: Board, layers: list[Layer]) -> tuple[list[tuple[int, int, i
     buried: list[int] = []
     for net_id, pads in sorted(board.nets().items()):
         touching = _touching([by_id[p] for p in pads]) if len(pads) >= 2 else set()
+        # Locked wiring that touches a pad leads out of it, even through a keepout: the pad is not buried, and
+        # what the wiring joins needs no trace.
+        joined, led = _locked(board, [by_id[p] for p in pads])
+        touching |= joined
         # A pad no trace reaches is joined all the same if its copper meets a pad that one does.
         for _ in range(len(pads)):
             more = {pads[k] for i, j in touching for k in (i, j) if pads[i] in reachable or pads[j] in reachable} - reachable
             if not more:
                 break
             reachable = reachable | more
-        buried += [p for p in pads if p not in reachable]
+        buried += [p for k, p in enumerate(pads) if p not in reachable and k not in led]
         keep = [k for k, p in enumerate(pads) if p in reachable]
         index = {k: n for n, k in enumerate(keep)}
         if len(keep) >= 2:

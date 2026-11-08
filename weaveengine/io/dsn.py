@@ -437,10 +437,13 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             continue
         net = _child(via, "net")
         net_id = design.net_ids.get(net[1], -1) if net else -1
-        parts = [g[0] for g in (_shape(d, scale) for d in padstacks.get(via[1], [])) if g]
-        if parts:
+        # Each shape of the via's padstack is copper on its own layer: a blind or buried via is an obstacle on those layers only.
+        shapes = [got for got in (_shape(d, scale) for d in padstacks.get(via[1], [])) if got]
+        parts, on = [g[0] for g in shapes], layer_set([g[1] for g in shapes], unrouted_too=True)
+        if parts and (on is None or on):
             shape = affinity.translate(unary_union(parts), float(via[2]) * scale, float(via[3]) * scale)
-            board.obstacles.append(Obstacle(shape if shape.geom_type == "Polygon" else shape.convex_hull, net_id, via=True))
+            board.obstacles.append(Obstacle(shape if shape.geom_type == "Polygon" else shape.convex_hull, net_id,
+                                            on, via=True))
     return design
 
 
