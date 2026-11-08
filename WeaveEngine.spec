@@ -3,9 +3,12 @@
 #     pyinstaller --noconfirm WeaveEngine.spec
 #
 # The result is dist/WeaveEngine.app on macOS and dist/WeaveEngine/ elsewhere.
+import re
 import sys
 
 from PyInstaller.utils.hooks import collect_all
+
+__version__ = re.search(r'__version__ = "([^"]+)"', open("weaveengine/__init__.py", encoding="utf-8").read())[1]
 
 datas, binaries, hidden = [], [], []
 # The geometry and compiler libraries carry compiled parts and data files that
@@ -32,4 +35,5 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="WeaveEngine", console
 coll = COLLECT(exe, a.binaries, a.datas, name="WeaveEngine", upx=False)
 if sys.platform == "darwin":
     app = BUNDLE(coll, name="WeaveEngine.app", icon=icon, bundle_identifier="org.weaveengine.app",
-                 info_plist={"NSHighResolutionCapable": True, "CFBundleShortVersionString": "0.1.0"})
+                 info_plist={"NSHighResolutionCapable": True, "CFBundleShortVersionString": __version__,
+                             "CFBundleVersion": __version__})
