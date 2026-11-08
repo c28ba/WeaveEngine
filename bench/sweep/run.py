@@ -126,7 +126,21 @@ def drc(cli: str, pcb: str, out: str) -> dict:
 PREPARED = os.path.join(SWEEP, "prepared")
 
 
-def prepare(bid: str, pcb: str, out: str, cli: str, py: str) -> tuple[bool, str]:
+def kept_as(bid: str, pcb: str, cli: str) -> str:
+    """Where ``prepare`` keeps a board: named by the board's files, prep.py and the KiCad version."""
+    digest = hashlib.sha1()
+    for part in [pcb] + [pcb[:-len(".kicad_pcb")] + ext for ext in (".kicad_pro", ".kicad_dru")] + [os.path.join(HERE, "prep.py")]:
+        if os.path.exists(part):
+            digest.update(open(part, "rb").read())
+        digest.update(b"\0")
+    digest.update(subprocess.run([cli, "version"], capture_output=True, text=True).stdout.strip().encode())
+    return os.path.join(PREPARED, f"{bid}-{digest.hexdigest()[:12]}")
+
+
+PREPARED_FILES = ("board.dsn", "board.kicad_pcb", "board.kicad_pro", "board.kicad_dru", "prep.json")  # what prep.py makes
+
+
+def prepare(bid: str, pcb: str, out: str, cli: str, py: str, earlier: str | None = None) -> tuple[bool, str]:
     """The board stripped of its routing, and its DSN, into ``out``: made once
     (prep.py) and kept in WE_SWEEP_DIR/prepared, then copied from there.
 
@@ -137,14 +151,20 @@ def prepare(bid: str, pcb: str, out: str, cli: str, py: str) -> tuple[bool, str]
     is chaotic in its input: on lily58-pro one DSN routes to 90 vias and the
     other to 81. Routed from one DSN, every sweep sees the same board. What
     it is kept under names the board's files, prep.py and the KiCad version, so
-    a change to any of them makes it again."""
-    digest = hashlib.sha1()
-    for part in [pcb] + [pcb[:-len(".kicad_pcb")] + ext for ext in (".kicad_pro", ".kicad_dru")] + [os.path.join(HERE, "prep.py")]:
-        if os.path.exists(part):
-            digest.update(open(part, "rb").read())
-        digest.update(b"\0")
-    digest.update(subprocess.run([cli, "version"], capture_output=True, text=True).stdout.strip().encode())
-    kept = os.path.join(PREPARED, f"{bid}-{digest.hexdigest()[:12]}")
+    a change to any of them makes it again. ``earlier``: the work folder of
+    an earlier run of this board, whose files are kept if none are yet, so that
+    this run routes the DSN that one routed (``--keep-from``)."""
+    kept = kept_as(bid, pcb, cli)
+    if earlier and not os.path.exists(os.path.join(kept, "board.dsn")) and os.path.exists(os.path.join(earlier, "board.dsn")):
+        made = kept + f".{os.getpid()}.part"
+        os.makedirs(made, exist_ok=True)
+        for name in PREPARED_FILES:
+            if os.path.exists(os.path.join(earlier, name)):
+                shutil.copy(os.path.join(earlier, name), os.path.join(made, name))
+        try:
+            os.rename(made, kept)
+        except OSError:
+            shutil.rmtree(made, ignore_errors=True)
     if not os.path.exists(os.path.join(kept, "board.dsn")):
         made = kept + f".{os.getpid()}.part"
         shutil.rmtree(made, ignore_errors=True)
@@ -168,7 +188,7 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
     os.makedirs(out, exist_ok=True)
     rec = {"id": bid, "src": f"{src}/{path}"}
     pcb = os.path.join(DL, src, path)
-    ok, text = prepare(bid, pcb, out, cli, py)
+    ok, text = prepare(bid, pcb, out, cli, py, os.path.join(SWEEP, "work", args.keep_from, bid) if args.keep_from else None)
     if not ok:
         rec.update(stage="prep", error=text[-500:])
         return rec
@@ -239,6 +259,9 @@ def main() -> int:
     ap.add_argument("--workers", type=int, help="processes per routing (default: all cores)")
     ap.add_argument("--limit", type=int, default=2400, help="seconds a routing may take (default 2400)")
     ap.add_argument("--python", default=sys.executable, help="the Python with WeaveEngine (default: this one)")
+    ap.add_argument("--keep-from", metavar="LABEL",
+                    help="a board not prepared yet is taken as the run LABEL prepared it (its files in work/LABEL), "
+                         "so that this run routes the same DSN as that one")
     ap.add_argument("--list", metavar="TIERS", help='print the boards of these tiers ("1", "1-3", "2,4") as JSON and stop')
     ap.add_argument("--fetch", action="store_true", help="fetch every board's source and stop")
     args = ap.parse_args()
