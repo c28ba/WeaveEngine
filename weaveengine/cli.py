@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         if bar:
             bar.finish()
-        print("stopped" + (f": the best routing found is in {out}" if saver.best is not None else ", with nothing routed to save"),
+        print("stopped" + (f": the best routing found is in {out}" if saver.best is not None else f", before any routing was finished to save in {out}"),
               file=sys.stderr)
         return 130
     if bar:
