@@ -30,6 +30,13 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
            f'<path d="{" ".join("M" + pts(r.coords) + "Z" for r in (board.outline.exterior, *board.outline.interiors))}" fill="#1b2a1f" fill-rule="evenodd" stroke="#7a8a7d" stroke-width="1.5"/>']
     for obs in board.obstacles:
         out.append(f'<polygon points="{pts(obs.shape.exterior.coords)}" fill="#3a1717" stroke="#ff4d4d" stroke-width="1" stroke-dasharray="4,3"/>')
+    if board.no_via:  # areas only vias are kept out of: blue diagonal hatch, apart from the red dashed keepouts
+        out.append('<defs><pattern id="no-via" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+                   '<line x1="0" y1="0" x2="0" y2="6" stroke="#4da6ff" stroke-width="1.5"/></pattern></defs>')
+        for area in board.no_via:
+            for part in getattr(area, "geoms", [area]):
+                out.append(f'<polygon points="{pts(part.exterior.coords)}" fill="url(#no-via)" stroke="#4da6ff" stroke-width="1" '
+                           f'stroke-dasharray="1,3"><title>no vias</title></polygon>')
     if pmap is not None:
         for e in range(pmap.num_edges):
             u, v = pmap.edge_v_list[e]

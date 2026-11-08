@@ -784,3 +784,27 @@ def test_one_layer_routed_and_its_plane_on_the_other(tmp_path):
     result = route_board(board, options=Options(portfolio=1), workers=1)
     assert result.stats["fanout"] == 2 and result.stats["plane_left"] == []   # R1-1 and R2-2; TP1-1 is in the pour already
     assert all(v.shape.distance(under[0].shape) >= board.rules.clearance - 1e-6 for v in result.vias)
+
+
+def test_measure_reports_a_via_inside_a_keepout_or_a_no_via_area(tmp_path, monkeypatch):
+    """A via whose copper touches a keepout or an area no via may touch is a violation."""
+    from shapely.geometry import box
+    from weaveengine.io import check
+    dsn, ses = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
+    write_dsn(channel(6, seed=8), dsn)
+    assert main([dsn, "-o", ses, "--margin", "0", "--no-ses-teardrops"]) == 0
+    design = read_dsn(dsn)
+    wires, _ = check.read_session(ses)
+    x, y = wires[0][3][0]
+    far = (x, y + 1000.0)
+    monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", x, y)]))
+    area = box(x - 0.05, y - 0.05, x + 0.05, y + 0.05)
+    assert check.measure(design, ses).vias_in_keepout == 0
+    design.board.no_via = [area]
+    m = check.measure(design, ses)
+    assert m.vias_in_keepout == 1 and not m.ok
+    design.board.no_via = []
+    design.board.add_keepout(list(area.exterior.coords))
+    assert check.measure(design, ses).vias_in_keepout == 1
+    monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", *far)]))
+    assert check.measure(design, ses).vias_in_keepout == 0

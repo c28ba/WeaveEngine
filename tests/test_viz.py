@@ -107,3 +107,13 @@ def test_progress_bar_output():
     text = out.getvalue()
     assert "commit" in text and "geometry" in text and "gone" in text and "rip-up" not in text
 
+
+
+def test_svg_draws_no_via_areas_hatched(tmp_path):
+    from shapely.geometry import box
+    board = demo_board()
+    board.no_via = [box(1, 1, 3, 3)]
+    out = tmp_path / "board.svg"
+    export_svg(board, str(out))
+    text = out.read_text(encoding="utf-8")
+    assert 'fill="url(#no-via)"' in text and "<title>no vias</title>" in text
