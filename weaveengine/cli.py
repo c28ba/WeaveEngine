@@ -5,7 +5,7 @@ import sys
 
 from weaveengine import __version__, accel, safe_output
 from weaveengine.io.check import kicad_project_rules, measure
-from weaveengine.io.dsn import read_dsn
+from weaveengine.io.dsn import read_dsn, walled_note
 from weaveengine.io.ses import write_ses
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
@@ -124,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         print(design.dropped_wiring)
     if design.kicad:
         print(design.kicad)
+    if design.walled:
+        print(walled_note(design.walled))
     print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"

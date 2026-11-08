@@ -171,6 +171,9 @@ class Settings:
             notes.append(design.dropped_wiring)
         if design.kicad:
             notes.append(design.kicad)
+        if design.walled:
+            from weaveengine.io.dsn import walled_note
+            notes.append(walled_note(design.walled))
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
         elif found["edge_clearance"][0] is not None:

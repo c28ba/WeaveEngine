@@ -63,10 +63,16 @@ class Design:
     defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
     dropped_wiring: str = ""                                 # what was done with routing already in the file
     kicad: str = ""                                          # what was taken from the KiCad board and project beside the DSN
+    walled: list[str] = field(default_factory=list)          # layers a keepout covers whole, not routed (a single-sided board)
 
     @property
     def net_names(self) -> dict[int, str]:
         return {i: n for n, i in self.net_ids.items()}
+
+
+def walled_note(walled: list[str]) -> str:
+    return (f"{', '.join(walled)} {'is' if len(walled) == 1 else 'are'} covered by a keepout that forbids tracks: "
+            "not routed (a single-sided board)")
 
 
 def _shape(desc: list, scale: float):
@@ -149,19 +155,6 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     unknown = [name for name in use if name not in all_layers]
     if unknown:
         raise ValueError(f"layers {unknown} not in design (has {all_layers})")
-    index = {name: i for i, name in enumerate(use)}
-    flip = {all_layers[0]: all_layers[-1], all_layers[-1]: all_layers[0]}
-
-    def layer_set(names, back: bool = False):
-        """Layer indices for DSN layer names; None means all routed layers."""
-        found = set()
-        for name in names:
-            if name in ("signal", "pcb"):
-                return None
-            name = flip.get(name, name) if back else name
-            if name in index:
-                found.add(index[name])
-        return None if len(found) == len(use) else frozenset(found)
 
     # Boundary: the largest outline wins.
     outlines = []
@@ -191,6 +184,39 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         outline = outline.difference(unary_union([g[0] for g in cutouts]))
         if outline.geom_type != "Polygon":
             outline = max(outline.geoms, key=lambda p: p.area)
+
+    # A KiCad board beside the DSN says more than its export does (io/kicad.py); first, which rule areas let traces through.
+    kicad = read_kicad(path)
+    open_areas = kicad.open_areas if kicad else []
+
+    def forbids(shape) -> bool:
+        return not any(all(abs(a - b) < 0.01 for a, b in zip(shape.bounds, area)) for area in open_areas)
+
+    # A layer one keepout covers whole is not routed: how a single-sided board
+    # is drawn in KiCad (two copper layers, a rule area forbidding tracks on one).
+    walled = []
+    if layers is None:
+        for name in use:
+            shut = [shape for shape, layer, _ in keepouts if layer == name and forbids(shape)]
+            if shut and outline.difference(unary_union(shut)).area < 1e-3 * outline.area:
+                walled.append(name)
+        if len(walled) < len(use):
+            use = [name for name in use if name not in walled]
+        else:
+            walled = []
+    index = {name: i for i, name in enumerate(use)}
+    flip = {all_layers[0]: all_layers[-1], all_layers[-1]: all_layers[0]}
+
+    def layer_set(names, back: bool = False):
+        """Layer indices for DSN layer names; None means all routed layers."""
+        found = set()
+        for name in names:
+            if name in ("signal", "pcb"):
+                return None
+            name = flip.get(name, name) if back else name
+            if name in index:
+                found.add(index[name])
+        return None if len(found) == len(use) else frozenset(found)
 
     def rule_of(node):
         """(width, clearance) of a rule list; typed clearances (smd_smd, ...) are ignored."""
@@ -225,12 +251,9 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         defaulted["clearance"] = f"clearance {rules.clearance:g} mm"
     board = Board(outline=outline, rules=rules, layers=list(use))
 
-    # A KiCad board beside the DSN says more than its export does (io/kicad.py); first, which rule areas let traces through.
-    kicad = read_kicad(path)
-    open_areas = kicad.open_areas if kicad else []
     ignored = 0
     for shape, layer, _ in keepouts:
-        if any(all(abs(a - b) < 0.01 for a, b in zip(shape.bounds, area)) for area in open_areas):
+        if not forbids(shape):
             ignored += 1
             continue
         on = layer_set([layer])
@@ -242,7 +265,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
     images = {img[1]: img for img in _children(library, "image")}
 
     design = Design(root[1] if len(root) > 1 and isinstance(root[1], str) else "board", board, unit, resolution,
-                    defaulted=defaulted)
+                    defaulted=defaulted, walled=walled)
     via = _child(structure, "via")
     circles = []
     if via and len(via) > 1 and via[1] in padstacks:

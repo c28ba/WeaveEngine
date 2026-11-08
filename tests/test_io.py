@@ -40,6 +40,22 @@ KICAD_STYLE = """(pcb demo.dsn
 """
 
 
+def test_a_layer_a_keepout_covers_whole_is_not_routed(tmp_path):
+    """A single-sided board as KiCad draws one: two copper layers, a rule area
+    forbidding tracks over all of the front. The front is left out (it has no
+    free space at all), and the board is routed on the back."""
+    path = tmp_path / "single.dsn"
+    path.write_text(KICAD_STYLE.replace('(keepout "" (rect F.Cu 9000 -6000 11000 -4000))',
+                                        '(keepout "" (rect F.Cu -1000 1000 21000 -11000))'), encoding="utf-8")
+    design = read_dsn(str(path))
+    assert design.board.layers == ["B.Cu"] and design.walled == ["F.Cu"]
+    assert {p.name for p in design.board.pads} == {"TP1-1"}
+    assert read_dsn(str(path), layers=["F.Cu", "B.Cu"]).walled == []   # layers named: as asked
+    # A keepout over part of a layer leaves it routed.
+    path.write_text(KICAD_STYLE, encoding="utf-8")
+    assert read_dsn(str(path)).walled == []
+
+
 def test_sexpr_reader():
     assert parse_sexpr('(a (b "c d" 1) e)') == ["a", ["b", "c d", "1"], "e"]
 
