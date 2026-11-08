@@ -15,7 +15,9 @@ kicad-cli and its Python, which has pcbnew); it is looked for where KiCad
 installs itself, or set KICAD_CLI and KICAD_PYTHON. The boards' repositories
 (sources.txt, pinned to a commit) are fetched once into WE_SWEEP_DIR (default
 ~/.cache/weaveengine-sweep), and each run's files go to WE_SWEEP_DIR/work/LABEL.
-One JSON line per board goes to --out; compare two runs with compare.py.
+Each board is stripped and exported to DSN once, into WE_SWEEP_DIR/prepared,
+and every later run routes that same DSN (KiCad's export differs from run to
+run on some boards: see ``prepare``). One JSON line per board goes to --out; compare two runs with compare.py.
 
 On GitHub (.github/workflows/sweep.yml) each board runs on a runner of its
 own, so a sweep takes about as long as its slowest board. Push a branch named
@@ -25,7 +27,7 @@ results go to the branch sweep-results: results/LABEL.jsonl, and LABEL.txt,
 compared with the latest sweep of main (git fetch origin sweep-results). The
 workflow uses --list for its matrix and --fetch to fill its cache.
 """
-import argparse, glob, json, os, re, shutil, subprocess, sys, time
+import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -90,7 +92,9 @@ def fetch(name: str) -> str:
     subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", url, dest], check=True)
     prefix = f"/{part}/**/" if part else "/**/"
     subprocess.run(git + ["sparse-checkout", "set", "--no-cone"] + [prefix + p for p in PATTERNS], check=True)
-    subprocess.run(git + ["-c", "advice.detachedHead=false", "checkout", "-q", commit], check=True)
+    # (core.protectNTFS off: Windows refuses a commit with a file name it cannot have, such as lily58's
+    # "lily58-cache:promicro_2.lib", even where the sparse checkout leaves that file out)
+    subprocess.run(git + ["-c", "advice.detachedHead=false", "-c", "core.protectNTFS=false", "checkout", "-q", commit], check=True)
     open(stamp, "w").write(commit)
     return dest
 
@@ -121,6 +125,64 @@ def drc(cli: str, pcb: str, out: str) -> dict:
     return {"kinds": kinds, "unconnected": len(d.get("unconnected_items", []))}
 
 
+PREPARED = os.path.join(SWEEP, "prepared")
+
+
+def kept_as(bid: str, pcb: str, cli: str) -> str:
+    """Where ``prepare`` keeps a board: named by the board's files, prep.py and the KiCad version."""
+    digest = hashlib.sha1()
+    for part in [pcb] + [pcb[:-len(".kicad_pcb")] + ext for ext in (".kicad_pro", ".kicad_dru")] + [os.path.join(HERE, "prep.py")]:
+        if os.path.exists(part):
+            digest.update(open(part, "rb").read())
+        digest.update(b"\0")
+    digest.update(subprocess.run([cli, "version"], capture_output=True, text=True).stdout.strip().encode())
+    return os.path.join(PREPARED, f"{bid}-{digest.hexdigest()[:12]}")
+
+
+PREPARED_FILES = ("board.dsn", "board.kicad_pcb", "board.kicad_pro", "board.kicad_dru", "prep.json")  # what prep.py makes
+
+
+def prepare(bid: str, pcb: str, out: str, cli: str, py: str, earlier: str | None = None) -> tuple[bool, str]:
+    """The board stripped of its routing, and its DSN, into ``out``: made once
+    (prep.py) and kept in WE_SWEEP_DIR/prepared, then copied from there.
+
+    Kept because KiCad's DSN export is not the same from run to run. Where the
+    segments of a board outline nearly meet (lily58-pro's miss by up to 1.3 um),
+    it writes one end or the other, as the order its shapes happen to lie in
+    memory has it (and other boards have shown other differences). The router
+    is chaotic in its input: on lily58-pro one DSN routes to 90 vias and the
+    other to 81. Routed from one DSN, every sweep sees the same board. What
+    it is kept under names the board's files, prep.py and the KiCad version, so
+    a change to any of them makes it again. ``earlier``: the work folder of
+    an earlier run of this board, whose files are kept if none are yet, so that
+    this run routes the DSN that one routed (``--keep-from``)."""
+    kept = kept_as(bid, pcb, cli)
+    if earlier and not os.path.exists(os.path.join(kept, "board.dsn")) and os.path.exists(os.path.join(earlier, "board.dsn")):
+        made = kept + f".{os.getpid()}.part"
+        os.makedirs(made, exist_ok=True)
+        for name in PREPARED_FILES:
+            if os.path.exists(os.path.join(earlier, name)):
+                shutil.copy(os.path.join(earlier, name), os.path.join(made, name))
+        try:
+            os.rename(made, kept)
+        except OSError:
+            shutil.rmtree(made, ignore_errors=True)
+    if not os.path.exists(os.path.join(kept, "board.dsn")):
+        made = kept + f".{os.getpid()}.part"
+        shutil.rmtree(made, ignore_errors=True)
+        code, text, _ = sh([py, os.path.join(HERE, "prep.py"), pcb, made], log=os.path.join(out, "prep.log"))
+        if code != 0 or not os.path.exists(os.path.join(made, "board.dsn")):
+            shutil.rmtree(made, ignore_errors=True)
+            return False, text
+        try:
+            os.rename(made, kept)  # (whole or not at all; another sweep may have made it first)
+        except OSError:
+            shutil.rmtree(made, ignore_errors=True)
+    for name in os.listdir(kept):
+        shutil.copy(os.path.join(kept, name), os.path.join(out, name))
+    return True, ""
+
+
 def one(bid: str, src: str, path: str, work: str, args) -> dict:
     """Strip, route, import, check: one board."""
     cli, py = kicad()
@@ -128,8 +190,8 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
     os.makedirs(out, exist_ok=True)
     rec = {"id": bid, "src": f"{src}/{path}"}
     pcb = os.path.join(DL, src, path)
-    code, text, _ = sh([py, os.path.join(HERE, "prep.py"), pcb, out], log=os.path.join(out, "prep.log"))
-    if code != 0 or not os.path.exists(os.path.join(out, "board.dsn")):
+    ok, text = prepare(bid, pcb, out, cli, py, os.path.join(SWEEP, "work", args.keep_from, bid) if args.keep_from else None)
+    if not ok:
         rec.update(stage="prep", error=text[-500:])
         return rec
     rec.update(json.load(open(os.path.join(out, "prep.json"))))
@@ -143,6 +205,9 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
         rec.update(routed=int(m[1]), connections=int(m[2]), vias=int(m[3]))
     m = re.search(r"-> (OK|VIOLATIONS)\s*$", text.strip(), re.M)
     rec["measured"] = m[1] if m else None
+    if code == "timeout":  # (it may have left the best routing it had in board.ses: that is not this board's result)
+        rec.update(stage="route", error=f"no result within {args.limit} s")
+        return rec
     if "Traceback" in text:
         rec.update(stage="route", error=text[text.index("Traceback"):][-1500:])
         return rec
@@ -196,6 +261,9 @@ def main() -> int:
     ap.add_argument("--workers", type=int, help="processes per routing (default: all cores)")
     ap.add_argument("--limit", type=int, default=2400, help="seconds a routing may take (default 2400)")
     ap.add_argument("--python", default=sys.executable, help="the Python with WeaveEngine (default: this one)")
+    ap.add_argument("--keep-from", metavar="LABEL",
+                    help="a board not prepared yet is taken as the run LABEL prepared it (its files in work/LABEL), "
+                         "so that this run routes the same DSN as that one")
     ap.add_argument("--list", metavar="TIERS", help='print the boards of these tiers ("1", "1-3", "2,4") as JSON and stop')
     ap.add_argument("--fetch", action="store_true", help="fetch every board's source and stop")
     args = ap.parse_args()

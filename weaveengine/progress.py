@@ -205,9 +205,10 @@ class Estimator:
     long it still has to go, as a range. It need not see every variant: the
     console sees only the plain one."""
 
-    def __init__(self, now: float | None = None, last: float | None = None):
+    def __init__(self, now: float | None = None, last: float | None = None, deadline: float | None = None):
         self.start = time.time() if now is None else now
         self.last = last               # how long this very run took the time before, if it is on record
+        self.deadline = deadline       # the time limit, as a time on the clock: nothing is bettered past it (``Context.late``)
         self.variants: dict[int, _Variant] = {}
         self.heat = (0, 0)             # the variants racing now: first, one past the last
         self.heat_at = self.start
@@ -249,8 +250,17 @@ class Estimator:
 
     def left(self, now: float | None = None) -> "tuple[float, float] | None":
         """(at least, at most) seconds to go if the heat that is running is the
-        last (see ``more``), or None before there is anything to go on."""
+        last (see ``more``), or None before there is anything to go on. With a
+        time limit, never past it: what is done after it (the geometry of the
+        best so far, its check) is not counted."""
         now = time.time() if now is None else now
+        left = self._left(now)
+        if left is None or self.deadline is None:
+            return left
+        limit = max(self.deadline - now, 0.0)
+        return min(left[0], limit), min(left[1], limit)
+
+    def _left(self, now: float) -> "tuple[float, float] | None":
         if self.over is not None:
             return 0.0, max(AFTER * (self.over - self.start) - (now - self.over), 0.0)
         if self.as_before(now):
@@ -280,6 +290,8 @@ class Estimator:
         phase = next((x.phase for _, x in sorted(racing.items()) if x.end is None), self.phase)
         if self.over is not None:
             return "finishing"
+        if self.deadline is not None and time.time() >= self.deadline:
+            return "time is up: " + phase
         return (f"variants {self.heat[0] + 1} to {self.heat[1]}: " if self.heat[1] - self.heat[0] > 1 else "") + phase
 
     def more(self, now: float | None = None) -> float:
@@ -293,7 +305,10 @@ class Estimator:
         left = self.left(now)
         if left is None:
             return 0.0
-        return self.heat_took or now - self.heat_at + middle(left)
+        more = self.heat_took or now - self.heat_at + middle(left)
+        if self.deadline is not None:  # (a heat starts only before the time limit, and stops at it)
+            more = min(more, max(self.deadline - now - middle(left), 0.0))
+        return more
 
     def progress(self, now: float | None = None) -> float:
         """Share of the run that is over, for a bar: by the middle of the
@@ -316,11 +331,11 @@ class ProgressBar:
     one draws.
     """
 
-    def __init__(self, stream=None, width: int = 20):
+    def __init__(self, stream=None, width: int = 20, deadline: float | None = None):
         self.stream = stream or sys.stderr
         self.width = width
         self.live = self.stream.isatty()
-        self.estimate = Estimator()
+        self.estimate = Estimator(deadline=deadline)
         self.phase = None
         self.last_draw = 0.0
 

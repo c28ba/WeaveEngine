@@ -32,7 +32,9 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
         open_conns = [w for w in ctx.unrouted if not ctx.conns[w].dead]
         # Once nothing is over-full, a round only changes which connections
         # are the open ones: if that has stopped helping, it will not start again.
-        if (not over and not open_conns) or stall >= (STALL_LIMIT if over else QUIET_STALL_LIMIT) or ctx.rounds >= max_rounds:
+        # (And when the time limit is up: the best routing so far is restored below.)
+        if (not over and not open_conns) or stall >= (STALL_LIMIT if over else QUIET_STALL_LIMIT) or ctx.rounds >= max_rounds \
+                or ctx.late():
             break
         ctx.rounds += 1
         # For the estimate of the time left: the rounds still to run, this one
@@ -72,6 +74,8 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
             conn = ctx.conns[w]
             if not place(ctx, conn, r):
                 conn.fails += 1
+            if ctx.late():
+                break  # the round is left half done; if it is worse than the best, the best is put back
 
     if best_snap is not None and (ctx.violations(), ctx.estimated_length()) > best_key:
         ctx.restore(best_snap)
@@ -97,8 +101,9 @@ def legalise(ctx: Context) -> None:
 def fill(ctx: Context, hold=frozenset()) -> int:
     """Places every open connection that fits with no gate over capacity,
     shortest first, until a pass places none (one placed can be what another
-    was waiting for: its vias are new places to change layer). Nothing is
-    ripped up, so this only ever adds. Returns the number placed.
+    was waiting for: its vias are new places to change layer; past the time
+    limit, one pass only). Nothing is ripped up, so this only ever adds.
+    Returns the number placed.
 
     Negotiation does not do this: there an over-full gate is cheaper than a
     via (9), so that it settles which connections share a layer, and an open
@@ -111,6 +116,8 @@ def fill(ctx: Context, hold=frozenset()) -> int:
         if len(ctx.unrouted) == before:
             return placed
         placed += before - len(ctx.unrouted)
+        if ctx.late():
+            return placed  # past the time limit: one pass
 
 
 def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
@@ -121,6 +128,9 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
     connection through vias is then planned again, the others being in their
     final places. The connections in ``hold`` are left exactly as they are."""
     legalise(ctx)
+    if ctx.late():  # past the time limit: only what makes the routing legal, and what fits as it stands
+        fill(ctx, hold)
+        return
     if ctx.options.refine:
         ctx.report("refinement")
         refine(ctx, hold=hold)

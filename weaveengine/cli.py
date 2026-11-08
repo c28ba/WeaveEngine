@@ -3,6 +3,7 @@ import argparse
 import math
 import os
 import sys
+import time
 
 from weaveengine import __version__, accel, safe_output
 from weaveengine.io.check import kicad_project_rules, measure
@@ -70,7 +71,35 @@ def plane_left_note(left: list[int], board) -> str:
             + ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "") + " (join them in KiCad)")
 
 
+class Checkpoint:
+    """Keeps the best routing so far in the output file while the router runs
+    (``route_board``'s ``checkpoint``): written whenever a pass or a raced
+    variant finishes with a better routing than the one written last, so a run
+    that is stopped, crashes or is killed still leaves the best it had found.
+    ``write_ses`` writes it whole or not at all."""
+
+    def __init__(self, design, path: str, teardrops: bool, bar=None):
+        self.design, self.path, self.teardrops, self.bar = design, path, teardrops, bar
+        self.best = None  # the key (``router._key``) of the routing written last
+
+    def __call__(self, key: tuple, result) -> None:
+        if self.best is not None and key >= self.best:
+            return
+        if self.bar is not None and self.bar.live:
+            self.bar.stream.write("\r\x1b[K")  # (the bar's line: it is drawn again at the next event)
+        try:
+            write_ses(self.design, result, self.path, teardrops=self.teardrops)
+        except OSError as error:  # (the routing goes on: the file is tried again with the next better one, and at the end)
+            print(f"could not save the best routing so far to {self.path}: {error}", file=sys.stderr, flush=True)
+            return
+        self.best = key
+        stats = result.stats
+        print(f"saved the best routing so far: {stats['routed']}/{stats['connections']} connections routed, "
+              f"{stats['vias']} vias -> {self.path}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
+    started = time.time()  # the time limit runs from here
     ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter.")
     ap.add_argument("--version", action="version", version=f"WeaveEngine {__version__}")
     ap.add_argument("dsn", help="input Specctra DSN file")
@@ -106,11 +135,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-rounds", type=int, metavar="N",
                     help="rip-up rounds at most, as the app's rip-up round limit (default 100; design-rule repair adds up to 5 "
                          "of its own each time it runs): fewer finish sooner, with more left open")
+    ap.add_argument("--time-limit", type=float, metavar="MINUTES",
+                    help="stop bettering the routing after this many minutes from the start, and write the best found so far "
+                         "(its geometry and check take a little longer still; default: no limit)")
     ap.add_argument("--quiet", action="store_true", help="no progress bar")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
     if args.max_rounds is not None and args.max_rounds < 0:
         ap.error("--max-rounds: not below 0 (0 = no rip-up)")
+    if args.time_limit is not None and not 0 < args.time_limit < math.inf:
+        ap.error("--time-limit: a number of minutes above 0")
+    deadline = started + 60.0 * args.time_limit if args.time_limit is not None else None
     safe_output()
 
     status = accel.check()
@@ -186,17 +221,29 @@ def main(argv: list[str] | None = None) -> int:
     if layer_cost:
         overrides["layer_cost"] = layer_cost
     params = CostParams.for_map(planar_map.build(design.board), **overrides) if overrides else None
-    bar = None if args.quiet else ProgressBar()
-    result = route_board(design.board, params, options=options, seed=args.seed,
-                         workers=args.workers, events=bar.event if bar else None)
+    if deadline is not None:
+        print(f"time limit {args.time_limit:g} minutes: the routing is bettered until "
+              f"{time.strftime('%H:%M:%S', time.localtime(deadline))}, then the best so far is finished and written")
+    bar = None if args.quiet else ProgressBar(deadline=deadline)
+    out = args.output or (args.dsn.rsplit(".", 1)[0] + ".ses")
+    saver = Checkpoint(design, out, not args.no_ses_teardrops, bar)
+    try:
+        result = route_board(design.board, params, options=options, seed=args.seed,
+                             workers=args.workers, events=bar.event if bar else None, deadline=deadline, checkpoint=saver)
+    except KeyboardInterrupt:
+        if bar:
+            bar.finish()
+        print("stopped" + (f": the best routing found is in {out}" if saver.best is not None else f", before any routing was finished to save in {out}"),
+              file=sys.stderr)
+        return 130
     if bar:
         bar.finish()
     stats = result.stats
-    out = args.output or (args.dsn.rsplit(".", 1)[0] + ".ses")
     write_ses(design, result, out, teardrops=not args.no_ses_teardrops)
     per_layer = ", ".join(f"{name}: {count}" for name, count in stats["wires_per_layer"].items())
     print(f"{stats['routed']}/{stats['connections']} connections routed ({per_layer}; {stats['vias']} vias), "
-          f"length ratio {stats['length_ratio']:.3f}, {stats['time_total']:.1f}s -> {out}")
+          f"length ratio {stats['length_ratio']:.3f}, {stats['time_total']:.1f}s -> {out}"
+          + (f" (the time limit was reached {time.time() - deadline:.0f} s before this)" if deadline is not None and time.time() > deadline else ""))
     names = design.net_names
     pads = {p.pad_id: p for p in result.board.pads}
     for wire in result.unrouted:

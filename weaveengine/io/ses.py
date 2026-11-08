@@ -1,5 +1,6 @@
 """Specctra SES (session) writer: each wire is a polyline ``path`` with width (design section 4)."""
 import math
+import os
 
 from weaveengine.io.dsn import UNIT_MM, Design
 from weaveengine.realize.teardrop import tip_of
@@ -98,7 +99,12 @@ def _to_segment(p, a, b) -> float:
 
 def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None:
     """Writes the routed traces and vias of ``result``. With ``teardrops``,
-    each teardrop is added as a fan of ordinary traces (see ``teardrop_tracks``)."""
+    each teardrop is added as a fan of ordinary traces (see ``teardrop_tracks``).
+
+    The file is written beside ``path`` under another name and then renamed to
+    it, so ``path`` is always a whole session: the one there before, if writing
+    fails or the program is stopped part way, else the new one. (The command
+    line writes the best routing so far over and over while it runs.)"""
     factor = design.resolution / UNIT_MM[design.unit.lower()]  # mm -> session units
     names = design.net_names
     board = result.board
@@ -160,5 +166,14 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None
             out.append(f"        (via {q(via_name)} {n(x)} {n(y)})")
         out.append("      )")
     out += ["    )", "  )", ")"]
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(out) + "\n")
+    part = f"{path}.{os.getpid()}.part"
+    try:
+        with open(part, "w", encoding="utf-8") as f:
+            f.write("\n".join(out) + "\n")
+        os.replace(part, path)
+    except BaseException:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        raise

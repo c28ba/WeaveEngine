@@ -49,6 +49,12 @@ def _call(item):
     return fn(shared, item)
 
 
+def _call_numbered(numbered):
+    """``_call`` for an item given with its place in the batch, which comes back with the result."""
+    n, item = numbered
+    return n, _call(item)
+
+
 def _orphaned() -> None:
     """In a worker: ends it once the process that started it has gone. A worker
     can outlive it (the routing process cancelled while a sibling, killed, held
@@ -115,12 +121,18 @@ class WorkerDied(Exception):
 POLL = 0.5  # s between looks at the workers while waiting for results
 
 
-def _watch(pool, wait):
+def _watch(pool, wait, seen: list | None = None):
     """``wait(timeout)`` until it returns, raising ``WorkerDied`` if one of the
     pool's workers has ended in the meantime. A pool replaces a worker that
     dies, but the work that worker held is lost and its result never comes:
-    without this, the wait would never end."""
+    without this, the wait would never end. ``seen``: the workers watched by
+    earlier waits on the same batch, to which this one adds its own; a worker
+    that died while other results were still coming in has been replaced by
+    the time the wait for its own result begins."""
     workers = list(pool._pool)
+    if seen is not None:
+        seen.extend(p for p in workers if p not in seen)
+        workers = seen
     while True:
         try:
             return wait(POLL)
@@ -133,12 +145,16 @@ class Stopped(Exception):
     """Raised inside a worker whose result is no longer wanted."""
 
 
-def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=None) -> list:
+def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=None, arrived=None) -> list:
     """Like ``run``, but stops at the first item, in order, whose result
     ``accept`` approves, and returns the results up to and including it (all of
     them if none is accepted). Later items are abandoned. Because results are
     taken in item order, what is returned does not depend on which worker
     happens to finish first.
+
+    ``arrived``, if given, is called in this process with each result as soon
+    as it comes, in the order they finish (not in item order): to save the best
+    so far as it goes. It may see a result of an item after the accepted one.
 
     ``stop``, if given, is an event the abandoned workers can see (create it
     with ``stop_flag()`` and put it in ``shared``): it is set once a result is
@@ -150,12 +166,7 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
     items = list(items)
     workers = min(cpu_count() if workers is None else workers, len(items))
     if workers <= 1 or _inside:
-        out = []
-        for item in items:
-            out.append(fn(shared, item))
-            if accept(out[-1]):
-                break
-        return out
+        return _in_order(fn, shared, items, accept, arrived)
     fork = can_fork()
     if fork:
         for halt in before_fork:
@@ -167,13 +178,20 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
             pool = ctx.Pool(workers, initializer=_mark_worker)
         else:
             pool = multiprocessing.get_context("spawn").Pool(workers, initializer=_given, initargs=((fn, shared),))
-        out = []
+        out, waiting, seen = [], {}, []
         with pool:
-            results = pool.imap(_call, items)
+            # Taken as they finish, kept in order: the decision is made in item order.
+            results = pool.imap_unordered(_call_numbered, list(enumerate(items)))
             for _ in items:
-                result = _watch(pool, results.next)
-                out.append(result)
-                if accept(result):
+                n, result = _watch(pool, results.next, seen)
+                if arrived is not None:
+                    arrived(result)
+                waiting[n] = result
+                while len(out) in waiting:
+                    out.append(waiting.pop(len(out)))
+                    if accept(out[-1]):
+                        break
+                if out and accept(out[-1]):
                     if stop is not None:
                         stop.set()
                         pool.close()
@@ -185,14 +203,21 @@ def first_accepted(fn, shared, items, accept, workers: int | None = None, stop=N
                     break
         return out
     except WorkerDied:  # in this process, in order, as without workers
-        out = []
-        for item in items:
-            out.append(fn(shared, item))
-            if accept(out[-1]):
-                break
-        return out
+        return _in_order(fn, shared, items, accept, arrived)
     finally:
         _task = None
+
+
+def _in_order(fn, shared, items, accept, arrived) -> list:
+    """``first_accepted`` in this process: one item after another."""
+    out = []
+    for item in items:
+        out.append(fn(shared, item))
+        if arrived is not None:
+            arrived(out[-1])
+        if accept(out[-1]):
+            break
+    return out
 
 
 def stop_flag():

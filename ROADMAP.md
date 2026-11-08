@@ -11,23 +11,28 @@ From the first users' reports (r/PCB, 2026-11). Merged: rule areas that
 forbid only tracks or only vias are read (#1); fan-out vias share locked
 vias and keep their drills apart (#3); `--max-rounds` (#2); `--layers` keeps
 the other layers' pours and copper (#4); `--layer-cost` makes a layer dear
-(#5). Still to do:
+(#5); a time limit for a run (`--time-limit`, and in the app's settings),
+with the command line writing the best routing so far as it goes, and the
+time estimate kept within the limit; the board sweep routing the same DSN
+every run (lily58-pro's two results were KiCad exporting its outline two
+ways: the router gives the same routing from the same DSN every time).
+Still to do:
 
 - **Where vias may stand, for every board.** #5 keeps a via from being
   planned in the triangle of the via before it (`Reach.placeable`); it is
   applied only with a layer cost, since on every board it routed 17 more
   connections over the medium boards but cost four boards one each. Find why
   those four lose one, and apply it always if nothing is worse.
-- **A time limit for a run**, with the best result so far saved as it goes:
-  a deadline inside the router (rip-up stops, the session is still written),
-  and a checkpoint after each pass.
-- **The same result every run.** lily58-pro routes differently from run to
-  run on one machine, though the portfolio is meant not to depend on which
-  variant finishes first. (Results also differ slightly between macOS and
-  Linux, from floating point; compare runs only on one platform.)
+- **The board sweep on GitHub** prepares each board afresh on its runner, so
+  it can still see KiCad's other DSN of a board: keep `WE_SWEEP_DIR/prepared`
+  in the Actions cache as the sources are. (Results also differ slightly
+  between macOS and Linux, from floating point; compare runs only on one
+  platform.)
 - **Locked traces counted as reaching their pad**, so a pad inside a keepout
   that a locked trace already leads out of is not named as unreachable.
-- **A time estimate that is not hours out.**
+- **A time estimate that is not hours out.** With a time limit it no longer
+  passes the limit; without one it is still far too short on a board whose
+  rip-up goes on improving for hours (design 24, Open).
 - **Vias checked against keepouts and no-via areas** by the command line's own
   check, and those areas drawn in the app.
 - Smaller: blind and buried locked vias are read as through vias; whether a

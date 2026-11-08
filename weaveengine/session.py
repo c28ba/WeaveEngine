@@ -44,6 +44,7 @@ def _work(dsn_path: str, settings: Settings, events, resume=None) -> None:
         from weaveengine.topo import planar_map
 
         start = time.time()
+        deadline = start + 60.0 * settings.time_limit if settings.time_limit > 0 else None  # (a time on the clock: ``Context.late``)
         status = accel.check()
         events.put({"type": "status", "compiled": status.compiled, "message": status.message, "warning": status.warning})
         design = read_dsn(dsn_path)
@@ -58,7 +59,7 @@ def _work(dsn_path: str, settings: Settings, events, resume=None) -> None:
         params = cost_params(settings, planar_map.build(design.board))
         result = route_board(design.board, params, settings.options(), seed=settings.seed,
                              drc_rounds=settings.drc_rounds,
-                             workers=settings.workers or None, events=events.put, resume=resume)
+                             workers=settings.workers or None, events=events.put, resume=resume, deadline=deadline)
         summary = result.summary()
         events.put({"type": "done", "result": summary, "design": design, "seconds": time.time() - start,
                     "want": (want_clearance, want_edge)})
