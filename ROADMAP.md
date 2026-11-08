@@ -20,15 +20,14 @@ features.
   45 degrees, as many boards are expected to look, instead of taut curves:
   the same topology, realised on octilinear paths, with the clearances checked
   again.
-- **No sharp angles at junctions.** Where three or more traces of a net meet
-  (at a junction, a via or a fan-out stub) no two should meet at under a
-  set angle. About one via in five now has traces meeting at under 90
-  degrees. Re-planning one connection cannot move such a junction (design
-  13.3a), but moving it with all of its connections can.
-- **Clear of acid traps.** Where a trace runs into a pad or another trace at an
-  acute angle, the wedge of copper between them can trap etchant. Traces are
-  to veer away a little near such a meeting, so that what they enclose is
-  never sharper than a set angle.
+- **No acute angles where copper of one net meets.** Sharp junctions and
+  acid traps are one fault: a trace meeting its pad, a trace of its net, or
+  two more at a junction, via or fan-out stub, at an angle that traps etchant
+  and looks wrong. One setting gives the least angle. A trace into its pad or
+  onto a trunk bends away over its last stretch; a junction of three or more
+  (about one via in five now has traces meeting under 90 degrees) moves with
+  all its connections, which re-planning one connection cannot do (design
+  13.3a). Design 13.3b.
 - **Teardrop notches.** Where a teardrop's fan meets a rounded pad corner, the
   round ends of its traces leave small gaps (cosmetic only).
 - **Traces tapered to fine-pitch pins.** Where a trace is wider than the pin
@@ -41,11 +40,12 @@ features.
 - **Pours that stay whole.** A ground or power pour is left to KiCad to fill
   around the traces, and the routing often cuts it into islands: pieces of
   copper joined to nothing, or sections cut off from the rest of the net.
-  Plan for the pour as the routing is done: keep a channel of at least the
-  pour's minimum width joining all of it, route traces so that they do not
-  close a ring round any part of it, and where one has to, join that part
-  with a via to the same net on another layer. After routing, report any pad
-  of a pour net its pour still does not reach.
+  The plan: route each pour as one more wire, a skeleton on its layer as wide
+  as the pour's minimum width, joining its pads and taking its room in the
+  gates like any other wire. Wires never cross, so no trace can cut it, and
+  KiCad's fill covers it. Where a dense board has no room for it, its pad is
+  joined by a via to the net's plane on another layer, as now, and named.
+  Design 11.3.
 - **Pours shown while routing.** Draw each zone (its net, layer and outline)
   on the board view, and, as the routing grows, an estimate of the copper
   KiCad will fill there, with islands and cut-off sections marked, so a

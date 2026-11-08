@@ -432,6 +432,21 @@ Once the board is routed, each such pad gets a via beside it: the nearest place,
 
 Done after routing, it takes no room a trace needed. Placed first, the vias were in the way: on hackrf-lna915 four signal connections that routed before were left open. Measured: lna915 30 open items in KiCad to 11 (the rest the Margin layer and its four open signals), olimex POE-M2 77 to 66, lumen-mobo 217 to 104, with every signal routed as before.
 
+### 11.3 Pours that stay whole (planned, 1.1)
+
+**The fault.** A pour is left to KiCad to fill round the traces (section 4), and nothing in the routing keeps it in one piece. Traces of other nets that run across it, or close a ring round part of it, cut it into islands with no pad, or into sections with pads that are no longer joined to the rest of the net. Fan-out (11.2) only joins pads the pour does not reach at all; it does not see a pour the routing has cut.
+
+**The idea: the pour is one more wire in the gates.** For each pour (a net and a layer), a *skeleton*: a tree joining the pads of the net that lie inside the pour's outline, routed on that layer only, as a wire as wide as the pour's minimum width (KiCad's zone minimum width) and keeping the pour's clearance (the zone clearance, often larger than the trace clearance). It takes room in the gates like any wire of that width, by its weight in the load (7, `TopoState.weight`), as a net class's wider traces already do. Wires never cross (7.1), so no trace can cut the skeleton; and as it keeps the pour's clearance from everything, KiCad's fill covers it, so the pour round it is one piece reaching every pad it joins. The skeleton is not written to the SES (or, as an option, written as traces, which holds whatever the fill's own rules do).
+
+**What is harder than that:**
+- *Inside the outline.* The skeleton is held to the triangles inside the pour's outline: the search can already be held to a region (`Context.commit(within=...)`, from 13.3a).
+- *Giving way.* On a dense board the skeleton takes room traces need: a gate that took five traces takes four and the pour. It is priced in negotiation like any wire, not placed first (it would win every contest) or last (there would be no room). Where it loses, its pad is left to fan-out (11.2, a via down to the net's plane on another layer) and said so.
+- *Thermal reliefs.* KiCad joins a pad to its pour by spokes; the skeleton's end at a pad must leave room for them, at the least where one spoke lands.
+- *Islands with no pad.* A piece of pour the skeleton does not pass can still be cut off. It joins nothing, so it is harmless (KiCad removes it or not, by the zone's island setting), and the fill estimate (below) reports it.
+- *Several pours of a net on one layer, and zone priorities.* One skeleton per pour; a pour inside another of higher priority takes the outline KiCad fills.
+
+**Measured first.** A fill estimate, the pour's outline less every other net's copper and its clearance, gives the islands and cut-off sections of a routing; shown in the app while routing (`ROADMAP.md`, 1.1), and counted over the sweep boards before and after skeletons, with completion and copper beside them.
+
 ## 11a. Where the copper goes, and undoing detours (`ripup.untangle`, branch `detour-repair`)
 
 **Measured first.** Each routed connection's drawn length against two references: the straight line between its pads, and the same connection routed alone on the empty board (same search and geometry). The gap from the straight line to alone is what the parts and keepouts cost; the gap from alone to drawn is what sharing the board costs.
@@ -978,9 +993,18 @@ A via's position is part of the geometry, not of the topology: moving a site ins
 
 **Measured in the router, against the same code with the pass off** (usual spreads): sharp vias blinkSP1 9.5 to 10, ulx3s 7 to 7, RAM Selector Tree 7.5 to 6 (default) and 15/10 to 17/8 (app settings); copper within 0.2 %; 3 to 20 % slower; ALU, Word of RAM and Micromouse unchanged. No gain. The likely cause, not confirmed: the copper it judged by was the plain sum of the drawn traces, which counts twice a trunk two wires of a net share, so it could "save" by splitting a shared trunk, and the moves it kept made sharp vias elsewhere. Judged by the copper as drawn (`copper_length`) and refusing a new sharp via, it might do somewhat better, but most sharp vias are forced, so at best about one in seven. Not pursued.
 
-**Measured again (2026-11, branch `reseat2`), after the board review flagged sharp vias as the most visible fault.** The pass judged by the copper as drawn (`copper_length`, shared trunks once) and kept a move only if it left fewer sharp vias. Measured as a person sees a via: on the finished board, the straightest pair of its traces on different layers, read 0.5 mm along each (so a rounded corner just past it does not count), under 90 degrees is sharp. Seven boards (mixer, blade13, stickhub, bling, openair, castor-mainboard, lily58-pro), two seeds each: 122 of 647 vias sharp without the pass, 120 with it; copper 0.1 % less, 11 more vias, 49 % slower. Not kept. Why, from the reviewed cases (mixer, openair): the sharp vias a person would move are mostly where several connections of a net meet, or a fan-out stub pressed against its pad. The pass sees only a via where one connection changes layer, and re-planning one connection cannot move a via others share. A pass for those would have to move a junction with all its connections; 1.1 is to do that, and until then the 1.2 editor is to let them be moved by hand (`ROADMAP.md`).
+**Measured again (2026-11, branch `reseat2`), after the board review flagged sharp vias as the most visible fault.** The pass judged by the copper as drawn (`copper_length`, shared trunks once) and kept a move only if it left fewer sharp vias. Measured as a person sees a via: on the finished board, the straightest pair of its traces on different layers, read 0.5 mm along each (so a rounded corner just past it does not count), under 90 degrees is sharp. Seven boards (mixer, blade13, stickhub, bling, openair, castor-mainboard, lily58-pro), two seeds each: 122 of 647 vias sharp without the pass, 120 with it; copper 0.1 % less, 11 more vias, 49 % slower. Not kept. Why, from the reviewed cases (mixer, openair): the sharp vias a person would move are mostly where several connections of a net meet, or a fan-out stub pressed against its pad. The pass sees only a via where one connection changes layer, and re-planning one connection cannot move a via others share. A pass for those would have to move a junction with all its connections; 1.1 is to do that (13.3b), and until then the 1.2 editor is to let them be moved by hand (`ROADMAP.md`).
 
 One finding kept from it: on the test board of `test_connections_of_a_net_share_a_via`, the shared via costs one trace a way round 4.5 mm longer than a second via is worth, and `replan` does not see it through the middles of gates.
+
+### 13.3b Acute angles where copper of one net meets (planned, 1.1)
+
+Sharp junctions and acid traps are one fault: copper of one net meeting itself at an acute angle. The wedge between two traces of a net, or between a trace and its pad, traps etchant when the board is made, and looks wrong. (Copper of different nets is kept apart by the clearance, so it makes no trap.) The places it happens, and what each needs:
+- *A trace into its pad.* The trace may bend away over its last stretch so that it meets the pad's edge at no less than the set angle. Teardrops (on by default) already fill most of these wedges; the bend is for a pad without one.
+- *A trace joining a trace of its net* (a branch of a net's tree off a trunk it shares). The branch point moves along the trunk, or the branch bends, until the angle is no longer acute.
+- *Three or more traces at a junction, a via or a fan-out stub.* The case 13.3a measured: re-planning one connection cannot move a via others share. The junction moves with all its connections: lifted together, planned again with the junction held near a new place, kept if no angle is acute and the copper and checks are no worse.
+
+One setting gives the least angle (90 degrees by default) for all three, and the check counts every meeting under it, as 13.3a's measure did for vias.
 
 ---
 
