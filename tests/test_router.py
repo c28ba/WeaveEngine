@@ -547,6 +547,82 @@ def test_result_does_not_depend_on_the_process():
     assert len(runs) == 1
 
 
+def test_a_deadline_that_has_passed_stops_rip_up_and_further_heats(monkeypatch):
+    """Past the time limit nothing more is done to better the routing, in the
+    raced variants too, whether they are forked or started afresh (Windows):
+    the deadline is a time on the clock, which every process reads alike. No
+    connection is committed and no round of rip-up runs; what fits is still
+    placed, drawn and returned clean, and no second heat is started."""
+    import time
+    from weaveengine import parallel
+    board = random_grid(8, 8, nets=14, seed=4)
+    assert route_board(board, options=Options(portfolio=1), workers=1).stats["ripup_rounds"] > 0
+    for start in ("fork", "spawn"):
+        if start == "fork" and not parallel.can_fork():
+            continue
+        if start == "spawn":
+            monkeypatch.setenv("WEAVEENGINE_START", "spawn")
+        phases = []
+        late = route_board(board, options=Options(portfolio=6), workers=3, deadline=time.time() - 1.0,
+                           events=lambda e: phases.append(e["phase"]) if e["type"] == "progress" else None)
+        assert late.stats["ripup_rounds"] == 0 and late.stats["routed"] > 0
+        assert "racing variants 1-4 of 6" in phases and "racing variants 5-6 of 6" not in phases
+        assert_clean(board, late)
+
+
+def test_checkpoints_see_the_variants_as_they_finish_and_change_nothing():
+    """``checkpoint`` is handed each raced variant's routing as it finishes, as a
+    result ``write_ses`` can write; neither it nor a time limit that is not
+    reached changes the routing."""
+    import time
+    board = random_grid(8, 8, nets=14, seed=4)
+    seen = []
+    watched = route_board(board, options=Options(portfolio=3), workers=3, checkpoint=lambda key, result: seen.append((key, result)))
+    plain = route_board(board, options=Options(portfolio=3), workers=3)
+    limited = route_board(board, options=Options(portfolio=3), workers=3, deadline=time.time() + 3600.0)
+    assert watched.polylines == plain.polylines == limited.polylines and watched.unrouted == plain.unrouted == limited.unrouted
+    assert 1 <= len(seen) <= 3
+    for key, result in seen:
+        assert key[0] == len(result.unrouted) == result.stats["connections"] - result.stats["routed"]
+        assert set(result.polylines) == set(result.wire_layer) <= set(result.wire_net)
+    best = min(seen, key=lambda s: s[0])[1]
+    assert best.stats["routed"] == watched.stats["routed"]
+    alone = []
+    route_board(board, options=Options(portfolio=1), workers=1, checkpoint=lambda key, result: alone.append(key))
+    assert len(alone) == 1  # a pass that is not raced: once, at its end
+
+
+LILY = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", "lily58-pro", "lily58-pro.dsn")
+ALLOWANCE = 30.0  # s past the time limit for what follows it: the routing made legal, its geometry and check, the SES written and measured
+
+
+@pytest.mark.skipif(not os.path.exists(LILY), reason="example board not present")
+def test_a_time_limit_ends_the_run_in_time_and_writes_the_best_routing(tmp_path, capsys, monkeypatch):
+    """lily58-pro takes about a minute on two workers. Given three seconds, the
+    command line ends within them and ``ALLOWANCE``, having saved the best
+    routing as it went, and the SES it writes holds every trace and via of the
+    routing it ends with and keeps the rules."""
+    import time
+    from weaveengine import cli
+    from weaveengine.io.check import read_session
+    results, real = [], cli.route_board
+
+    def route_board(board, params=None, **how):
+        results.append(real(board, params, **how))
+        return results[-1]
+    monkeypatch.setattr(cli, "route_board", route_board)
+    out = str(tmp_path / "lily.ses")
+    start = time.time()
+    cli.main([LILY, "-o", out, "--time-limit", "0.05", "--workers", "2", "--portfolio", "2", "--quiet", "--no-ses-teardrops"])
+    assert time.time() - start < 3.0 + ALLOWANCE
+    text = capsys.readouterr().out
+    assert "saved the best routing so far" in text and "the time limit was reached" in text and "-> OK" in text
+    result = results[0]
+    assert result.stats["routed"] > 0
+    wires, vias = read_session(out)
+    assert len(wires) == len(result.polylines) and len(vias) == len(result.vias)
+
+
 def test_racing_variants_never_does_worse_than_the_plain_run():
     board = random_grid(8, 8, nets=14, seed=4)
     plain = route_board(board, options=Options(portfolio=1))

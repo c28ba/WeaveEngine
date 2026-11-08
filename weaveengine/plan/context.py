@@ -176,6 +176,7 @@ class Context:
         self.events = events        # callable(dict) or None: live events for a front end (see weaveengine.session)
         self.variant = 0            # which raced variant this context is (0 = the plain one)
         self.stop = None            # event set when this variant's result is no longer wanted
+        self.deadline = None        # wall-clock time (``time.time()``) past which nothing more is done to better the routing (``late``)
         self.pass_index = 1
         self._last_snapshot = 0.0
         self.board = board
@@ -575,6 +576,14 @@ class Context:
             if c.parent is None and not c.routed:
                 self._waiting(c, True)
         self.rebuild_barrier()
+
+    def late(self) -> bool:
+        """Whether the time limit is up (``deadline``). From then on rip-up stops,
+        no further heat of variants starts, and repair and settling leave out what
+        only betters the routing: what there is, at its best so far, is drawn and
+        written. The deadline is a time on the clock, not a duration, so that it is
+        the same in every worker however late it was started."""
+        return self.deadline is not None and time.time() >= self.deadline
 
     def report(self, phase: str, done: float = 0.0, total: float = 1.0, **more) -> None:
         """Says where the work stands. ``more`` goes to the live events only:

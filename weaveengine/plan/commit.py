@@ -37,7 +37,7 @@ def commit_all(ctx: Context, cands: dict[int, list[Candidate]], selection: dict[
     failed: list[int] = []
     total = len(pending)
     size = max(1, params.batch)
-    while pending:
+    while pending and not ctx.late():  # (past the time limit the rest is left open: settling places what fits)
         # The next batch in regret order, placed against one snapshot in parallel.
         chunk = sorted(pending, key=lambda x: (-regrets[x], x))[:size]
         pending.difference_update(chunk)

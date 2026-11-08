@@ -147,6 +147,67 @@ def test_cli_caps_the_rip_up_rounds(tmp_path, monkeypatch):
         main([dsn, "--max-rounds", "-1"])
 
 
+def test_a_session_is_written_whole_or_not_at_all(tmp_path, monkeypatch):
+    """The SES is written under another name and renamed: if writing fails part
+    way (a full disk, the program stopped), the session that was there stays."""
+    import os
+    from weaveengine.io import ses
+    dsn, out = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
+    write_dsn(channel(4, seed=1), dsn)
+    assert main([dsn, "-o", out, "--quiet"]) == 0
+    before = open(out, encoding="utf-8").read()
+
+    class HalfWritten:
+        def __init__(self, path, *args, **kwargs):
+            self.file = open(path, *args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.file.close()
+
+        def write(self, text):
+            self.file.write(text[:len(text) // 2])
+            raise OSError("no space left on device")
+    monkeypatch.setattr(ses, "open", HalfWritten, raising=False)
+    with pytest.raises(OSError):
+        main([dsn, "-o", out, "--quiet"])
+    assert open(out, encoding="utf-8").read() == before
+    assert sorted(os.listdir(tmp_path)) == ["b.dsn", "b.ses"]  # (and nothing half-written left beside it)
+
+
+def test_the_command_line_keeps_the_best_routing_so_far(tmp_path, capsys):
+    """While the router runs, the output file is written each time a better
+    routing has been found (fewer open, then fewer violations, then less
+    copper), and not for a worse one; each time it says so."""
+    import dataclasses
+    from weaveengine.cli import Checkpoint
+    from weaveengine.io.check import read_session
+    from weaveengine.router import route_board
+    dsn, out = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
+    write_dsn(channel(4, seed=1), dsn)
+    design = read_dsn(dsn)
+    full = route_board(design.board, options=Options(portfolio=1), workers=1)
+    assert len(full.polylines) == 4
+
+    def part(n):
+        lines = dict(sorted(full.polylines.items())[:n])
+        return dataclasses.replace(full, polylines=lines, stats={"routed": n, "connections": 4, "vias": 0})
+    saver = Checkpoint(design, out, teardrops=False)
+    saver((2, 0, 10.0), part(2))
+    saver((3, 0, 5.0), part(1))      # more open: worse, whatever its copper
+    assert len(read_session(out)[0]) == 2
+    saver((0, 0, 20.0), part(4))
+    assert len(read_session(out)[0]) == 4
+    saved = [line for line in capsys.readouterr().out.splitlines() if line.startswith("saved the best routing so far")]
+    assert saved == [f"saved the best routing so far: 2/4 connections routed, 0 vias -> {out}",
+                     f"saved the best routing so far: 4/4 connections routed, 0 vias -> {out}"]
+    for wrong in ("0", "-1", "inf"):
+        with pytest.raises(SystemExit):
+            main([dsn, "--time-limit", wrong])
+
+
 def test_a_net_name_beyond_ascii_comes_back_as_written(tmp_path):
     """KiCad writes UTF-8 (net names like "I_5µA" or "Ω_SENSE" are common). Read
     and written as UTF-8 whatever the platform's own encoding (cp1252 on

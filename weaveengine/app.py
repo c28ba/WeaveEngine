@@ -971,7 +971,8 @@ class MainWindow(QMainWindow):
         except OSError:
             self.run_key = None
         self.started = time.time()
-        self.tracker = Estimator(self.started, self.timings.last(self.run_key) if self.run_key else None)
+        self.tracker = Estimator(self.started, self.timings.last(self.run_key) if self.run_key else None,
+                                 self.started + 60.0 * self.settings.time_limit if self.settings.time_limit > 0 else None)
         self.job = Job(self.dsn_path, self.settings, self.result.kept if improving else None)
         self.job.start()
         self.say("Going on from the routing there is, to better it" if improving else "Routing started")

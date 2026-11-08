@@ -183,6 +183,9 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
         rec.update(routed=int(m[1]), connections=int(m[2]), vias=int(m[3]))
     m = re.search(r"-> (OK|VIOLATIONS)\s*$", text.strip(), re.M)
     rec["measured"] = m[1] if m else None
+    if code == "timeout":  # (it may have left the best routing it had in board.ses: that is not this board's result)
+        rec.update(stage="route", error=f"no result within {args.limit} s")
+        return rec
     if "Traceback" in text:
         rec.update(stage="route", error=text[text.index("Traceback"):][-1500:])
         return rec

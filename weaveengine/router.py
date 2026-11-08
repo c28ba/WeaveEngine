@@ -67,7 +67,8 @@ class Result:
 
 def route_board(board: Board, params: CostParams | None = None, options: Options | None = None, seed: int = 0,
                 drc_rounds: int = 4, drop_violators: bool = True,
-                workers: int | None = None, progress=None, events=None, resume: dict | None = None) -> Result:
+                workers: int | None = None, progress=None, events=None, resume: dict | None = None,
+                deadline: float | None = None, checkpoint=None) -> Result:
     """Routes the board.
 
     ``resume``: the ``kept`` of an earlier result for this board with these
@@ -84,6 +85,18 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     ``events``: optional callable taking a dict, for live front ends: progress,
     snapshots of the routing as it grows, and the result of the pass, from every
     raced variant (see ``weaveengine.session`` for the event types).
+
+    ``deadline``: a time on the clock (``time.time()``) after which nothing more
+    is done to better the routing (``Context.late``): rip-up stops, no further
+    heat of variants is started, and the best routing so far is settled, drawn
+    and returned. What is left to do then (making it legal, the geometry and its
+    check) still takes a while. None: no limit. With one, the result depends on
+    how fast the machine is.
+    ``checkpoint``: optional callable (key, result), called in this process
+    whenever a pass or a raced variant has finished, with how good its routing
+    is (``_key``: lower is better) and a ``Result`` of it that ``write_ses``
+    can write (traces and vias, without rounded corners, teardrops or the vias
+    down to the planes): to keep the best so far, should the run not finish.
     """
     t0 = time.perf_counter()
     options = options or Options()
@@ -97,13 +110,14 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
                   (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events)
+    ctx.deadline = deadline
     # (As built: before any via is put into them. With the areas no via may touch, which are not in them.)
     maps = [_print(layer.pmap) for layer in layers] + [area.wkt for area in board.no_via]
     if resume is not None:
         if resume["maps"] != maps:
             raise ValueError("the board or its rules have changed since that routing was made: it cannot be gone on from (route it from nothing: Restart)")
         _adopt(ctx, resume)
-    lines, violations, wire_net = _route_portfolio(ctx, drc_rounds, drop_violators, resume is not None)
+    lines, violations, wire_net = _route_portfolio(ctx, drc_rounds, drop_violators, resume is not None, checkpoint)
     better = None
     if resume is not None:
         better = _key(ctx, lines, violations) < resume["key"]
@@ -112,9 +126,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
             lines, violations, wire_net = dict(resume["lines"]), list(resume["violations"]), dict(resume["wire_net"])
     routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
-    loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
-    lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
-    violations = [v for v in violations if not loops.intersection(v.wires)]
+    lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations)
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
         ctx.emit_snapshot(force=True, lines=lines)
@@ -122,9 +134,6 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
                 "vias": sum(1 for p in work.pads if p.is_via)})
     t_route = time.perf_counter()
 
-    wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
-    used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
-    vias = [p for p in work.pads if p.is_via and p.pad_id in used]
     smoothed = (0, 0)
     if options.smooth:
         tasks = [({w: lines[w] for w, li in wire_layer.items() if li == layer.index}, layer.index) for layer in ctx.layers]
@@ -190,6 +199,31 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+
+
+def _drawn(ctx: Context, work: Board, lines: dict, violations: list) -> tuple[dict, list, dict, list[Pad]]:
+    """What of a routing is drawn: the traces less those that join nothing
+    new (``_redundant``) and pieces of no length, the violations left among
+    them, each trace's layer, and the vias a trace ends on. ``work``: the
+    board with the vias as pads (``Context.board_with_vias``)."""
+    loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
+    lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
+    violations = [v for v in violations if not loops.intersection(v.wires)]
+    wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
+    used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
+    vias = [p for p in work.pads if p.is_via and p.pad_id in used]
+    return lines, violations, wire_layer, vias
+
+
+def _draft(ctx: Context, lines: dict, violations: list, wire_net: dict) -> Result:
+    """A routing as a ``Result`` that ``write_ses`` can write, as it comes out
+    of a pass: no corners rounded, no teardrops, no vias down to the planes
+    (those come after the race). For ``route_board``'s ``checkpoint``."""
+    work = ctx.board_with_vias()
+    lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations)
+    total = sum(1 for c in ctx.conns.values() if c.parent is None)
+    return Result(ctx.board, [], {}, lines, {w: wire_net[w] for w in lines if w in wire_net}, wire_layer, violations,
+                  sorted(ctx.unrouted), vias, stats={"connections": total, "routed": total - len(ctx.unrouted), "vias": len(vias)})
 
 
 def _layers(board: Board, workers: int | None) -> list[Layer]:
@@ -352,7 +386,7 @@ HEAT = 4
 SETTLE_AGAIN = 3  # times the routing is settled after repair before it is left as repair had it
 
 
-def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bool = False):
+def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bool = False, checkpoint=None):
     """One routing pass, raced over several variants (section 22).
 
     How a pass ends depends strongly on small differences early on, so the
@@ -361,13 +395,18 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resume
     everything is taken (the plain configuration is first, so nothing is lost
     when it succeeds); if none does, the best is kept: fewest open connections,
     then shortest. The choice does not depend on which finishes first.
+    Past the time limit (``Context.late``) no further heat is started.
+    ``checkpoint``: as ``route_board``'s, called as each variant finishes.
     """
     count = ctx.options.portfolio
     if count <= 0:
         workers = parallel.cpu_count() if ctx.workers is None else ctx.workers
         count = max(1, min(len(VARIANTS), workers))
     if count == 1 or parallel._inside:
-        return _route_once(ctx, drc_rounds, drop_violators, resumed)
+        lines, violations, wire_net = _route_once(ctx, drc_rounds, drop_violators, resumed)
+        if checkpoint is not None:
+            checkpoint(_key(ctx, lines, violations), _draft(ctx, lines, violations, wire_net))
+        return lines, violations, wire_net
     given = ctx
     if not parallel.can_fork():
         # Each variant gets a copy (``parallel.first_accepted``): of what reports
@@ -380,12 +419,16 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resume
     # first heat, so an easy board is not held up by the rest.
     complete = lambda outcome: outcome[0][0] == 0 and outcome[0][1] == 0
     outcomes: list = []
+    # Each variant's outcome is handed to ``checkpoint`` here, as it finishes, whichever finishes first.
+    arrived = (lambda outcome: outcome is not None and checkpoint(outcome[0], outcome[2])) if checkpoint is not None else None
     for start in range(0, count, HEAT):
+        if outcomes and ctx.late():
+            break  # the time limit is up: the best of the variants that have run
         heat = range(start, min(count, start + HEAT))
         ctx.report("racing variants %d-%d of %d" % (heat[0] + 1, heat[-1] + 1, count))
         stop = parallel.stop_flag()
-        found = parallel.first_accepted(_variant_task, (given, drc_rounds, drop_violators, stop, resumed), heat,
-                                        lambda outcome: outcome is not None and complete(outcome), len(heat), stop)
+        found = parallel.first_accepted(_variant_task, (given, drc_rounds, drop_violators, stop, resumed, checkpoint is not None), heat,
+                                        lambda outcome: outcome is not None and complete(outcome), len(heat), stop, arrived)
         outcomes += [o for o in found if o is not None]
         if outcomes and complete(outcomes[-1]):
             break
@@ -397,7 +440,7 @@ def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resume
 
 
 def _variant_task(shared, index: int):
-    ctx, drc_rounds, drop_violators, stop, resumed = shared
+    ctx, drc_rounds, drop_violators, stop, resumed, draft = shared
     ctx.stop = stop
     ctx.seed += index
     ctx.variant = index
@@ -409,7 +452,7 @@ def _variant_task(shared, index: int):
     except parallel.Stopped:
         return None  # an earlier variant already connected everything
     kept = _keep(ctx, lines, violations, wire_net)
-    return (kept["key"], kept)
+    return (kept["key"], kept, _draft(ctx, lines, violations, wire_net) if draft else None)
 
 
 def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bool = False):
@@ -449,7 +492,7 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             break
         ctx.report("design-rule repair", fix, drc_rounds)
         disturbed = True
-        if opts.ripup:
+        if opts.ripup and not ctx.late():  # (past the time limit: what the check objects to is ripped up, below, not negotiated for)
             negotiate(ctx, max_rounds=ctx.rounds + 5)
         legalise(ctx)
         lines, violations, wire_net = _realize(ctx)
@@ -464,7 +507,7 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
                 ctx.rip(w)
         disturbed = True
         lines, violations, wire_net = _realize(ctx)
-    if opts.refine and disturbed:
+    if opts.refine and disturbed and not ctx.late():
         # Repair has moved things since the routing was settled: it may have
         # left room for a connection that is open, or a via where a trace
         # would now do. Settle once more, and keep that if the check agrees.
@@ -479,7 +522,7 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             # the connections whose traces it names.
             hold |= {ctx.conns[w].parent or w for v in again[1] for w in v.wires if w in ctx.conns}
             ctx.restore(before)
-    if opts.vias and opts.slide:
+    if opts.vias and opts.slide and not ctx.late():
         ctx.report("straightening vias")
         lines, violations, wire_net = slide(ctx, lines, violations, wire_net, _realize)
     ctx.emit_snapshot(force=True, lines=lines)

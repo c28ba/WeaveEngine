@@ -95,6 +95,13 @@ too close to other copper.
 its planes inside, the inner layers carry no traces, but their pours are still
 reached by vias and their copper and keepouts still kept clear of.
 `--max-rounds N` caps the rip-up rounds, for a run that must end sooner.
+`--time-limit MINUTES` stops bettering the routing when the time is up and
+writes the best found so far (finishing it takes a little longer: half a
+minute past a one-minute limit on hackrf-one); the app has the same setting.
+While it runs, the command line writes the best routing found so far to the
+output file each time a pass or raced variant finishes with a better one, and
+says so: a run that is stopped (Ctrl+C), crashes or is killed leaves that
+behind. A session file is written whole or not at all.
 
 ## Known limitations
 
@@ -152,9 +159,10 @@ KiCad's own design rules check.
 - **Large boards take a while.** A board of a few hundred connections routes
   in seconds to a few minutes; a dense one with thousands of pads (KiCad's
   video demo: 2,118 pads, 589 nets) can take over 20 minutes. The app shows
-  the routing as it grows, and **Stop** keeps the best result so far. Fewer
-  rip-up rounds (Settings, or `--max-rounds` on the command line; 100 by
-  default) finish sooner, with more connections left open.
+  the routing as it grows, and **Stop** keeps the best result so far. A time
+  limit (Settings, or `--time-limit` on the command line) ends the run with
+  the best routing found by then; fewer rip-up rounds (`--max-rounds`; 100 by
+  default) finish sooner too, with more connections left open.
 - **On Windows** a routing pass runs on one core; several passes with different
   settings still race on all of them, as on macOS and Linux.
 - **Always run KiCad's design rules check** on the imported result before you

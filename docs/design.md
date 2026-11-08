@@ -1223,6 +1223,23 @@ Workers are forked, so they inherit the maps and the state without copying; only
 
 **Still open:** Phase 3 is sequential inside a variant; progress is reported only by the plain variant; a persistent worker pool with the state in shared memory would let single searches be spread across cores.
 
+## 22a. A time limit, and the best routing kept as it goes (`--time-limit`, `Context.late`)
+
+**Why.** A user's command-line run on a large two-layer board went three hours and saved nothing. `--max-rounds` bounds the rounds of rip-up, but rounds vary greatly in length, and phases 1 and 2, realisation and repair are not bounded by it.
+
+**The deadline.** `route_board(deadline=...)` takes a time on the clock (`time.time()`), not a duration, and puts it on the context; `Context.late()` says whether it has passed. Raced variants get it with the context: inherited by a fork, pickled with the copy each spawned worker is given on Windows (`parallel.first_accepted`, `_given`). Being a time on the clock, it means the same in a worker started late as in its parent. The command line counts it from its own start (`--time-limit MINUTES`), the app from the start of the routing process (setting "Time limit", 0 = none). Once it has passed:
+- rip-up stops (`negotiate`: beside the round limit, and also between connections of a round, leaving it half done) and the best routing it has seen is put back, as at any stop;
+- commit (phase 2) stops committing; what is left is placed by `fill` where it fits;
+- `_route_portfolio` starts no further heat; the best of the variants that have run is kept, by the usual rule;
+- repair after the check rips up what still violates without negotiating (`legalise`, then the violators are dropped as usual); the settling after repair and the sliding of vias are left out;
+- `settle` makes the routing legal and places what fits (`legalise`, `fill`), leaving out refinement, untangling and replanning.
+
+It does not use `ctx.stop` (`parallel.Stopped`): that throws a variant's work away. Phase 1 (candidates and the global selection), the realisation of what there is, its check, and the drawing after the race (rounded corners, teardrops, vias to the planes) still run, so a run ends some time after its limit: on lily58-pro (a minute's routing on three workers) the SES was written 5 s after a 12 s limit, all 311 connections routed with 52 vias instead of 90; on hackrf-one (six minutes on ten cores) 36 s after a one-minute limit, 542 of 545 routed, measured clean; there the race ended 10 s after the limit and the drawing after it took the rest, most of it the vias down to the planes. A routing that stopped on time depends on how fast the machine is: the result is deterministic only without a limit.
+
+**The best so far, kept as it goes.** `route_board(checkpoint=...)` is called in the routing process each time a pass or a raced variant finishes, with how good its routing is (`_key`) and a `Result` of it that `write_ses` can write (`_draft`: traces and vias as the pass left them, before corners are rounded, teardrops added or vias put down to the planes). A variant computes its draft itself and returns it with its outcome. `first_accepted` now takes results as they finish (`imap_unordered`), so a variant that finishes before an earlier one is seen at once; it still decides in variant order, so what is kept does not change. The command line (`cli.Checkpoint`) writes the output file whenever a routing is better than the one written last, and says so; Ctrl+C then ends with "the best routing found is in ...". `write_ses` always writes to a file beside the target and renames it over the target (`os.replace`), so the file is the old session or the new one, never half of one. The final result is written the same way at the end.
+
+**Tested:** a deadline already past, forked and spawned: no round of rip-up, no second heat, a clean result; checkpoints and a deadline never reached change nothing; lily58-pro with three seconds ends within an allowance of 30 s and its SES holds every trace and via of the routing; a session whose writing fails part way leaves the one before; the command line writes a better routing and not a worse.
+
 ## 23. Desktop application (M11)
 
 A simple GUI started from `main.py` at the repository root (`weaveengine/app.py`, PySide6).
@@ -1311,6 +1328,10 @@ The router's events carry what this needs and nothing else was added to the rout
 | Word of RAM | 1.7 s | 100 % | 0.15, 0.66, 0.66 |
 
 Over all of them the middle figure is right in the median (0.96) and within a factor of about two in eight cases of ten outside the short runs. It is still low on blinkSP1, whose rip-up goes on improving a little for longer than most, and high on ALU, whose rounds get ten times shorter as it goes. The constants are fitted to these five boards and were not checked on a board outside them, except that RAM Selector Tree was recorded after they were chosen. With a run on record: "about 0:21 left" from the second second of a 21 s run.
+
+**With a time limit** (22a) neither end of the range, nor the next heat, goes past the limit; what is done after it (the geometry of the best so far, its check, the drawing) is not counted, and the status reads "time is up: geometry" and so on.
+
+**The report of "40 minutes left" with 2 h 54 min to go** (a large two-layer board, 2026-11) was not traced to one cause without the board. What is known to be short on such a board: the middle figure hardly moves while rip-up keeps improving (below), so a rip-up of a hundred long rounds that improves now and then reads as a few rounds left; after rip-up, repair (up to four times five rounds of rip-up and a geometry), the settling after it and the sliding of vias are timed by shares fitted on five boards of seconds to minutes; and the console follows only the plain variant. None of this is cheap to put right; the time limit gives a bound instead.
 
 **Open.** The middle figure hardly moves while rip-up keeps improving (on RAM Selector Tree it stays near 1:35 for a minute while the truth falls from 1:55 to 0:55): each improvement puts back the rounds the stop rule allows. A second heat doubles a run and is only known at the end of the first.
 

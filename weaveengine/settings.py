@@ -18,6 +18,8 @@ DESCRIPTIONS = {
     "workers": ("Worker processes", "How many processor cores routing may use", "Speed"),
     "portfolio": ("Variants raced per pass", "Each pass is tried several ways at once and the best is kept", "Speed"),
     "seed": ("Random seed", "Same seed and settings give the same result", "Speed"),
+    "time_limit": ("Time limit (minutes)", "When it is up, the routing is not bettered further: the best found so far is finished "
+                   "and shown (that takes a little longer still)", "Speed"),
     "drc_rounds": ("Design-rule repair rounds", "Reroute attempts for traces that fail the final check", "Routing"),
     "use_vias": ("Use vias", "Let a connection change layer through vias where that is the cheaper way", "Routing"),
     "global_selection": ("Global candidate selection", "Phase 1: choose routes for all nets together", "Routing"),
@@ -62,6 +64,7 @@ DESCRIPTIONS = {
 AUTOMATIC = {
     "workers": ("Use every core", 4),
     "portfolio": ("One per worker, up to 8", 4),
+    "time_limit": ("No limit", 30.0),
     "trace_width": ("Use the value in the DSN", Rules.trace_width),
     "clearance": ("Use the value in the DSN", Rules.clearance),
     "via_diameter": ("Use the value in the DSN", Rules.via_diameter),
@@ -75,6 +78,7 @@ class Settings:
     workers: int = 0
     portfolio: int = 0
     seed: int = 0
+    time_limit: float = 0.0  # minutes; 0 = none
     drc_rounds: int = 4
     use_vias: bool = True
     global_selection: bool = True
