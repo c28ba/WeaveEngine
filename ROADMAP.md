@@ -29,6 +29,11 @@ Wanted:
 
 ## Later
 
+- **A KiCad plugin.** Route from inside KiCad's PCB editor: one button that
+  exports the board, routes it with WeaveEngine (showing its progress) and
+  imports the session, with no DSN or SES files to handle by hand. Through
+  KiCad's IPC API (KiCad 9 and later), which can also read the board's rules
+  and zones directly instead of from the files beside a DSN.
 - **Traces tapered to fine-pitch pins.** Where a trace is wider than the pin
   it enters, narrow it over its last stretch to the pin's width instead of
   routing the whole net narrower (`router.reach`) or running a wide trace
