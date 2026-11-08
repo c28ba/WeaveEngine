@@ -486,13 +486,13 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
     ctx.emit_snapshot(force=True, lines=lines)
     disturbed = False  # whether anything has moved since the routing was settled
     for fix in range(drc_rounds):
-        if not violations:
+        if not violations or ctx.late():  # (past the time limit what violates is dropped, below, without repair)
             break
         if not _penalise(ctx, violations):
             break
         ctx.report("design-rule repair", fix, drc_rounds)
         disturbed = True
-        if opts.ripup and not ctx.late():  # (past the time limit: what the check objects to is ripped up, below, not negotiated for)
+        if opts.ripup and not ctx.late():
             negotiate(ctx, max_rounds=ctx.rounds + 5)
         legalise(ctx)
         lines, violations, wire_net = _realize(ctx)
