@@ -101,8 +101,9 @@ def legalise(ctx: Context) -> None:
 def fill(ctx: Context, hold=frozenset()) -> int:
     """Places every open connection that fits with no gate over capacity,
     shortest first, until a pass places none (one placed can be what another
-    was waiting for: its vias are new places to change layer). Nothing is
-    ripped up, so this only ever adds. Returns the number placed.
+    was waiting for: its vias are new places to change layer; past the time
+    limit, one pass only). Nothing is ripped up, so this only ever adds.
+    Returns the number placed.
 
     Negotiation does not do this: there an over-full gate is cheaper than a
     via (9), so that it settles which connections share a layer, and an open
@@ -115,6 +116,8 @@ def fill(ctx: Context, hold=frozenset()) -> int:
         if len(ctx.unrouted) == before:
             return placed
         placed += before - len(ctx.unrouted)
+        if ctx.late():
+            return placed  # past the time limit: one pass
 
 
 def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:

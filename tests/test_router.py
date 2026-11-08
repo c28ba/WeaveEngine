@@ -550,9 +550,9 @@ def test_result_does_not_depend_on_the_process():
 def test_a_deadline_that_has_passed_stops_rip_up_and_further_heats(monkeypatch):
     """Past the time limit nothing more is done to better the routing, in the
     raced variants too, whether they are forked or started afresh (Windows):
-    the deadline is a time on the clock, which every process reads alike. No
-    connection is committed and no round of rip-up runs; what fits is still
-    placed, drawn and returned clean, and no second heat is started."""
+    the deadline is a time on the clock, which every process reads alike.
+    Commit makes a first routing, no round of rip-up runs, it is drawn and
+    returned clean, and no second heat is started."""
     import time
     from weaveengine import parallel
     board = random_grid(8, 8, nets=14, seed=4)
