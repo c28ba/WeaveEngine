@@ -91,6 +91,11 @@ the rules and says whether it is clean. Pads no trace can reach are named, each
 with the reason: outside the board, over the edge clearance, in a keepout, or
 too close to other copper.
 
+`--layers F.Cu B.Cu` routes only the layers named: on a four-layer board with
+its planes inside, the inner layers carry no traces, but their pours are still
+reached by vias and their copper and keepouts still kept clear of.
+`--max-rounds N` caps the rip-up rounds, for a run that must end sooner.
+
 ## Known limitations
 
 Found by routing 44 open-source KiCad boards and checking each result with
@@ -106,7 +111,7 @@ KiCad's own design rules check.
 
 - **Keep the KiCad files beside the DSN.** A DSN leaves out much of what KiCad
   checks: the hole clearance and drill sizes, local clearances of parts and
-  pads, text and drawings on copper layers, what a rule area forbids, the
+  pads, text and drawings on copper layers, what a rule area that forbids neither tracks nor vias does forbid, the
   board's own minimum clearance, track width and via ring, and the true shape
   of custom pads (the DSN gives only the convex hull of their copper, which
   can cover a neighbouring pin). WeaveEngine reads these from the
@@ -130,7 +135,8 @@ KiCad's own design rules check.
   there is no room for one, the pad is named and left for you.
 - **Old routing.** Remove existing traces, vias and teardrops before exporting
   if you want them redone: KiCad keeps its own teardrops as zones, and those
-  are not taken out when the session is imported.
+  are not taken out when the session is imported. Locked traces and vias are
+  kept as they are, routed around, and count as joining a pad to its plane.
 - **Drawings on the Margin layer** are not treated as board edge, though
   KiCad's check holds traces to the edge clearance from them.
 - **Closed solder jumpers and net ties.** Copper drawn in a footprint that joins
