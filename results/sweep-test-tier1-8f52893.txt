@@ -1,0 +1,13 @@
+castor-expander            routed 6/6 -> 6/6  drc 0 -> 0   islands 0 -> 0  mask/thermal 1 -> 1  open 2 -> 2  14 -> 9 s
+fomu                       routed 17/37 -> 17/37  drc 0 -> 0   islands 0 -> 0  mask/thermal 3 -> 3  open 66 -> 66  21 -> 15 s
+hackrf-lna915              routed 19/23 -> 19/23  drc 9 -> 9 {'copper_edge_clearance': 9}  islands 0 -> 0  mask/thermal 0 -> 0  open 11 -> 11  10 -> 18 s (slower)
+kicad-complex-hierarchy    routed 87/87 -> 87/87  drc 0 -> 0   islands 0 -> 0  mask/thermal 1 -> 1  open 0 -> 0  14 -> 16 s
+kicad-ecc83                routed 14/14 -> 14/14  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  8 -> 11 s
+kicad-pic-programmer       routed 86/86 -> 86/86  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 1 -> 1  13 -> 12 s
+kicad-sonde                routed 44/44 -> 44/44  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 4 -> 4  13 -> 14 s
+lumen-blade13              routed 70/70 -> 70/70  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 37 -> 37  36 -> 40 s
+lumen-ftp                  routed 80/80 -> 80/80  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  9 -> 9 s
+lumen-ringlight            routed 30/30 -> 30/30  drc 0 -> 0   islands 0 -> 0  mask/thermal 2 -> 2  open 8 -> 8  12 -> 9 s
+sweep-half-swept           routed 28/28 -> 28/28  drc 0 -> 0   islands 35 -> 35  mask/thermal 4 -> 4  open 5 -> 5  25 -> 23 s
+sweep-mini                 routed 81/81 -> 81/81  drc 0 -> 0   islands 0 -> 0  mask/thermal 2 -> 2  open 0 -> 0  24 -> 22 s
+TOTAL drc 9 -> 9, islands 35 -> 35, mask/thermal 13 -> 13, open 134 -> 134, routing time 200 -> 199 s
