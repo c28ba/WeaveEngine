@@ -7,12 +7,28 @@ features.
 
 ### Before 1.1: fixes users found (1.0.2)
 
-From the first users' reports (r/PCB, 2026-11): the pull requests sent in
-(no-via and no-track rule areas read; fan-out vias kept off locked vias and
-drills apart; `--layers` keeping the other layers' pours; a run limit; a
-per-layer cost), once reviewed; locked traces counted as reaching their pad;
-a time limit for a command-line run, with the best result so far saved as it
-goes; and a time estimate that is not hours out.
+From the first users' reports (r/PCB, 2026-11). Merged: rule areas that
+forbid only tracks or only vias are read (#1); fan-out vias share locked
+vias and keep their drills apart (#3); `--max-rounds` (#2); `--layers` keeps
+the other layers' pours and copper (#4). Still to do:
+
+- **A per-layer cost** (#5): asked of its author to split out a change to
+  where vias may stand, which changes every board's routing.
+- **A time limit for a run**, with the best result so far saved as it goes:
+  a deadline inside the router (rip-up stops, the session is still written),
+  and a checkpoint after each pass.
+- **The same result every run.** lily58-pro routes differently from run to
+  run on one machine, though the portfolio is meant not to depend on which
+  variant finishes first. (Results also differ slightly between macOS and
+  Linux, from floating point; compare runs only on one platform.)
+- **Locked traces counted as reaching their pad**, so a pad inside a keepout
+  that a locked trace already leads out of is not named as unreachable.
+- **A time estimate that is not hours out.**
+- **Vias checked against keepouts and no-via areas** by the command line's own
+  check, and those areas drawn in the app.
+- Smaller: blind and buried locked vias are read as through vias; whether a
+  DSN's power layers should be left out of the routing by default, and plane
+  layers made dearer, measured with the sweep's pour-island count.
 
 ### Order of work
 
