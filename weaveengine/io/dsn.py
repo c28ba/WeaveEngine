@@ -427,7 +427,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         parts = [g[0] for g in (_shape(d, scale) for d in padstacks.get(via[1], [])) if g]
         if parts:
             shape = affinity.translate(unary_union(parts), float(via[2]) * scale, float(via[3]) * scale)
-            board.obstacles.append(Obstacle(shape if shape.geom_type == "Polygon" else shape.convex_hull, net_id))
+            board.obstacles.append(Obstacle(shape if shape.geom_type == "Polygon" else shape.convex_hull, net_id, via=True))
     return design
 
 

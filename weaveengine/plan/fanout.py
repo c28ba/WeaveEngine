@@ -10,7 +10,9 @@ such pad gets a via beside it where a via may stand among everything else
 inside a plane of its net, joined to the pad by a short straight trace that
 keeps its clearances too; or it shares a via of its net placed close by.
 Done after routing, it never takes room a trace needed; a pad with no such
-place is left as it was, and named.
+place is left as it was, and named. Fixed copper of the net counts as the
+net's: a pad a locked trace already joins to a locked via in the plane needs
+nothing, and a locked via in the plane close by is shared like a new one.
 """
 import math
 
@@ -25,7 +27,7 @@ REACH = 2.0        # mm beyond the pad a via is looked for
 STEP = 0.1         # mm between the places tried along a ray
 SHARE = 1.0        # mm: a via of the net this near the pad is joined to instead of a new one
 GAP = 0.05         # mm between a pad and its via
-HOLES = 0.25       # mm a via keeps from a through-hole pad of its own net (drill to drill: KiCad's default minimum)
+HOLES = 0.25       # mm a via keeps from a through-hole pad or fixed via of its own net (drill to drill: KiCad's default minimum)
 FILL = 0.25        # mm: a pour's fill is not narrower than this (KiCad's default zone minimum width)
 
 
@@ -68,6 +70,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     for shape, net, layer in shapes:
         things[layer].append((shape, net, rules.clearance))
     through = {p.shape for p in board.pads if not p.is_via and (p.layers is None or len(p.layers) == nlayers > 1)}
+    through |= {o.shape for o in board.obstacles if o.via}
     trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
     widest = max([keep, rules.clearance] + [t[2] for ts in things for t in ts])
     def filled(shape, net: int, layer: int):
@@ -91,11 +94,11 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
 
     def clear(shape, net: int, layer: int, need: float, drilled: bool = False) -> bool:
         """Whether ``shape`` (copper of ``net``) keeps ``need`` from everything foreign on ``layer``,
-        and, if ``drilled`` (a via), ``HOLES`` from every through-hole pad."""
+        and, if ``drilled`` (a via), ``HOLES`` from every through-hole pad and fixed via."""
         tree = trees[layer]
         if tree is None:
             return True
-        for i in tree.query(shape, predicate="dwithin", distance=widest + need).tolist():
+        for i in tree.query(shape, predicate="dwithin", distance=max(widest + need, HOLES)).tolist():
             other, other_net, asks = things[layer][i]
             if other_net == net:
                 if drilled and other in through and shape.distance(other) < HOLES - 1e-9:
@@ -108,6 +111,10 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
                 return False
         return True
 
+    fixed: dict[int, list] = {}  # net -> the centres of its fixed vias
+    for o in board.obstacles:
+        if o.via and o.net_id in wanted:
+            fixed.setdefault(o.net_id, []).append((o.shape.centroid.x, o.shape.centroid.y))
     vias: list[Pad] = []
     traces: list[tuple[int, int, list]] = []
     left: list[Pad] = []
@@ -123,15 +130,24 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
                 return False
             return board.outline.buffer(-edge).contains(stub) and clear(stub, pad.net_id, layer, rules.clearance)
 
-        near = [v for v in vias if v.net_id == pad.net_id and pad.shape.distance(Point(v.centre)) - r <= SHARE]
-        shared = next((v for v in sorted(near, key=lambda v: math.dist(v.centre, start)) if stub_ok(*v.centre)), None)
+        def lands(x: float, y: float) -> bool:
+            """Whether a via there is inside a plane of the pad's net on a layer the pad has no copper on
+            (a via into its own layer's plane joins nothing)."""
+            return any(not pad.on(at) and s.contains(Point(x, y)) for at, _, s in pours.get(pad.net_id, ()))
+
+        # A via of its net close by, placed for another pad or fixed (a locked one that lands in the plane), is shared.
+        near = [v.centre for v in vias if v.net_id == pad.net_id and pad.shape.distance(Point(v.centre)) - r <= SHARE]
+        near += [c for c in fixed.get(pad.net_id, ()) if pad.shape.distance(Point(c)) - r <= SHARE and lands(*c)]
+        shared = next((c for c in sorted(near, key=lambda c: math.dist(c, start)) if stub_ok(*c)), None)
         if shared is not None:
-            traces.append((pad.net_id, layer, [start, shared.centre]))
+            traces.append((pad.net_id, layer, [start, shared]))
+            # (later vias and stubs of other nets keep clear of this stub)
+            things[layer].append((LineString([start, shared]).buffer(half, quad_segs=4), pad.net_id, rules.clearance))
+            trees[layer] = shapely.STRtree([t[0] for t in things[layer]])
             continue
 
         def legal(x: float, y: float) -> bool:
-            # (inside a plane on a layer the pad has no copper on: a via into its own layer's plane joins nothing)
-            if not inside_via.contains(Point(x, y)) or not any(not pad.on(at) and s.contains(Point(x, y)) for at, _, s in pours.get(pad.net_id, ())):
+            if not inside_via.contains(Point(x, y)) or not lands(x, y):
                 return False
             disc = circle_polygon(x, y, r)
             if margin is not None and disc.intersects(margin):
@@ -176,24 +192,36 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
 
 def _lonely(board: Board) -> list[Pad]:
     """The pads of plane nets no plane reaches, by itself or through copper of
-    its net it touches (an exposed pad's own holes, say)."""
+    its net it touches: other pads (an exposed pad's own holes, say) and fixed
+    wiring (a locked trace to a locked via in the plane). Not other copper the
+    KiCad board gives a net (text, an opening in the solder mask): KiCad does
+    not count it as joining anything."""
     by_net: dict[int, list[Pad]] = {}
     for p in board.pads:
         if p.net_id in board.plane_nets and not p.is_via:
             by_net.setdefault(p.net_id, []).append(p)
+    fixed: dict[int, list] = {}
+    for o in board.obstacles:
+        if o.net_id in by_net and not o.copper:
+            fixed.setdefault(o.net_id, []).append(o)
     out = []
     for net in sorted(by_net):
         pads = by_net[net]
-        reached = {p.pad_id for p in pads if covered(board, p)}
-        grew = True
-        while grew:
-            grew = False
-            for p in pads:
-                if p.pad_id not in reached and any(q.pad_id in reached and q.shape.intersects(p.shape)
-                                                   and (p.layers is None or q.layers is None or p.layers & q.layers) for q in pads):
-                    reached.add(p.pad_id)
-                    grew = True
-        out += [p for p in pads if p.pad_id not in reached]
+        # (shape, layers, whether a plane reaches it) of each pad of the net, then of each piece of its fixed copper
+        items = [(p.shape, p.layers, covered(board, p)) for p in pads]
+        items += [(o.shape, o.layers, any(n == net and o.on(at) and shape.intersects(o.shape) for n, at, shape in board.pours))
+                  for o in fixed.get(net, ())]
+        tree = shapely.STRtree([shape for shape, _, _ in items])
+        todo = [i for i, (_, _, reached) in enumerate(items) if reached]
+        reached = set(todo)
+        while todo:
+            shape, layers, _ = items[todo.pop()]
+            for j in tree.query(shape, predicate="intersects").tolist():
+                other = items[j][1]
+                if j not in reached and (layers is None or other is None or layers & other):
+                    reached.add(j)
+                    todo.append(j)
+        out += [p for k, p in enumerate(pads) if k not in reached]
     return out
 
 

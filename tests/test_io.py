@@ -150,6 +150,23 @@ def test_a_pour_is_left_to_itself_and_a_teardrop_is_not(tmp_path):
     assert found == {"teardrop": False, "pour": True, "both": True}
 
 
+def test_fixed_wiring_is_copper_of_its_net(tmp_path):
+    """Wiring marked fixed (locked in KiCad) is kept as copper of its net, a via
+    as a via (``Obstacle.via``: ``plan.fanout`` keeps its drill clear, and takes
+    it as a way to the plane); the rest is discarded and routed afresh."""
+    path = tmp_path / "fixed.dsn"
+    path.write_text(KICAD_STYLE.replace("  )\n  (network", '    (padstack "Via[0-1]_800:400_um" (shape (circle F.Cu 800)) '
+                                        "(shape (circle B.Cu 800)) (attach off))\n  )\n  (network").replace(
+        "  (wiring)", '  (wiring\n    (wire (path F.Cu 250  5900 -5000  8000 -5000)(net GND)(type fix))\n'
+                      '    (via "Via[0-1]_800:400_um" 8000 -5000 (net GND)(type fix))\n'
+                      '    (via "Via[0-1]_800:400_um" 12000 -8000 (net GND))\n  )'), encoding="utf-8")
+    design = read_dsn(str(path))
+    fixed = [o for o in design.board.obstacles if o.net_id == design.net_ids["GND"]]
+    assert sorted((o.via, o.layers) for o in fixed) == [(False, frozenset({0})), (True, None)]
+    assert [round(c, 3) for c in next(o for o in fixed if o.via).shape.centroid.coords[0]] == [8.0, -5.0]
+    assert design.dropped_wiring.startswith("1 existing traces and vias that are not marked fixed")
+
+
 def test_joined_quoted_pin_references():
     """KiCad writes a pin of a reference containing '-' as "Out-I"-1."""
     assert parse_sexpr('(pins "Out-I"-1 "D6-11"-2 D7-1 "/In 4")') == ["pins", "Out-I-1", "D6-11-2", "D7-1", "/In 4"]

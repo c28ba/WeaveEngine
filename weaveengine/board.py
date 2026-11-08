@@ -117,6 +117,7 @@ class Obstacle:
     layers: frozenset | None = None
     clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
     copper: bool = False             # copper of no net (text, a logo): kept at the clearance, not only out of
+    via: bool = False                # a fixed via: drilled, and a way to its net's plane (``plan.fanout``)
 
     def on(self, layer: int) -> bool:
         return self.layers is None or layer in self.layers
