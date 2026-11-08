@@ -9,12 +9,13 @@ features.
 
 - **Arcs in the session.** Write rounded corners and the curves of taut traces
   as arcs (`qarc`: start, end and centre) instead of many short straight
-  segments. KiCad's session import turns a `qarc` into a true track arc
-  (checked with KiCad 10: a 90 and a 180 degree arc came in as arcs with the
-  right radius and width). Each arc is to be written as pieces of at most 90
-  degrees, because KiCad takes the shorter way round between start and end,
-  and the Specctra format means a quarter arc. Far fewer tracks per
-  connection, and ones KiCad's drag tools handle as a curve.
+  segments. KiCad's session import turns a `qarc` into a true track arc of
+  any angle up to 180 degrees (checked with KiCad 10: arcs of 7.5, 37, 90,
+  135 and 180 degrees came in as written). Beyond that it takes the shorter
+  way round between start and end (250 degrees came in as 110), so a longer
+  arc is written in pieces; pieces of at most 90 degrees, since the Specctra
+  format means a quarter arc and other tools may hold to it. Far fewer tracks
+  per connection, and ones KiCad's drag tools handle as a curve.
 - **A 45-degree output option.** Traces drawn as straight runs at multiples of
   45 degrees, as many boards are expected to look, instead of taut curves:
   the same topology, realised on octilinear paths, with the clearances checked
