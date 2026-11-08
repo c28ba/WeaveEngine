@@ -1,0 +1,12 @@
+# name | repository | commit | the part of it to fetch (KiCad's own tree is large)
+castor|https://github.com/wntrblm/Castor_and_Pollux.git|652b28c950ed04ca41f0d8aa98d9b1be2f310f76|
+crkbd|https://github.com/foostan/crkbd.git|63366fb7f51cf2a796462fdd90527e99dd126055|
+fomu|https://github.com/im-tomu/fomu-hardware.git|9fdebede731c1d963335d65d25c7663cb934f925|
+hackrf|https://github.com/greatscottgadgets/hackrf.git|3a63b29953a3b763f428821e02110def9fb1cade|
+kicad|https://gitlab.com/kicad/code/kicad.git|085c61811bbbbd21cc0801ca416541af8d15986c|demos
+lily58|https://github.com/kata0510/Lily58.git|58c649797c185b7b32b9928d4546665153cfacfd|
+lumenpnp|https://github.com/opulo-inc/lumenpnp.git|64cf68d5b7980f095ef11913065e7f45a1e3e447|
+olimex-poe|https://github.com/OLIMEX/ESP32-POE.git|deb38a377d50eadb04ddc7118a17a5ae58b1ee53|
+solo|https://github.com/solokeys/solo-hw.git|fb5f6b4b8dd7732dcec339ded0cc36fe3dec9654|
+sweep|https://github.com/davidphilipbarr/Sweep.git|8ba72a256d627567660ecc0b6f51bb18fa8badb5|
+upduino|https://github.com/tinyvision-ai-inc/UPduino-v3.0.git|e2b944b45849d28b6c6c953b7a9a5667797935a0|

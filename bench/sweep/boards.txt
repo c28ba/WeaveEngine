@@ -1,0 +1,47 @@
+# id | tier | source (sources.txt) | the board's path in it
+# Tier 1: a few seconds each; tier 2: up to two minutes; tier 3: the rest (up to half an hour).
+kicad-complex-hierarchy|1|kicad|demos/complex_hierarchy/complex_hierarchy.kicad_pcb
+kicad-ecc83|1|kicad|demos/ecc83/ecc83-pp_v2.kicad_pcb
+kicad-pic-programmer|1|kicad|demos/pic_programmer/pic_programmer.kicad_pcb
+kicad-sonde|1|kicad|demos/sonde xilinx/sonde xilinx.kicad_pcb
+castor-expander|1|castor|hardware/expander/expander.kicad_pcb
+fomu|1|fomu|archive/pvt/pcb/tomu-fpga.kicad_pcb
+hackrf-lna915|1|hackrf|hardware/LNA915/LNA915.kicad_pcb
+lumen-ftp|1|lumenpnp|src/PCB/ftp/ftp.kicad_pcb
+lumen-ringlight|1|lumenpnp|src/PCB/ringLight/ringLight.kicad_pcb
+lumen-blade13|1|lumenpnp|src/PCB/blade13/blade13.kicad_pcb
+sweep-mini|1|sweep|Sweep Mini/sweep-mini.kicad_pcb
+sweep-half-swept|1|sweep|Sweep half-swept/half-swept.kicad_pcb
+kicad-cm5-minima|2|kicad|demos/cm5_minima/CM5_MINIMA_3.kicad_pcb
+kicad-interf-u|2|kicad|demos/interf_u/interf_u.kicad_pcb
+kicad-microwave|2|kicad|demos/microwave/microwave.kicad_pcb
+kicad-mixer|2|kicad|demos/multichannel/multichannel_mixer-unrouted.kicad_pcb
+kicad-openair|2|kicad|demos/openair-max/One-Air-Max.kicad_pcb
+kicad-stickhub|2|kicad|demos/stickhub/StickHub.kicad_pcb
+kicad-tinytapeout|2|kicad|demos/tiny_tapeout/tinytapeout-demo.kicad_pcb
+castor-mainboard|2|castor|hardware/mainboard/mainboard.kicad_pcb
+castor-interposer|2|castor|hardware/interposer/interposer.kicad_pcb
+hackrf-operacake|2|hackrf|hardware/operacake/operacake.kicad_pcb
+lily58-lite|2|lily58|Lite_Rev3/Lily58_Lite_Rev3.kicad_pcb
+lily58-pro|2|lily58|Pro/PCB/Lily58_Pro.kicad_pcb
+lumen-datum|2|lumenpnp|src/PCB/datum/datum.kicad_pcb
+lumen-pi-interface|2|lumenpnp|src/PCB/pi-interface/pi-interface.kicad_pcb
+lumen-xy-limit|2|lumenpnp|src/PCB/xy-limit/xy-limit.kicad_pcb
+solo-a|2|solo|kicad/solo-A.kicad_pcb
+solo-c|2|solo|kicad/solo-C.kicad_pcb
+sweep-bling-mx|2|sweep|Sweep Bling MX/pcb/sweep-bling-mx__pcb.kicad_pcb
+sweep-v2|2|sweep|Sweep v2.2/sweepv2.kicad_pcb
+kicad-constraints|3|kicad|demos/constraints/constraints.kicad_pcb
+kicad-coldfire|3|kicad|demos/kit-dev-coldfire-xilinx_5213/kit-dev-coldfire-xilinx_5213.kicad_pcb
+kicad-royalblue|3|kicad|demos/royalblue54L_feather/RoyalBlue54L-Feather.kicad_pcb
+kicad-video|3|kicad|demos/video/video.kicad_pcb
+corne-cherry|3|crkbd|pcbs/corne-cherry/hotswap/corne-cherry.kicad_pcb
+corne-chocolate|3|crkbd|pcbs/corne-chocolate/hotswap/corne-chocolate.kicad_pcb
+hackrf-one|3|hackrf|hardware/hackrf-one/hackrf-one.kicad_pcb
+hackrf-marzipan|3|hackrf|hardware/marzipan/marzipan.kicad_pcb
+hackrf-neapolitan|3|hackrf|hardware/neapolitan/neapolitan.kicad_pcb
+lily58-pro-v2|3|lily58|Pro_V2/Pro_V2.kicad_pcb
+lumen-mobo|3|lumenpnp|src/PCB/mobo/mobo.kicad_pcb
+olimex-poe-m2|3|olimex-poe|HARDWARE/ESP32-PoE-hardware-revision-M2/ESP32-PoE_Rev_M2.kicad_pcb
+olimex-poe-c|3|olimex-poe|HARDWARE/ESP32-PoE-hardware-revision-C/ESP32-PoE_Rev_C.kicad_pcb
+upduino|3|upduino|Board/v3.01/UPduino_v3.01.kicad_pcb
