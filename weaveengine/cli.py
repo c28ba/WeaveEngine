@@ -10,6 +10,8 @@ from weaveengine.io.ses import write_ses
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
 from weaveengine.router import route_board
+from weaveengine.topo import planar_map
+from weaveengine.topo.costs import CostParams
 from weaveengine.viz.svg import export_result
 
 
@@ -96,9 +98,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--workers", type=int, metavar="N", help="processes to use (default: all cores; 1 = no parallelism)")
     ap.add_argument("--portfolio", type=int, default=0, metavar="N",
                     help="routing variants raced per pass, best kept (default: one per worker, at most 8; 1 = off)")
+    ap.add_argument("--max-rounds", type=int, metavar="N",
+                    help="rip-up rounds at most, as the app's rip-up round limit (default 100; design-rule repair adds up to 5 "
+                         "of its own each time it runs): fewer finish sooner, with more left open")
     ap.add_argument("--quiet", action="store_true", help="no progress bar")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
+    if args.max_rounds is not None and args.max_rounds < 0:
+        ap.error("--max-rounds: not below 0 (0 = no rip-up)")
     safe_output()
 
     status = accel.check()
@@ -152,8 +159,10 @@ def main(argv: list[str] | None = None) -> int:
     rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout)
+    # (As the app makes them from its settings: scaled to the board, with the limit set.)
+    params = None if args.max_rounds is None else CostParams.for_map(planar_map.build(design.board), max_rounds=args.max_rounds)
     bar = None if args.quiet else ProgressBar()
-    result = route_board(design.board, options=options, seed=args.seed,
+    result = route_board(design.board, params, options=options, seed=args.seed,
                          workers=args.workers, events=bar.event if bar else None)
     if bar:
         bar.finish()
