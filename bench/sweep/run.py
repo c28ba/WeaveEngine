@@ -6,6 +6,7 @@ routed by WeaveEngine, imported back into KiCad and checked with KiCad's DRC
     python bench/sweep/run.py --upto 2 --jobs 4          # tiers 1 and 2, four boards at a time
     python bench/sweep/run.py --ramp --baseline main.jsonl
                                     # tier 1, then 2, then 3, stopping at the first tier worse than the baseline
+    python bench/sweep/run.py --tier 4                   # the big boards (half an hour each, at most): last
     python bench/sweep/run.py lily58-pro hackrf-one      # these boards
 
 Run it with the Python that has WeaveEngine installed (the repository's
@@ -178,7 +179,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("ids", nargs="*", help="boards to run (default: by tier)")
     ap.add_argument("--tier", type=int, help="only this tier")
-    ap.add_argument("--upto", type=int, help="tiers 1 to this")
+    ap.add_argument("--upto", type=int, help="tiers 1 to this (default 3: tier 4, the big boards, only when asked for)")
     ap.add_argument("--ramp", action="store_true", help="tier by tier, stopping at the first one worse than --baseline")
     ap.add_argument("--baseline", help="results of an earlier run, for --ramp")
     ap.add_argument("--out", help="results file (default: results-LABEL.jsonl in WE_SWEEP_DIR)")
