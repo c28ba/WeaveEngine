@@ -1,5 +1,11 @@
 """prep.py SRC.kicad_pcb OUTDIR  (KiCad's python) -> OUTDIR/board.kicad_pcb without tracks or vias, board.dsn, the project's rules."""
 import sys, os, json, shutil
+if sys.platform == "win32":
+    # Without a wx app, some of KiCad's checks on loading a board raise a wxWidgets assert, which on Windows is a
+    # dialog that waits, unseen, for a click when run over SSH or from a service: with one made and asserts off, none.
+    import wx
+    _app = wx.App(False)
+    wx.DisableAsserts()
 import pcbnew
 src, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
