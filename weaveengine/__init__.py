@@ -1,7 +1,7 @@
 """WeaveEngine: a topological PCB autorouter."""
 import sys
 
-__version__ = "1.0.1"  # (and pyproject.toml's)
+__version__ = "1.0.2"  # (and pyproject.toml's)
 HOME = "https://github.com/c28ba/WeaveEngine"
 
 
