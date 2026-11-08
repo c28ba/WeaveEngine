@@ -5,27 +5,47 @@ features.
 
 ## 1.1
 
+### Before 1.1: fixes users found (1.0.2)
+
+From the first users' reports (r/PCB, 2026-11): the pull requests sent in
+(no-via and no-track rule areas read; fan-out vias kept off locked vias and
+drills apart; `--layers` keeping the other layers' pours; a run limit; a
+per-layer cost), once reviewed; locked traces counted as reaching their pad;
+a time limit for a command-line run, with the best result so far saved as it
+goes; and a time estimate that is not hours out.
+
 ### Order of work
 
 Least disruptive first; each on its own branch, merged only when the board
-sweep (the open-source boards, routed and checked with KiCad's DRC) shows
-nothing worse than before.
+sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
 
-1. Arcs in the session (the SES writer only).
-2. The pour fill estimate, shown in the app and counted over the sweep: how
+1. Traces pulled fully taut (a reported fault; needs the reporter's board).
+2. Arcs in the session (the SES writer only).
+3. Nets left unrouted by choice.
+4. The pour fill estimate, shown in the app and counted over the sweep: how
    often pours are cut today.
-3. Pours that stay whole (the skeleton), measured with 2.
-4. The Margin layer as board edge (the KiCad reader only; most of the DRC
+5. Pours that stay whole (the skeleton), measured with 4.
+6. The Margin layer as board edge (the KiCad reader only; most of the DRC
    errors the routing still causes).
-5. Teardrop notches.
-6. Traces tapered to fine-pitch pins.
-7. KiCad custom rules (`.kicad_dru`).
-8. No acute angles where copper of one net meets.
-9. The 45-degree option (a second way of drawing, off by default).
-10. A via size per net class.
+7. Room used where there is room.
+8. Teardrop notches.
+9. Traces tapered to fine-pitch pins.
+10. KiCad custom rules (`.kicad_dru`).
+11. No acute angles where copper of one net meets.
+12. The 45-degree option (a second way of drawing, off by default).
+13. A via size per net class.
 
 ### Trace shape
 
+- **Traces pulled fully taut.** Users saw thin traces on a complex board that
+  were not pulled tight, and traces that cross a gap at an angle where they
+  could run along the clearance edge. Find the case on the reporter's board
+  and fix the relaxation (design 13.1), with a test; check the sweep's
+  boards for slack left in drawn traces.
+- **Room used where there is room.** Traces are drawn at exactly the
+  clearance even where the board has space, so they bunch in narrow places
+  and leave open areas empty. Where a gap holds fewer traces than it could,
+  spread them across it: easier to make, less crosstalk, and easier to read.
 - **Arcs in the session.** Write rounded corners and the curves of taut traces
   as arcs (`qarc`: start, end and centre) instead of many short straight
   segments. KiCad's session import turns a `qarc` into a true track arc of
@@ -53,6 +73,11 @@ nothing worse than before.
   it enters, narrow it over its last stretch to the pin's width instead of
   routing the whole net narrower (`router.reach`) or running a wide trace
   into a narrow pad.
+
+### Routing control
+
+- **Nets left unrouted by choice.** A setting naming nets not to route (GND,
+  say, before its pour is drawn), as a net with a pour already is.
 
 ### Pours and planes
 

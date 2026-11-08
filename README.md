@@ -96,6 +96,14 @@ too close to other copper.
 Found by routing 44 open-source KiCad boards and checking each result with
 KiCad's own design rules check.
 
+- **What it is for.** WeaveEngine finds a way to connect everything that keeps
+  the clearances. It knows nothing of signal integrity: no impedance control,
+  length matching, differential pairs, return paths or crosstalk, and it uses
+  each net class's width as given, so give power nets a wide class in KiCad.
+  It suits boards of slow signals and modest currents (hobby, logic, keyboard,
+  prototype boards). Fast, RF and high-current boards still need routing by
+  hand, or at least close checking of what it gives.
+
 - **Keep the KiCad files beside the DSN.** A DSN leaves out much of what KiCad
   checks: the hole clearance and drill sizes, local clearances of parts and
   pads, text and drawings on copper layers, what a rule area forbids, the
