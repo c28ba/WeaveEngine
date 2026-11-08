@@ -1,13 +1,14 @@
 # Tests WeaveEngine and builds the desktop app on macOS, Windows and Linux.
 # Runs on every push to a branch, on version tags such as v1.0.0, and by hand
-# (Actions tab, "Run workflow"). Each build is uploaded as an artifact of the run.
+# (Actions tab, "Run workflow"); not for branches named sweep/..., which start
+# the board sweep alone (sweep.yml). Each build is uploaded as an artifact of the run.
 # For a version tag, once all three have built and passed, a GitHub Release is
 # published with the three attached and .github/release-notes.md as its text.
 name: build
 
 on:
   push:
-    branches: ["**"]
+    branches-ignore: ["sweep/**"]
     tags: ["v*"]
   workflow_dispatch:
 

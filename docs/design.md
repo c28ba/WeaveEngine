@@ -96,7 +96,7 @@
 
 ### 4.1 What the KiCad board says that its DSN does not (`io/kicad.py`)
 
-Found by the board sweep (2026-11): 44 open-source KiCad boards (KiCad's own demos, HackRF, Solo, Corne, Lily58, Sweep, Olimex, UPduino and others), each exported to DSN, routed, imported back into KiCad, and checked by KiCad's DRC with the zones refilled, against the same board with its traces removed. The sweep is `bench/sweep/` (`run.py`, `compare.py`): the boards in three tiers by routing time, so a change is tried on the quick ones first (`--ramp --baseline` goes on to the next tier only while nothing is worse). KiCad's DSN export leaves out or misstates much of what that check holds the board to:
+Found by the board sweep (2026-11): 44 open-source KiCad boards (KiCad's own demos, HackRF, Solo, Corne, Lily58, Sweep, Olimex, UPduino and others), each exported to DSN, routed, imported back into KiCad, and checked by KiCad's DRC with the zones refilled, against the same board with its traces removed. The sweep is `bench/sweep/` (`run.py`, `compare.py`): the boards in three tiers by routing time, so a change is tried on the quick ones first (`--ramp --baseline` goes on to the next tier only while nothing is worse). On GitHub, `.github/workflows/sweep.yml` runs each board on a runner of its own when a branch named `sweep/...` is pushed, and commits the results, compared with the latest sweep of main, to the branch `sweep-results`. KiCad's DSN export leaves out or misstates much of what that check holds the board to:
 
 | Lost in the DSN | What happened | Now |
 |---|---|---|
