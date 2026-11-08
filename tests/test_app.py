@@ -101,3 +101,19 @@ def test_hidden_things_cannot_be_selected():
     view.set_layer_visible(0, True)
     assert kind(30, 5) == "pad" and kind(25, 15) == "trace"
     app.processEvents()
+
+
+def test_no_via_areas_are_drawn_hatched_blue():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QGraphicsPolygonItem
+    from shapely.geometry import box
+    from weaveengine.app import BoardView
+    from weaveengine.board import Board, Rules
+    app = QApplication.instance() or QApplication([])
+    board = Board.rectangle(40.0, 30.0, Rules())
+    board.no_via = [box(5, 5, 10, 10)]
+    view = BoardView()
+    view.set_board(board)
+    hatched = [i for i in view.scene().items() if isinstance(i, QGraphicsPolygonItem) and i.brush().style() == Qt.BDiagPattern]
+    assert len(hatched) == 1

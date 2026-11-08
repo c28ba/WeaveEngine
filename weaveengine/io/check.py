@@ -25,6 +25,7 @@ class Measured:
     widths: dict[str, set] = field(default_factory=dict)  # net name -> widths used
     wrong_width: list[str] = field(default_factory=list)
     crossings: int = 0
+    vias_in_keepout: int = 0  # vias whose copper is inside a keepout or an area no via may touch
     traces: int = 0       # includes the short wide traces that make up teardrops
     vias: int = 0
 
@@ -33,7 +34,7 @@ class Measured:
         tol = 1.1e-3  # the router works to one micron
         return (self.track_to_pad >= self.required_clearance - tol and self.track_to_track >= self.required_clearance - tol
                 and self.track_to_edge >= self.required_edge - tol and self.track_to_keepout >= -tol
-                and not self.wrong_width and not self.crossings)
+                and not self.wrong_width and not self.crossings and not self.vias_in_keepout)
 
 
 def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[float, float]]]], list[tuple[str, float, float]]]:
@@ -79,6 +80,12 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     pads += [(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32), None) for _, x, y in vias]
     pad_net += [net for net, _, _ in vias]
     beyond += [max(0.0, rules.via_clearance - clearance)] * len(vias)
+    # A via goes through every layer, so a keepout on any layer, or an area no via may touch,
+    # forbids its copper.
+    forbidden = [o.shape for o in keepouts] + list(board.no_via)
+    for _, x, y in vias:
+        if any(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32).intersects(area) for area in forbidden):
+            out.vias_in_keepout += 1
     tree = shapely.STRtree([g for g, _ in pads])
     by_layer: dict[str, list] = {}
     for net, layer, width, pts in wires:
