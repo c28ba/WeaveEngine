@@ -92,7 +92,9 @@ def fetch(name: str) -> str:
     subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", url, dest], check=True)
     prefix = f"/{part}/**/" if part else "/**/"
     subprocess.run(git + ["sparse-checkout", "set", "--no-cone"] + [prefix + p for p in PATTERNS], check=True)
-    subprocess.run(git + ["-c", "advice.detachedHead=false", "checkout", "-q", commit], check=True)
+    # (core.protectNTFS off: Windows refuses a commit with a file name it cannot have, such as lily58's
+    # "lily58-cache:promicro_2.lib", even where the sparse checkout leaves that file out)
+    subprocess.run(git + ["-c", "advice.detachedHead=false", "-c", "core.protectNTFS=false", "checkout", "-q", commit], check=True)
     open(stamp, "w").write(commit)
     return dest
 
