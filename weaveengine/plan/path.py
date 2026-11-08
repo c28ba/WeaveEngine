@@ -93,6 +93,14 @@ class Legal:
             region = layer.pmap.free_space.free.buffer(-margin)
             shapely.prepare(region)
             self.regions.append(region)
+        # Copper and keepouts on layers left out of the routing (``Board.unrouted``) are in no map, but a via goes through them too.
+        n = len(ctx.layers)
+        below = [o.shape for o in ctx.board.obstacles if o.layers and min(o.layers) >= n]
+        if below:
+            below = shapely.union_all(below).buffer(rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + rules.apart(rules.via_clearance) + 0.01)
+            self.regions = [region.difference(below) for region in self.regions]
+            for region in self.regions:
+                shapely.prepare(region)
         x0, y0, x1, y1 = ctx.board.outline.bounds
         self.x0, self.y0 = x0, y0
         gx, gy = np.meshgrid(x0 + (np.arange(int((x1 - x0) / GRID) + 1) + 0.5) * GRID,

@@ -204,11 +204,15 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             use = [name for name in use if name not in walled]
         else:
             walled = []
-    index = {name: i for i, name in enumerate(use)}
+    # Layers left out with ``layers`` carry no traces, but every via goes through them: their copper, keepouts and
+    # planes are kept (``Board.unrouted``), at the indices after the routed layers'.
+    unrouted = [name for name in all_layers if name not in use] if layers else []
+    index = {name: i for i, name in enumerate(use + unrouted)}
     flip = {all_layers[0]: all_layers[-1], all_layers[-1]: all_layers[0]}
 
-    def layer_set(names, back: bool = False):
-        """Layer indices for DSN layer names; None means all routed layers."""
+    def layer_set(names, back: bool = False, unrouted_too: bool = False):
+        """Layer indices for DSN layer names; None means every layer. Without ``unrouted_too``, only the routed
+        layers' (a pad's: its copper on a layer left out is not part of the pad, see the pins below)."""
         found = set()
         for name in names:
             if name in ("signal", "pcb"):
@@ -216,7 +220,9 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             name = flip.get(name, name) if back else name
             if name in index:
                 found.add(index[name])
-        return None if len(found) == len(use) else frozenset(found)
+        if len(found) == len(use) + len(unrouted):
+            return None
+        return frozenset(found if unrouted_too else (i for i in found if i < len(use)))
 
     def rule_of(node):
         """(width, clearance) of a rule list; typed clearances (smd_smd, ...) are ignored."""
@@ -256,10 +262,11 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         if not forbids(shape):
             ignored += 1
             continue
-        on = layer_set([layer])
+        on = layer_set([layer], unrouted_too=True)
         if on is None or on:
             board.obstacles.append(Obstacle(shape, layers=on))
 
+    board.unrouted = unrouted
     library = _child(root, "library") or []
     padstacks = {p[1]: [s[1] for s in _children(p, "shape")] for p in _children(library, "padstack")}
     images = {img[1]: img for img in _children(library, "image")}
@@ -338,6 +345,11 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 shapes = [g for g in (_shape(d, scale) for d in padstacks.get(stack, [])) if g]
                 on = layer_set([g[1] for g in shapes], back)
                 if not shapes or (on is not None and not on):
+                    below = layer_set([g[1] for g in shapes], back, unrouted_too=True) if shapes and unrouted else None
+                    if below:  # (copper on layers left out only, a pad of a part on a side not routed: kept clear of by vias)
+                        board.obstacles.append(Obstacle(on_board(affinity.translate(affinity.rotate(
+                            unary_union([g[0] for g in shapes]), pin_rot, origin=(0, 0)), x, y)), pin_net.get(f"{ref}-{pin_id}", -1),
+                            below, copper=True))
                     continue
                 shape = unary_union([g[0] for g in shapes])
                 radius = shapes[0][2] if all(g[2] is not None for g in shapes) else None
@@ -350,7 +362,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             # The part's own keepouts: KiCad writes a hole without copper (NPTH) as one per layer.
             for k in _children(image, "keepout"):
                 for shape, layer, _ in filter(None, (_shape(d, scale) for d in k[1:] if isinstance(d, list))):
-                    on = layer_set([layer], back)
+                    on = layer_set([layer], back, unrouted_too=True)
                     if on is None or on:
                         board.obstacles.append(Obstacle(on_board(shape), layers=on))
 
@@ -368,8 +380,8 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         reached = unary_union([pad.shape for pad in by_net.get(net_id, ()) if pad.shape.intersects(shape)])
         if len(getattr(reached, "geoms", [reached] if not reached.is_empty else [])) >= 2 and shape.area > reached.area:
             board.plane_nets.add(net_id)
-            if layer in board.layers:
-                board.pours.append((net_id, board.layers.index(layer), shape))
+            if layer in index:  # (on a layer left out of the routing too: ``plan.fanout`` takes vias down to it)
+                board.pours.append((net_id, index[layer], shape))
 
     if kicad is not None:
         taken = apply_kicad(design, kicad)
@@ -405,7 +417,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             if isinstance(desc, list) and desc[0] in ("path", "polygon", "rect", "circle"):
                 got = _shape(desc, scale)
                 if got:
-                    on = layer_set([got[1]])
+                    on = layer_set([got[1]], unrouted_too=True)
                     if on is None or on:
                         board.obstacles.append(Obstacle(got[0], net_id, on))
     for via in _children(wiring, "via"):

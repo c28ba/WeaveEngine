@@ -490,6 +490,8 @@ No violation in any run. Times were not usable (the machine was loaded throughou
 
 ## 12. Layers and vias
 
+**Layers left out of the routing** (`read_dsn(layers=...)`, `--layers`): a board with its planes inside is routed on its outer layers only. The layers left out (`Board.unrouted`) get no planar map and no traces, but every via goes through them: their keepouts and fixed copper are kept, with the layer indices after the routed layers', and kept clear of by vias (`plan.path.Legal`, `plan.fanout`), and their planes are reached by fan-out vias. A via is written to the session on every copper layer, else KiCad's import takes it for a blind one. Until 2026-11 the layers left out were dropped whole: on a 4-layer board routed on F.Cu and B.Cu, the +3V3 and GND planes inside were gone, so their pads were left with no way to them.
+
 **The difficulty:** a via is a new obstacle inside a triangle, which changes the planar map.
 
 ### 12.1 The first approach: vias between passes, and why it is not enough

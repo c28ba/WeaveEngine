@@ -151,6 +151,9 @@ class Board:
     obstacles: list[Obstacle] = field(default_factory=list)
     net_names: dict[int, str] = field(default_factory=dict)
     layers: list[str] = field(default_factory=lambda: ["F.Cu"])
+    unrouted: list[str] = field(default_factory=list)  # copper layers left out of the routing: no trace there, but every via goes
+                                                       # through them, so their copper, keepouts and pours are kept, with the
+                                                       # layer indices after the routed layers'
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only

@@ -50,14 +50,15 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     inside_via = board.outline.buffer(-(edge + r))
     margin = shapely.union_all([m.buffer(edge) for m in board.margin]) if board.margin else None  # (KiCad holds copper off these too)
     nlayers = len(board.layers)
+    every = nlayers + len(board.unrouted)  # (a via goes through the layers left out of the routing too, and lands in their planes)
     # Everything a via or a stub must keep clear of, per layer: (shape, net, what it asks; -2 = keepout).
-    things: list[list] = [[] for _ in range(nlayers)]
+    things: list[list] = [[] for _ in range(every)]
     for p in board.pads:
-        for i in range(nlayers):
+        for i in range(every):
             if p.on(i):
                 things[i].append((p.shape, p.net_id, keep if p.is_via else rules.apart(p.clearance)))
     for o in board.obstacles:
-        for i in range(nlayers):
+        for i in range(every):
             if o.on(i):
                 things[i].append((o.shape, o.net_id if (o.copper or o.net_id >= 0) else -2, rules.apart(o.clearance)))
     for w, line in lines.items():
@@ -137,7 +138,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
                 return False
             if any(math.dist((x, y), v.centre) < 2 * r + (0.0 if v.net_id == pad.net_id else keep) - 1e-9 for v in vias):
                 return False
-            return all(clear(disc, pad.net_id, i, keep, drilled=True) for i in range(nlayers)) and stub_ok(x, y)
+            return all(clear(disc, pad.net_id, i, keep, drilled=True) for i in range(every)) and stub_ok(x, y)
 
         # A plane of its net on its own layer that stops short of it: a short trace into the plane, no via.
         into = None
@@ -164,7 +165,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
         vias.append(via)
         traces.append((pad.net_id, layer, [start, spot]))
         # (later vias and stubs keep clear of this one and its stub)
-        for i in range(nlayers):
+        for i in range(every):
             things[i].append((via.shape, pad.net_id, keep))
         things[layer].append((LineString([start, spot]).buffer(half, quad_segs=4), pad.net_id, rules.clearance))
         trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]

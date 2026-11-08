@@ -745,6 +745,43 @@ def test_vias_slide_to_where_their_traces_run_straighter():
         assert layer.state.check_invariants()
 
 
+def test_vias_keep_clear_of_copper_on_a_layer_that_is_not_routed():
+    """A layer left out of the routing (``Board.unrouted``) has no map, but a
+    via goes through it: vias keep clear of fixed copper there, and traces on
+    the routed layers pass over it."""
+    from weaveengine.board import Obstacle
+    band = Polygon([(8, 0), (14.4, 0), (14.4, 20), (8, 20)])   # the wall's left side, where vias go
+    board = two_layer_wall_board()
+    assert any(v.shape.intersects(band) for v in route_board(board, options=Options(portfolio=1), workers=1).vias)
+    board.unrouted = ["In1.Cu"]
+    board.obstacles.append(Obstacle(band, 7, frozenset({2})))   # copper of another net, on In1
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert result.unrouted == [] and result.stats["routed"] == 3
+    assert all(v.shape.distance(band) >= board.rules.clearance - 1e-6 for v in result.vias)
+    assert any(LineString(line).intersects(band) for line in result.polylines.values())
+    assert_clean(board, result)
+
+
+def test_a_pad_gets_a_via_down_to_its_plane_on_a_layer_that_is_not_routed():
+    """Ground poured on In1, which is not routed (a board with its planes
+    inside, routed on the outer layers): each front pad of ground gets a via
+    into it, clear of the copper of other nets there."""
+    from shapely.geometry import box as rect
+    from weaveengine.board import Obstacle
+    front = frozenset({0})
+    board = Board.rectangle(30, 20, Rules(0.25, 0.2), layers=["F.Cu", "B.Cu"])
+    board.unrouted = ["In1.Cu"]
+    board.pads += [Pad.rect(0, 5, 10, 1.0, 1.4, 0, layers=front), Pad.rect(1, 25, 10, 1.0, 1.4, 0, layers=front),
+                   Pad.rect(3, 5, 15, 1.0, 1.0, 1, layers=front), Pad.rect(4, 25, 15, 1.0, 1.0, 1, layers=front)]
+    board.plane_nets = {0}
+    board.pours = [(0, 2, rect(1, 1, 29, 19))]
+    track = rect(5.6, 8, 6.4, 12)   # copper of another net on In1, right of pad 0, where its via goes otherwise
+    board.obstacles.append(Obstacle(track, 5, frozenset({2})))
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert result.unrouted == [] and result.stats["fanout"] == 2 and result.stats["plane_left"] == []
+    assert all(v.shape.distance(track) >= board.rules.clearance - 1e-6 for v in result.vias)
+
+
 def fine_pitch_board() -> Board:
     """A row of pads 0.3 mm wide and 0.2 mm apart (their keep-off rings merge),
     each joined to a pad straight above it, with the far pads in mirrored order
