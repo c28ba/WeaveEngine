@@ -1,0 +1,252 @@
+# The board sweep (bench/sweep) on GitHub: each board on a runner of its own,
+# up to 20 at a time, so a sweep takes about as long as its slowest board.
+#
+# To start one, push a branch named sweep/SOMETHING: tiers 1 to 3 of that
+# branch's code are swept (this workflow does not run the build workflow's
+# tests and packages for it). Or run "sweep" by hand from the Actions tab,
+# with the tiers ("1", "1-3", "4"; tier 4, the big boards, only ever when
+# asked for) and a label.
+#
+# The results are committed to the branch sweep-results, readable without a
+# token (git fetch origin sweep-results): results/LABEL.jsonl, one line per
+# board, and results/LABEL.txt, the comparison (compare.py) with the latest
+# sweep of main, when there is one. LABEL is the label given, or the branch
+# and its commit (sweep-mine-1a2b3c4). The comparison is also the run's summary.
+name: sweep
+
+on:
+  push:
+    branches: ["sweep/**"]
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: 'Tiers: "1", "1-3", "2,3" or "4"'
+        default: "1-3"
+      label:
+        description: "Name of the results (default: the branch and its commit)"
+        default: ""
+
+# A new push to a sweep branch stops the sweep still going for the one before;
+# sweeps started by hand never stop each other.
+concurrency:
+  group: sweep-${{ github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# The boards' sources and each board's files, in the checkout (run.py's WE_SWEEP_DIR).
+env:
+  WE_SWEEP_DIR: ${{ github.workspace }}/.sweep
+
+jobs:
+  # The boards of the chosen tiers, as the matrix of the next job, each with
+  # the minutes its runner may take (by tier: KiCad's install included), the
+  # slowest tier first so that its boards are not left waiting for a runner;
+  # and the boards' sources, fetched once into the cache the boards share.
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      boards: ${{ steps.list.outputs.boards }}
+      label: ${{ steps.list.outputs.label }}
+      tiers: ${{ steps.list.outputs.tiers }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: List the boards
+        id: list
+        env:
+          TIERS: ${{ inputs.tiers || '1-3' }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          boards=$(python3 bench/sweep/run.py --list "$TIERS" | jq -c 'map(. + {minutes: [0, 20, 30, 60, 350][.tier]}) | sort_by(-.tier)')
+          echo "$boards" | jq -r '.[] | "\(.tier) \(.id)"'
+          if [ "$boards" = "[]" ]; then echo "::error::no boards in tiers $TIERS"; exit 1; fi
+          label=${LABEL:-$GITHUB_REF_NAME-${GITHUB_SHA::7}}
+          label=$(echo "$label" | sed 's/[^A-Za-z0-9._-]/-/g')
+          echo "boards=$boards" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "tiers=$TIERS" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        id: cache
+        with:
+          path: ${{ env.WE_SWEEP_DIR }}/dl
+          key: sweep-sources-${{ hashFiles('bench/sweep/sources.txt') }}
+      # (each source's git history is dropped once fetched: the stamp of its
+      # commit is all that run.py looks at, and the cache is smaller for it)
+      - name: Fetch the boards' sources
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          python3 bench/sweep/run.py --fetch
+          rm -rf "$WE_SWEEP_DIR"/dl/*/.git
+          du -sh "$WE_SWEEP_DIR"/dl/*
+
+  board:
+    needs: setup
+    name: ${{ matrix.board.id }}
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        board: ${{ fromJSON(needs.setup.outputs.boards) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.board.minutes }}
+    env:
+      ID: ${{ matrix.board.id }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+          pip install -e . --no-deps
+      # KiCad's own packages for Ubuntu: kicad-cli, and pcbnew in the system
+      # Python (/usr/bin/python3), which is where run.py looks on Linux. The
+      # libraries of symbols, footprints and 3D models are not needed.
+      - name: Install KiCad
+        run: |
+          set +e
+          {
+            sudo add-apt-repository -y ppa:kicad/kicad-10.0-releases &&
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends kicad &&
+            kicad-cli version &&
+            /usr/bin/python3 -c "import pcbnew; print('pcbnew', pcbnew.Version())"
+          } > kicad.txt 2>&1; status=$?
+          tail -n 40 kicad.txt
+          if [ $status -ne 0 ]; then
+            echo "::error title=KiCad's install failed::$(tail -c 3000 kicad.txt | sed -e 's/%/%25/g' | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/%0A/g')"
+          fi
+          exit $status
+      - uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.WE_SWEEP_DIR }}/dl
+          key: sweep-sources-${{ hashFiles('bench/sweep/sources.txt') }}
+      # The routing may take all but the last 15 minutes of the job, so that a
+      # board too slow for its tier still gives its line, as a timeout.
+      - name: Route and check the board
+        run: |
+          set +e
+          mkdir -p out
+          python bench/sweep/run.py "$ID" --label sweep --out "out/$ID.jsonl" \
+            --limit $(( (${{ matrix.board.minutes }} - 15) * 60 )) > run.txt 2>&1; status=$?
+          cat run.txt
+          exit $status
+      # Posted as annotations, readable without signing in: the board's result,
+      # or why it has none. A board that never finished still gets a line.
+      - name: Report the board
+        if: always()
+        env:
+          TIER: ${{ matrix.board.tier }}
+        run: |
+          python - <<'EOF'
+          import json, os
+          bid, path = os.environ["ID"], f"out/{os.environ['ID']}.jsonl"
+          def esc(s): return s[-3000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          if not os.path.exists(path):
+              tail = open("run.txt", errors="replace").read() if os.path.exists("run.txt") else "(not run)"
+              rec = {"id": bid, "tier": int(os.environ["TIER"]), "stage": "job", "error": tail[-1500:]}
+              os.makedirs("out", exist_ok=True)
+              open(path, "w").write(json.dumps(rec) + "\n")
+          rec = json.loads(open(path).readlines()[-1])
+          drc = rec.get("drc", {})
+          line = (f"{rec.get('routed')}/{rec.get('connections')} routed, {rec.get('vias')} vias, "
+                  f"routing {rec.get('route_s')} s, in all {rec.get('total_s')} s; unconnected {drc.get('unconnected')}, "
+                  f"DRC {drc.get('kinds')}")
+          if rec.get("stage") == "done":
+              print(f"::notice title={bid}::{esc(line)}")
+          else:
+              print(f"::error title={bid} stopped at {rec.get('stage')}::{esc(line + chr(10) + str(rec.get('error', '')))}")
+          EOF
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sweep-${{ matrix.board.id }}
+          path: out/${{ matrix.board.id }}.jsonl
+
+  # All the lines in one file, committed to the branch sweep-results with the
+  # comparison against the latest sweep of main. A board with no line at all
+  # (its runner lost) is written as missing.
+  gather:
+    needs: [setup, board]
+    if: ${{ !cancelled() && needs.setup.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      BOARDS: ${{ needs.setup.outputs.boards }}
+      LABEL: ${{ needs.setup.outputs.label }}
+      TIERS: ${{ needs.setup.outputs.tiers }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: sweep-*
+          path: lines
+          merge-multiple: true
+      - name: Gather the results
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os
+          got = {}
+          for path in glob.glob("lines/*.jsonl"):
+              for line in open(path, encoding="utf-8"):
+                  if line.strip():
+                      rec = json.loads(line)
+                      got[rec["id"]] = rec
+          with open("results.jsonl", "w", encoding="utf-8") as f:
+              for b in sorted(json.loads(os.environ["BOARDS"]), key=lambda b: b["tier"]):
+                  rec = got.get(b["id"], {"id": b["id"], "tier": b["tier"], "stage": "missing"})
+                  f.write(json.dumps(rec) + "\n")
+          EOF
+      - name: Commit the results to sweep-results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --no-tags origin +refs/heads/sweep-results:refs/remotes/origin/sweep-results; then
+            git worktree add -B sweep-results ../results origin/sweep-results
+          else
+            git worktree add --orphan -b sweep-results ../results
+          fi
+          cd ../results
+          # The latest sweep of main, found by its commit's message.
+          base=$(git log -1 --format=%H --grep="^Sweep of main at " 2>/dev/null || true)
+          if [ -n "$base" ]; then
+            base=$(git diff-tree --no-commit-id --name-only -r --diff-filter=AM "$base" -- 'results/*.jsonl' | head -n 1)
+          fi
+          mkdir -p results
+          cp "$GITHUB_WORKSPACE/results.jsonl" "results/$LABEL.jsonl"
+          {
+            echo "## Sweep of $GITHUB_REF_NAME at ${GITHUB_SHA::7}, tiers $TIERS: results/$LABEL.jsonl"
+            echo
+            echo "| board | tier | stage | routed | vias | routing s | unconnected |"
+            echo "|---|---|---|---|---|---|---|"
+            jq -r '"| \(.id) | \(.tier) | \(.stage) | \(.routed)/\(.connections) | \(.vias) | \(.route_s) | \(.drc.unconnected) |"' "results/$LABEL.jsonl"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$base" ]; then
+            # (compare.py ends with 1 when a board is worse: a warning, and the results are still pushed)
+            worse=""
+            python3 "$GITHUB_WORKSPACE/bench/sweep/compare.py" "$base" "results/$LABEL.jsonl" > "results/$LABEL.txt" || worse=1
+            if [ -n "$worse" ]; then
+              echo "::warning title=Some boards are worse than in $base::$(grep WORSE "results/$LABEL.txt" | cut -c1-26 | tr -s ' \n' ' ')"
+            fi
+            cat "results/$LABEL.txt"
+            { echo; echo "Compared with $base:"; echo '```'; cat "results/$LABEL.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No sweep of main to compare with yet." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          git add results
+          git commit -q -m "Sweep of $GITHUB_REF_NAME at ${GITHUB_SHA::7}, tiers $TIERS: results/$LABEL.jsonl"
+          # (two sweeps may finish at once: the later one goes on top of the other)
+          for try in 1 2 3 4 5; do
+            git push origin HEAD:sweep-results && exit 0
+            sleep $((try * 5))
+            git fetch --no-tags origin +refs/heads/sweep-results:refs/remotes/origin/sweep-results && git rebase -X theirs origin/sweep-results
+          done
+          echo "::error::the results could not be pushed to sweep-results"
+          exit 1

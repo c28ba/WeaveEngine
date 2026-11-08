@@ -16,6 +16,14 @@ installs itself, or set KICAD_CLI and KICAD_PYTHON. The boards' repositories
 (sources.txt, pinned to a commit) are fetched once into WE_SWEEP_DIR (default
 ~/.cache/weaveengine-sweep), and each run's files go to WE_SWEEP_DIR/work/LABEL.
 One JSON line per board goes to --out; compare two runs with compare.py.
+
+On GitHub (.github/workflows/sweep.yml) each board runs on a runner of its
+own, so a sweep takes about as long as its slowest board. Push a branch named
+sweep/SOMETHING to sweep tiers 1 to 3 of its code, or run the workflow "sweep"
+by hand from the Actions tab (the tiers: "1", "1-3", "4"; and a label). The
+results go to the branch sweep-results: results/LABEL.jsonl, and LABEL.txt,
+compared with the latest sweep of main (git fetch origin sweep-results). The
+workflow uses --list for its matrix and --fetch to fill its cache.
 """
 import argparse, glob, json, os, re, shutil, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
@@ -188,9 +196,24 @@ def main() -> int:
     ap.add_argument("--workers", type=int, help="processes per routing (default: all cores)")
     ap.add_argument("--limit", type=int, default=2400, help="seconds a routing may take (default 2400)")
     ap.add_argument("--python", default=sys.executable, help="the Python with WeaveEngine (default: this one)")
+    ap.add_argument("--list", metavar="TIERS", help='print the boards of these tiers ("1", "1-3", "2,4") as JSON and stop')
+    ap.add_argument("--fetch", action="store_true", help="fetch every board's source and stop")
     args = ap.parse_args()
     if args.ramp and not args.baseline:
         ap.error("--ramp needs --baseline")
+    if args.list:
+        tiers = set()
+        for part in args.list.replace(" ", "").split(","):
+            lo, _, hi = part.partition("-")
+            if not (lo.isdigit() and (hi or lo).isdigit()):
+                ap.error(f"--list: not tiers: {args.list!r}")
+            tiers.update(range(int(lo), int(hi or lo) + 1))
+        print(json.dumps([{"id": b[0], "tier": b[1]} for b in boards() if b[1] in tiers]))
+        return 0
+    if args.fetch:
+        for name in sources():
+            fetch(name)
+        return 0
     label = args.label
     if not label:
         git = lambda *a: subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True).stdout.strip()
