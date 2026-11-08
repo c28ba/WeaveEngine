@@ -174,6 +174,76 @@ def test_through_hole_pads_let_connections_change_layer_without_vias():
     assert_clean(board, result)
 
 
+def test_a_layer_made_dear_is_used_only_where_it_must_be():
+    """``CostParams.layer_cost`` (a layer that also carries a plane, say):
+    net 0 may run on either layer and takes the front; with the front's
+    lengths at five times their price it takes the back. Net 1 has pads on the
+    front only and stays there, with no vias. What is measured is as before:
+    only the price of a length on the front changes."""
+    from weaveengine.topo.costs import CostParams
+    from weaveengine.topo.search import route
+    from weaveengine.topo.state import TopoState
+    board = Board.rectangle(30, 30, Rules(0.2, 0.2), layers=["F.Cu", "B.Cu"])
+    front, back = frozenset({0}), frozenset({1})
+    board.pads += [Pad.circle(0, 3, 15, 0.6, 0), Pad.circle(1, 27, 15, 0.6, 0),                               # either layer
+                   Pad.rect(2, 3, 5, 1, 1, 1, layers=front), Pad.rect(3, 27, 5, 1, 1, 1, layers=front),        # the front only
+                   Pad.rect(4, 3, 25, 1, 1, 2, layers=back), Pad.rect(5, 27, 25, 1, 1, 2, layers=back)]        # the back only
+    on = lambda result, net: {result.wire_layer[w] for w in result.polylines if result.wire_net[w] == net}
+    plain = route_board(board, options=Options(portfolio=1), workers=1)
+    dear = route_board(board, CostParams.for_map(planar_map.build(board), layer_cost={0: 5.0}), options=Options(portfolio=1), workers=1)
+    assert [on(plain, n) for n in range(3)] == [{0}, {0}, {1}]
+    assert [on(dear, n) for n in range(3)] == [{1}, {0}, {1}] and dear.unrouted == [] and dear.stats["vias"] == 0
+    assert dear.stats["length"] == pytest.approx(plain.stats["length"])
+    # On one map: a route costs twice its length where lengths are priced at twice; the length is the same.
+    pmap = planar_map.build(board)
+    once = route(pmap, TopoState(pmap), 0, 1, CostParams.for_map(pmap))
+    pmap.price_lengths(2.0)
+    twice = route(pmap, TopoState(pmap), 0, 1, CostParams.for_map(pmap))
+    assert twice.length == pytest.approx(once.length) and twice.cost == pytest.approx(2.0 * once.cost)
+
+
+def test_connections_change_layer_through_a_dear_layer():
+    """Every connection of this board has to cross its wall on the back: with
+    the back made dear, all are routed all the same. (A via's own triangle was
+    then the cheapest place for the next via, a way that cannot be read back,
+    and the connection was given up.)"""
+    from bench.generators import smd_two_layer
+    from weaveengine.topo.costs import CostParams
+    board = smd_two_layer(6, seed=10)
+    result = route_board(board, CostParams.for_map(planar_map.build(board), layer_cost={1: 5.0}), options=Options(portfolio=1), workers=1)
+    assert result.unrouted == [] and result.stats["routed"] == result.stats["connections"] == 6
+    assert_clean(board, result)
+
+
+def test_a_detour_on_a_dear_layer_is_still_undone():
+    """Refinement (``ripup._replan``) weighs a new plan, at the search's
+    prices, against what the connection has at the same prices: a detour on
+    a layer made dear is undone as on any other."""
+    from weaveengine import parallel, router
+    from weaveengine.plan import ripup
+    from weaveengine.plan.context import Context
+    from weaveengine.plan.path import Path
+    from weaveengine.topo.costs import CostParams
+    from weaveengine.topo.search import route
+    front = frozenset({0})
+    board = Board.rectangle(30, 30, Rules(0.2, 0.2), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.rect(0, 3, 15, 1, 1, 0, layers=front), Pad.rect(1, 27, 15, 1, 1, 0, layers=front),
+                   Pad.rect(2, 15, 15, 1, 1, 1, layers=front), Pad.rect(3, 15, 25, 1, 1, 1, layers=front)]
+    layers = [Layer(i, name, pmap) for i, (name, pmap) in enumerate(zip(board.layers, parallel.run(router._build_task, board, range(2), 1)))]
+    pairs, _ = decompose(board, layers)
+    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap, layer_cost={0: 5.0}), Options(portfolio=1, slide=False), seed=0, workers=1)
+    w = next(w for w, c in ctx.conns.items() if c.net_id == 0)
+    conn, front_layer = ctx.conns[w], ctx.layers[0]
+    direct = route(front_layer.pmap, front_layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, net=conn.net_id)
+    assert direct.cost == pytest.approx(5.0 * direct.length)   # (the context prices the front as its parameters say)
+    detour = route(front_layer.pmap, front_layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, net=conn.net_id,
+                   penalty={g: 40.0 for g in direct.gates[1:-1]})   # (sent round)
+    detour.layer = 0
+    assert ctx.commit(conn, Path.on_one_layer(detour))
+    assert ctx.copper()[w] > direct.length + 1.0
+    assert ripup._replan(ctx, conn, ctx.copper()[w], 0, 1e-6) and ctx.copper()[w] == pytest.approx(direct.length)
+
+
 def turn_at_pad(line, ring: float) -> float:
     """Largest change of direction (degrees) the trace makes within ``ring`` of where it starts."""
     worst = 0.0

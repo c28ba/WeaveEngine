@@ -303,6 +303,32 @@ def test_cli_routes_a_dsn_without_rules(tmp_path, capsys):
     assert "not in the DSN, defaults used: trace width 0.2 mm, clearance 0.2 mm" in out and "-> OK" in out
 
 
+def test_cli_layer_costs(tmp_path, monkeypatch, capsys):
+    """--layer-cost LAYER:FACTOR prices the lengths on a routed layer
+    (``CostParams.layer_cost``, by the layer's index), the parameters scaled
+    to the board as the app makes them; a layer not routed, or a factor below
+    1, is refused. Without it the router makes its own parameters."""
+    from weaveengine import cli
+    from weaveengine.topo import planar_map
+    from weaveengine.topo.costs import CostParams
+    given, real = [], cli.route_board
+    monkeypatch.setattr(cli, "route_board", lambda board, params=None, **how: given.append(params) or real(board, params, **how))
+    dsn = str(tmp_path / "b.dsn")
+    write_dsn(channel(4, seed=1), dsn)
+    assert main([dsn, "--quiet", "--workers", "1", "--layer-cost", "F.Cu:3"]) == 0
+    assert "traces cost more on F.Cu (3 times their length)" in capsys.readouterr().out
+    assert main([dsn, "--quiet", "--workers", "1"]) == 0
+    assert given == [CostParams.for_map(planar_map.build(read_dsn(dsn).board), layer_cost={0: 3.0}), None]
+    for wrong in ("B.Cu:3", "F.Cu:0.5", "F.Cu", "F.Cu:many", "F.Cu:1e999"):
+        with pytest.raises(SystemExit):
+            main([dsn, "--quiet", "--layer-cost", wrong])
+    # Two layers: given by name, once each; a factor of 1 is no change.
+    two = tmp_path / "two.dsn"
+    two.write_text(KICAD_STYLE, encoding="utf-8")
+    assert main(["--layer-cost", "B.Cu:2", "--layer-cost", "F.Cu:1", str(two), "--quiet", "--workers", "1"]) == 0
+    assert given[-1].layer_cost == {1: 2.0}
+
+
 KICAD_CUTOUT = """(pcb cut.dsn
   (resolution um 10)
   (unit um)

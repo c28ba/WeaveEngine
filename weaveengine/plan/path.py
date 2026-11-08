@@ -121,7 +121,7 @@ def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float, 
     came from as (layer, triangle)), or None. ``onward``: the part of the
     straight line from a point to the goal that the way on costs at least."""
     rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
-    x, y, cost, tris = kernel.via_points(seen.best, via_cost, bound, goal[0], goal[1], onward, pmap.tri_v, pmap.vx, pmap.vy,
+    x, y, cost, tris = kernel.via_points(seen.placeable, via_cost, bound, goal[0], goal[1], onward, pmap.tri_v, pmap.vx, pmap.vy,
                                          ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
                                          legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[:, 0]),
                                          np.ascontiguousarray(taken[:, 1]), rules.via_diameter + rules.clearance + 0.02)
