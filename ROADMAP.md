@@ -5,6 +5,25 @@ features.
 
 ## 1.1
 
+### Order of work
+
+Least disruptive first; each on its own branch, merged only when the board
+sweep (the open-source boards, routed and checked with KiCad's DRC) shows
+nothing worse than before.
+
+1. Arcs in the session (the SES writer only).
+2. The pour fill estimate, shown in the app and counted over the sweep: how
+   often pours are cut today.
+3. Pours that stay whole (the skeleton), measured with 2.
+4. The Margin layer as board edge (the KiCad reader only; most of the DRC
+   errors the routing still causes).
+5. Teardrop notches.
+6. Traces tapered to fine-pitch pins.
+7. KiCad custom rules (`.kicad_dru`).
+8. No acute angles where copper of one net meets.
+9. The 45-degree option (a second way of drawing, off by default).
+10. A via size per net class.
+
 ### Trace shape
 
 - **Arcs in the session.** Write rounded corners and the curves of taut traces
