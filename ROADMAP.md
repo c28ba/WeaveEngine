@@ -10,10 +10,14 @@ features.
 From the first users' reports (r/PCB, 2026-11). Merged: rule areas that
 forbid only tracks or only vias are read (#1); fan-out vias share locked
 vias and keep their drills apart (#3); `--max-rounds` (#2); `--layers` keeps
-the other layers' pours and copper (#4). Still to do:
+the other layers' pours and copper (#4); `--layer-cost` makes a layer dear
+(#5). Still to do:
 
-- **A per-layer cost** (#5): asked of its author to split out a change to
-  where vias may stand, which changes every board's routing.
+- **Where vias may stand, for every board.** #5 keeps a via from being
+  planned in the triangle of the via before it (`Reach.placeable`); it is
+  applied only with a layer cost, since on every board it routed 17 more
+  connections over the medium boards but cost four boards one each. Find why
+  those four lose one, and apply it always if nothing is worse.
 - **A time limit for a run**, with the best result so far saved as it goes:
   a deadline inside the router (rip-up stops, the session is still written),
   and a checkpoint after each pass.
