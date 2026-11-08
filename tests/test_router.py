@@ -526,6 +526,27 @@ def test_result_does_not_depend_on_the_number_of_workers():
         assert_clean(board, r)
 
 
+def test_result_does_not_depend_on_the_process():
+    """The same board and settings give the same routing, to the byte, in every
+    run of the program: nothing depends on the order of a set or dict that
+    differs between processes (Python's string hashing is seeded per process),
+    nor on which raced variant finishes first. (lily58-pro was seen to route
+    two ways in the board sweep; that was KiCad writing the DSN two ways, see
+    ``bench/sweep/run.py``'s ``prepare``.)"""
+    import subprocess
+    import sys
+    code = ("import hashlib\n"
+            "from bench.generators import random_grid\n"
+            "from weaveengine.router import route_board\n"
+            "from weaveengine.plan.context import Options\n"
+            "r = route_board(random_grid(8, 8, nets=14, seed=4), options=Options(portfolio=3), workers=3)\n"
+            "print(hashlib.sha1(repr((sorted(r.polylines.items()), r.unrouted, [v.centre for v in r.vias])).encode()).hexdigest())\n")
+    root = os.path.dirname(os.path.dirname(__file__))
+    runs = {subprocess.run([sys.executable, "-c", code], cwd=root, env=dict(os.environ, PYTHONHASHSEED=seed),
+                           capture_output=True, text=True, check=True).stdout.strip() for seed in ("1", "2", "3")}
+    assert len(runs) == 1
+
+
 def test_racing_variants_never_does_worse_than_the_plain_run():
     board = random_grid(8, 8, nets=14, seed=4)
     plain = route_board(board, options=Options(portfolio=1))

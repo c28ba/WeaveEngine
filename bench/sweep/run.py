@@ -15,7 +15,9 @@ kicad-cli and its Python, which has pcbnew); it is looked for where KiCad
 installs itself, or set KICAD_CLI and KICAD_PYTHON. The boards' repositories
 (sources.txt, pinned to a commit) are fetched once into WE_SWEEP_DIR (default
 ~/.cache/weaveengine-sweep), and each run's files go to WE_SWEEP_DIR/work/LABEL.
-One JSON line per board goes to --out; compare two runs with compare.py.
+Each board is stripped and exported to DSN once, into WE_SWEEP_DIR/prepared,
+and every later run routes that same DSN (KiCad's export differs from run to
+run on some boards: see ``prepare``). One JSON line per board goes to --out; compare two runs with compare.py.
 
 On GitHub (.github/workflows/sweep.yml) each board runs on a runner of its
 own, so a sweep takes about as long as its slowest board. Push a branch named
@@ -25,7 +27,7 @@ results go to the branch sweep-results: results/LABEL.jsonl, and LABEL.txt,
 compared with the latest sweep of main (git fetch origin sweep-results). The
 workflow uses --list for its matrix and --fetch to fill its cache.
 """
-import argparse, glob, json, os, re, shutil, subprocess, sys, time
+import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -121,6 +123,44 @@ def drc(cli: str, pcb: str, out: str) -> dict:
     return {"kinds": kinds, "unconnected": len(d.get("unconnected_items", []))}
 
 
+PREPARED = os.path.join(SWEEP, "prepared")
+
+
+def prepare(bid: str, pcb: str, out: str, cli: str, py: str) -> tuple[bool, str]:
+    """The board stripped of its routing, and its DSN, into ``out``: made once
+    (prep.py) and kept in WE_SWEEP_DIR/prepared, then copied from there.
+
+    Kept because KiCad's DSN export is not the same from run to run. Where the
+    segments of a board outline nearly meet (lily58-pro's miss by up to 1.3 um),
+    it writes one end or the other, as the order its shapes happen to lie in
+    memory has it (and other boards have shown other differences). The router
+    is chaotic in its input: on lily58-pro one DSN routes to 90 vias and the
+    other to 81. Routed from one DSN, every sweep sees the same board. What
+    it is kept under names the board's files, prep.py and the KiCad version, so
+    a change to any of them makes it again."""
+    digest = hashlib.sha1()
+    for part in [pcb] + [pcb[:-len(".kicad_pcb")] + ext for ext in (".kicad_pro", ".kicad_dru")] + [os.path.join(HERE, "prep.py")]:
+        if os.path.exists(part):
+            digest.update(open(part, "rb").read())
+        digest.update(b"\0")
+    digest.update(subprocess.run([cli, "version"], capture_output=True, text=True).stdout.strip().encode())
+    kept = os.path.join(PREPARED, f"{bid}-{digest.hexdigest()[:12]}")
+    if not os.path.exists(os.path.join(kept, "board.dsn")):
+        made = kept + f".{os.getpid()}.part"
+        shutil.rmtree(made, ignore_errors=True)
+        code, text, _ = sh([py, os.path.join(HERE, "prep.py"), pcb, made], log=os.path.join(out, "prep.log"))
+        if code != 0 or not os.path.exists(os.path.join(made, "board.dsn")):
+            shutil.rmtree(made, ignore_errors=True)
+            return False, text
+        try:
+            os.rename(made, kept)  # (whole or not at all; another sweep may have made it first)
+        except OSError:
+            shutil.rmtree(made, ignore_errors=True)
+    for name in os.listdir(kept):
+        shutil.copy(os.path.join(kept, name), os.path.join(out, name))
+    return True, ""
+
+
 def one(bid: str, src: str, path: str, work: str, args) -> dict:
     """Strip, route, import, check: one board."""
     cli, py = kicad()
@@ -128,8 +168,8 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
     os.makedirs(out, exist_ok=True)
     rec = {"id": bid, "src": f"{src}/{path}"}
     pcb = os.path.join(DL, src, path)
-    code, text, _ = sh([py, os.path.join(HERE, "prep.py"), pcb, out], log=os.path.join(out, "prep.log"))
-    if code != 0 or not os.path.exists(os.path.join(out, "board.dsn")):
+    ok, text = prepare(bid, pcb, out, cli, py)
+    if not ok:
         rec.update(stage="prep", error=text[-500:])
         return rec
     rec.update(json.load(open(os.path.join(out, "prep.json"))))
