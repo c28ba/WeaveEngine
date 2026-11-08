@@ -1,0 +1,35 @@
+castor-expander            routed 6/6 -> 6/6  drc 0 -> 0   islands 0 -> 0  mask/thermal 1 -> 1  open 2 -> 2  14 -> 11 s
+castor-mainboard           routed 297/297 -> 297/297  drc 0 -> 0   islands 0 -> 0  mask/thermal 9 -> 9  open 76 -> 76  150 -> 163 s
+fomu                       routed 17/37 -> 17/37  drc 0 -> 0   islands 0 -> 0  mask/thermal 3 -> 3  open 66 -> 66  22 -> 21 s
+hackrf-lna915              routed 19/23 -> 19/23  drc 9 -> 9 {'copper_edge_clearance': 9}  islands 0 -> 0  mask/thermal 0 -> 0  open 11 -> 11  16 -> 11 s
+hackrf-operacake           routed 172/180 -> 172/180  drc 4 -> 4 {'clearance': 4}  islands 0 -> 0  mask/thermal 0 -> 0  open 22 -> 22  101 -> 101 s
+kicad-cm5-minima           routed 156/157 -> 156/157  drc 0 -> 0   islands 9 -> 9  mask/thermal 0 -> 0  open 49 -> 49  204 -> 235 s
+kicad-coldfire             routed 313/313 -> 313/313  drc 1 -> 1 {'via_dangling': 1}  islands 0 -> 0  mask/thermal 0 -> 0  open 67 -> 67  386 -> 494 s
+kicad-complex-hierarchy    routed 87/87 -> 87/87  drc 0 -> 0   islands 0 -> 0  mask/thermal 1 -> 1  open 0 -> 0  16 -> 17 s
+kicad-ecc83                routed 14/14 -> 14/14  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  9 -> 12 s
+kicad-interf-u             routed 159/159 -> 159/159  drc 0 -> 0   islands 0 -> 0  mask/thermal 5 -> 5  open 19 -> 19  107 -> 107 s
+kicad-mixer                routed 136/173 -> 136/173  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 45 -> 45  34 -> 23 s
+kicad-openair              routed 229/230 -> 229/230  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 106 -> 106  89 -> 63 s
+kicad-pic-programmer       routed 86/86 -> 86/86  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 1 -> 1  20 -> 18 s
+kicad-sonde                routed 44/44 -> 44/44  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 4 -> 4  14 -> 11 s
+kicad-stickhub             routed 97/99 -> 97/99  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 30 -> 30  27 -> 35 s
+kicad-tinytapeout          routed 291/349 -> 291/349  drc 1 -> 1 {'annular_width': 1}  islands 0 -> 0  mask/thermal 0 -> 0  open 92 -> 92  147 -> 216 s (slower)
+lily58-lite                routed 158/158 -> 158/158  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 2 -> 2  46 -> 42 s
+lily58-pro                 routed 311/311 -> 311/311  drc 0 -> 0   islands 0 -> 0  mask/thermal 5 -> 5  open 5 -> 5  102 -> 141 s (slower)
+lily58-pro-v2              routed 360/444 -> 360/444  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 161 -> 161  176 -> 128 s
+lumen-blade13              routed 70/70 -> 70/70  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 37 -> 37  41 -> 42 s
+lumen-ftp                  routed 80/80 -> 80/80  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  14 -> 13 s
+lumen-mobo                 routed 332/332 -> 332/332  drc 0 -> 0   islands 0 -> 0  mask/thermal 7 -> 7  open 119 -> 119  488 -> 389 s
+lumen-pi-interface         routed 6/6 -> 6/6  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  12 -> 9 s
+lumen-ringlight            routed 30/30 -> 30/30  drc 0 -> 0   islands 0 -> 0  mask/thermal 2 -> 2  open 8 -> 8  9 -> 9 s
+lumen-xy-limit             routed 4/4 -> 4/4  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  9 -> 11 s
+olimex-poe-c               routed 209/225 -> 209/225  drc 42 -> 42 {'shorting_items': 15, 'clearance': 27}  islands 0 -> 0  mask/thermal 22 -> 22  open 66 -> 66  314 -> 305 s
+olimex-poe-m2              routed 222/227 -> 222/227  drc 1 -> 1 {'via_dangling': 1}  islands 0 -> 0  mask/thermal 13 -> 13  open 67 -> 67  134 -> 206 s (slower)
+solo-a                     routed 132/155 -> 132/155  drc 153 -> 153 {'copper_edge_clearance': 153}  islands 0 -> 0  mask/thermal 0 -> 0  open 20 -> 20  118 -> 116 s
+solo-c                     routed 121/142 -> 121/142  drc 122 -> 122 {'copper_edge_clearance': 122}  islands 0 -> 0  mask/thermal 7 -> 7  open 18 -> 18  89 -> 98 s
+sweep-bling-mx             routed 44/44 -> 44/44  drc 0 -> 0   islands 0 -> 0  mask/thermal 8 -> 8  open 12 -> 12  53 -> 56 s
+sweep-half-swept           routed 28/28 -> 28/28  drc 0 -> 0   islands 35 -> 35  mask/thermal 4 -> 4  open 5 -> 5  19 -> 25 s (slower)
+sweep-mini                 routed 81/81 -> 81/81  drc 0 -> 0   islands 0 -> 0  mask/thermal 2 -> 2  open 0 -> 0  19 -> 17 s
+sweep-v2                   routed 44/46 -> 44/46  drc 0 -> 0   islands 0 -> 0  mask/thermal 4 -> 4  open 3 -> 3  16 -> 28 s (slower)
+upduino                    routed 126/154 -> 126/154  drc 23 -> 23 {'shorting_items': 1, 'clearance': 22}  islands 0 -> 0  mask/thermal 14 -> 14  open 77 -> 77  274 -> 230 s
+TOTAL drc 356 -> 356, islands 44 -> 44, mask/thermal 107 -> 107, open 1190 -> 1190, routing time 3290 -> 3405 s
