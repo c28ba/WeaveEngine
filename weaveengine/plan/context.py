@@ -181,6 +181,8 @@ class Context:
         self.board = board
         self.layers = layers
         self.params = params or CostParams.for_map(layers[0].pmap)
+        for layer in layers:  # (a layer made dear: a route pays more for its lengths there, ``CostParams.layer_cost``)
+            layer.pmap.price_lengths(self.params.layer_cost.get(layer.index, 1.0))
         self.options = options or Options()
         self.seed = seed
         rules = board.rules

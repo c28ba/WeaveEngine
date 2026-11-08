@@ -90,7 +90,7 @@ def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict |
     for _ in range(3 * k):
         if len(found) >= k:
             break
-        bump = params.alpha * max(first.length, 1e-6) / len(last.steps)
+        bump = params.alpha * max(first.length * pmap.length_cost, 1e-6) / len(last.steps)  # (at the layer's price, as the costs are)
         for g in last.gates:
             penalty[g] = penalty.get(g, 0.0) + bump
         r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight, net=conn.net_id)

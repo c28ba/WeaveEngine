@@ -1,5 +1,6 @@
 """Command line: read a Specctra DSN, route it, write a SES (and optionally an SVG)."""
 import argparse
+import math
 import os
 import sys
 
@@ -93,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--trace-width", type=float, metavar="MM", help="override the default class trace width from the DSN")
     ap.add_argument("--clearance", type=float, metavar="MM", help="override the clearance from the DSN")
     ap.add_argument("--via", nargs=2, type=float, metavar=("DIAMETER", "DRILL"), help="override the via size from the DSN (mm)")
+    ap.add_argument("--layer-cost", action="append", metavar="LAYER:FACTOR",
+                    help="traces on LAYER cost FACTOR times their length (1 or more), so it is used only where it must be: "
+                         "a layer that also carries a plane, say (In1.Cu:5); once per layer")
     ap.add_argument("--ignore-keepouts", action="store_true", help="drop the keepout areas of the DSN")
     ap.add_argument("--margin", type=float, default=0.01, metavar="MM",
                     help="extra clearance to route with, so nothing sits exactly on a limit (default 0.01)")
@@ -154,6 +158,19 @@ def main(argv: list[str] | None = None) -> int:
         names = design.net_names
         print(f"{len(design.board.plane_nets)} nets have a copper plane and are not routed as traces: "
               + ", ".join(sorted(names[n] for n in design.board.plane_nets)))
+    layer_cost = {}
+    for item in args.layer_cost or ():
+        name, _, factor = item.rpartition(":")
+        try:
+            factor = float(factor)
+        except ValueError:
+            factor = 0.0
+        if name not in design.board.layers or not 1.0 <= factor < math.inf:
+            ap.error(f"--layer-cost {item}: a layer routed ({', '.join(design.board.layers)}) and a factor of 1 or more")
+        if factor > 1.0:
+            layer_cost[design.board.layers.index(name)] = factor
+    if layer_cost:
+        print("traces cost more on " + ", ".join(f"{design.board.layers[i]} ({f:g} times their length)" for i, f in sorted(layer_cost.items())))
     # Route slightly wider than the rules; report against the rules themselves.
     want_clearance = rules.clearance
     want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
@@ -162,8 +179,13 @@ def main(argv: list[str] | None = None) -> int:
     rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout)
-    # (As the app makes them from its settings: scaled to the board, with the limit set.)
-    params = None if args.max_rounds is None else CostParams.for_map(planar_map.build(design.board), max_rounds=args.max_rounds)
+    # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
+    overrides = {}
+    if args.max_rounds is not None:
+        overrides["max_rounds"] = args.max_rounds
+    if layer_cost:
+        overrides["layer_cost"] = layer_cost
+    params = CostParams.for_map(planar_map.build(design.board), **overrides) if overrides else None
     bar = None if args.quiet else ProgressBar()
     result = route_board(design.board, params, options=options, seed=args.seed,
                          workers=args.workers, events=bar.event if bar else None)
