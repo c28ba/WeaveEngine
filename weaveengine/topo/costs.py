@@ -1,5 +1,5 @@
 """Cost model parameters (design sections 9 and 20). All costs are millimetre-equivalents."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -26,6 +26,8 @@ class CostParams:
     batch: int = 1               # connections rerouted against one snapshot of the state, in parallel (section 22)
     via_cost: float = 170.0      # per via (12.7): more than an over-full gate ever costs, see ``pres_cap``
     max_vias: int = 4            # vias one connection may take
+    layer_cost: dict = field(default_factory=dict)  # layer index -> what a length there costs, of the length (at least 1;
+                                                    # 1 where not given): ``PlanarMap.price_lengths``
 
     @property
     def pres_cap(self) -> float:

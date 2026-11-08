@@ -260,7 +260,7 @@ All costs are in millimetre-equivalents so they add up. Defaults are starting gu
 
 | Term | Where used | Definition |
 |---|---|---|
-| Length | every step | midpoint-to-midpoint distance between entry and exit gate in the triangle |
+| Length | every step | midpoint-to-midpoint distance between entry and exit gate in the triangle, times the layer's `layer_cost` (1 unless set: a layer that also carries a plane, made dear so traces take it only where they must; `PlanarMap.price_lengths`). The price only: lengths measured (reports, detours, the best round) are the lengths |
 | Present congestion | every gate | `pres_fac * max(0, usage[e] + 1 - cap[e])` |
 | History | every gate | `hist[e]`, grows each rip-up round where `e` overflowed |
 | Demand | Phase 1/2 candidate scoring | `w_d * max(0, (usage[e] + demand[e]) - cap[e])` (9.2) |

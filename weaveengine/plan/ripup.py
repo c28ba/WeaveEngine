@@ -332,7 +332,8 @@ def _planned(ctx: Context, plan, worth: float) -> float:
     total = plan.cost - worth * len(plan.vias)
     for joint, before in zip(plan.joints, plan.routes):
         if not isinstance(joint, int):
-            total += math.dist(ctx.layers[before.layer].pmap.edge_mid_list[before.steps[-1][0]], joint)
+            pmap = ctx.layers[before.layer].pmap
+            total += math.dist(pmap.edge_mid_list[before.steps[-1][0]], joint) * pmap.length_cost
     return total
 
 
@@ -364,15 +365,18 @@ def _replan(ctx: Context, conn, was: float, most: int, margin: float) -> bool:
         copper = sum(ctx.wire_copper(ctx.layers[piece.layer], piece.wire_id) for piece in pieces)
         return copper + worth * _own_vias(ctx, pieces) < was and not any(layer.state.overflowed_gates() for layer in ctx.layers)
 
+    # What it has now at the search's prices: its copper on a layer made dear costs it more (``CostParams.layer_cost``).
+    priced = was + sum(ctx.wire_copper(ctx.layers[p.layer], p.wire_id) * (ctx.layers[p.layer].pmap.length_cost - 1.0)
+                       for p in ([ctx.conns[w] for w in conn.pieces] or [conn]) if p.layer is not None)
     saved = ctx.lift(conn)
     # With the fewest vias first: the search's cheapest plan is not always the
     # one that does best once it is in, and a plan without a via is the one wanted.
     for vias in range(most + 1):
         struck, through = [], True
         for _ in range(3):  # what does not fit as planned is struck out, and the plan made again (``path.place``)
-            plan = find(ctx, conn, bound=was, struck=struck, hard_cap=True, congestion=False, max_vias=vias, via_cost=worth, through=through)
-            if plan is None or not _planned(ctx, plan, worth) + worth * len(plan.vias) < was:
-                break  # (a search's cost is never more than the copper it stands for, so the bound loses nothing)
+            plan = find(ctx, conn, bound=priced, struck=struck, hard_cap=True, congestion=False, max_vias=vias, via_cost=worth, through=through)
+            if plan is None or not _planned(ctx, plan, worth) + worth * len(plan.vias) < priced:
+                break  # (a search's cost is never more than the copper it stands for, at its layers' prices, so the bound loses nothing)
             if ctx.commit(conn, plan, within=better if plan.joints else None):
                 return True
             struck += plan.vias

@@ -37,6 +37,7 @@ class PlanarMap:
     edge_width: np.ndarray | None = None  # [E] width estimate behind edge_cap
     pitch: float = 1.0                    # base trace width + clearance
     layer: int = 0
+    length_cost: float = 1.0              # what a length on this layer costs a route, of the length (``price_lengths``)
 
     def __post_init__(self):
         self.num_vertices = len(self.vx)
@@ -132,9 +133,24 @@ class PlanarMap:
                 nxt = -1
             else:
                 nxt = 2 * b + (1 if tb[0] == t else 0)
-            length = math.hypot(mids[b][0] - mids[e][0], mids[b][1] - mids[e][1])
+            length = math.hypot(mids[b][0] - mids[e][0], mids[b][1] - mids[e][1]) * self.length_cost
             out.append((b, nxt, t, k, c == self.edge_v_list[e][0], c == self.edge_v_list[b][0], length))
         return tuple(out)
+
+    def price_lengths(self, factor: float) -> None:
+        """Every length a route runs on this layer costs it ``factor`` times
+        the length (``CostParams.layer_cost``: a layer that also carries a
+        plane, made dear so traces take it only where they must). Only the
+        search's price changes: a route's length, and all that is measured,
+        stay as they are. At least 1, so the search's estimate, the straight
+        line, stays below the price (and is the further below it: a search
+        on a dear layer looks at more before it is sure)."""
+        if not 1.0 <= factor < math.inf:
+            raise ValueError(f"a layer's cost is a factor of 1 or more, not {factor!r}")
+        if factor != self.length_cost:
+            self.length_cost = factor
+            self.trans = [self.transitions(h) for h in range(2 * self.num_edges)]
+            self.__dict__.pop("_kernel_tables", None)  # (the compiled search's copy: built again at the next search)
 
     def shared_vertex(self, e1: int, e2: int) -> int:
         a, b = self.edge_v_list[e1]

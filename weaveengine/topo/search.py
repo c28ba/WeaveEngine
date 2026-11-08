@@ -50,6 +50,13 @@ class Reach:
         self._touched, self._parent, self._parent_tr = touched, parent, parent_tr
         self._at = None
 
+    @property
+    def placeable(self) -> np.ndarray:
+        """``best``, less the triangles whose cheapest way in is a seed itself
+        (a via from another layer): no route can be read back to those, and a
+        second via in the triangle of the first would be refused anyway."""
+        return np.where(self._node >= 0, self.best, np.inf)
+
     def route_to(self, t: int) -> Route | None:
         """The way to the middle of triangle ``t`` (its last step crosses into
         ``t``), or None if there is none that could be inserted."""
