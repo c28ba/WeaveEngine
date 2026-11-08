@@ -121,6 +121,32 @@ def test_cli_writes_ses_and_svg(tmp_path, capsys):
     assert "<svg" in open(svg, encoding="utf-8").read()
 
 
+def test_cli_caps_the_rip_up_rounds(tmp_path, monkeypatch):
+    """--max-rounds sets the rip-up round limit as the app's setting does: the
+    parameters scaled to the board, the limit the only change. Without it the
+    router makes its own, and goes on for more rounds where a board needs them."""
+    from bench.generators import random_grid
+    from weaveengine import cli
+    from weaveengine.topo import planar_map
+    from weaveengine.topo.costs import CostParams
+    given, rounds, real = [], [], cli.route_board
+
+    def route_board(board, params=None, **how):
+        given.append(params)
+        result = real(board, params, **how)
+        rounds.append(result.stats["ripup_rounds"])
+        return result
+    monkeypatch.setattr(cli, "route_board", route_board)
+    dsn = str(tmp_path / "b.dsn")
+    write_dsn(random_grid(8, 8, nets=14, seed=4), dsn)
+    main([dsn, "--quiet", "--workers", "1", "--portfolio", "1", "--max-rounds", "2"])
+    main([dsn, "--quiet", "--workers", "1", "--portfolio", "1"])
+    assert given == [CostParams.for_map(planar_map.build(read_dsn(dsn).board), max_rounds=2), None]
+    assert rounds[0] == 2 < rounds[1]
+    with pytest.raises(SystemExit):
+        main([dsn, "--max-rounds", "-1"])
+
+
 def test_a_net_name_beyond_ascii_comes_back_as_written(tmp_path):
     """KiCad writes UTF-8 (net names like "I_5µA" or "Ω_SENSE" are common). Read
     and written as UTF-8 whatever the platform's own encoding (cp1252 on
