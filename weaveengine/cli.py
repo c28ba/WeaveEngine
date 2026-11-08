@@ -33,7 +33,7 @@ def why_buried(board, pad) -> str:
     if pad.shape.distance(board.outline.boundary) < edge + rules.base_width / 2.0:
         return "edge"
     if any(o.net_id < 0 and not o.copper and o.shape.intersects(pad.shape)
-           and (pad.layers is None or any(o.on(layer) for layer in pad.layers)) for o in board.obstacles):
+           and any(o.on(layer) for layer in (range(len(board.layers)) if pad.layers is None else pad.layers)) for o in board.obstacles):
         return "keepout"
     return "crowded"
 
@@ -74,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--version", action="version", version=f"WeaveEngine {__version__}")
     ap.add_argument("dsn", help="input Specctra DSN file")
     ap.add_argument("-o", "--output", help="output SES file (default: input name with .ses)")
-    ap.add_argument("--layers", nargs="+", metavar="LAYER", help="signal layers to route (default: all in the DSN)")
+    ap.add_argument("--layers", nargs="+", metavar="LAYER",
+                    help="signal layers to route (default: all in the DSN); vias still keep clear of the others' copper and reach their planes")
     ap.add_argument("--svg", help="also write an SVG picture of the result")
     ap.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
     ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
@@ -133,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
         print(design.kicad)
     if design.walled:
         print(walled_note(design.walled))
+    if design.board.unrouted:
+        print(f"not routed: {', '.join(design.board.unrouted)} (vias still keep clear of their copper, and reach their planes)")
     print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"

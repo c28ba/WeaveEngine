@@ -482,7 +482,7 @@ def apply(design, kicad: KicadBoard) -> str:
     from weaveengine.board import Obstacle
     board, rules, r = design.board, design.board.rules, kicad.rules
     said = []
-    index = {name: i for i, name in enumerate(board.layers)}
+    index = {name: i for i, name in enumerate(board.layers + board.unrouted)}  # (the layers left out too: vias keep clear there)
     on = lambda canonical: index.get(kicad.layer_names.get(canonical, canonical))
     rules.min_width = max(r.get("min_track_width", 0.0), NARROWEST)
     if r.get("min_clearance", 0.0) > rules.clearance + 1e-9:
@@ -493,7 +493,7 @@ def apply(design, kicad: KicadBoard) -> str:
     if diameter > rules.via_diameter + 1e-9 or drill > rules.via_drill + 1e-9:
         rules.via_diameter, rules.via_drill = diameter, drill
         design.via_shapes = []
-        design.via_padstack = f"Via[0-{len(board.layers) - 1}]_{round(diameter * 1000)}:{round(drill * 1000)}_um"
+        design.via_padstack = f"Via[0-{len(board.layers) + len(board.unrouted) - 1}]_{round(diameter * 1000)}:{round(drill * 1000)}_um"
         said.append(f"vias of {diameter:g}/{drill:g} mm, the board's minimum ring and drill")
     hole = r.get("hole_clearance", 0.0)
     if hole > (rules.via_diameter - rules.via_drill) / 2.0 + 1e-9:

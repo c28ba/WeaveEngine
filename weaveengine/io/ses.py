@@ -122,7 +122,9 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True) -> None
     out.append("    (library_out")
     if result.vias or design.via_padstack:
         out.append(f"      (padstack {q(via_name)}")
-        shapes = design.via_shapes or [["circle", layer, str(board.rules.via_diameter / UNIT_MM[design.unit.lower()])] for layer in board.layers]
+        # (on every copper layer, the routed and those left out: KiCad takes a via of fewer for a blind one)
+        shapes = design.via_shapes or [["circle", layer, str(board.rules.via_diameter / UNIT_MM[design.unit.lower()])]
+                                       for layer in board.layers + board.unrouted]
         for desc in shapes:
             size = int(round(float(desc[2]) * design.resolution))
             out.append(f"        (shape (circle {desc[1]} {size} 0 0))")

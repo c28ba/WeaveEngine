@@ -676,3 +676,65 @@ def test_a_zone_is_smoothed_as_kicad_smooths_it():
     narrow = _smoothed(box(0, 0, 2.5, 4), 2.0, False)
     assert abs(narrow.area - (10 - (4 - math.pi) * 1.25 ** 2)) < 0.1  # each corner at half the short side
     assert not narrow.contains(Point(0.1, 3.9)) and narrow.contains(Point(1.25, 3.9))
+
+
+def test_layers_left_out_of_the_routing_keep_their_copper_and_planes(tmp_path, capsys):
+    """Four layers, routed on the outer two only (``layers``, ``--layers``),
+    as a board with its planes inside is: the inner layers carry no traces,
+    but every via goes through them, so their keepouts and fixed copper are
+    kept and their planes reached (``Board.unrouted``, at the indices after
+    the routed layers'). A via is written on all four, else KiCad would take
+    it for a blind one."""
+    path, ses = tmp_path / "inner.dsn", tmp_path / "inner.ses"
+    path.write_text(KICAD_STYLE.replace(
+        "    (layer B.Cu", "    (layer In1.Cu (type signal) (property (index 1)))\n"
+                         "    (layer In2.Cu (type power) (property (index 2)))\n    (layer B.Cu").replace(
+        '    (via "Via[0-1]_800:400_um")', '    (keepout "" (rect In1.Cu 1000 -1000 3000 -3000))\n'
+                                         '    (plane GND (polygon In2.Cu 0  0 0  20000 0  20000 -10000  0 -10000  0 0))\n'
+                                         '    (via "Via[0-1]_800:400_um")').replace(
+        "  (wiring)", '  (wiring (wire (path In1.Cu 250  12000 -2000  18000 -2000)(net "Net-(R1-Pad2)")(type fix)))'),
+        encoding="utf-8")
+    design = read_dsn(str(path), layers=["F.Cu", "B.Cu"])
+    board = design.board
+    assert board.layers == ["F.Cu", "B.Cu"] and board.unrouted == ["In1.Cu", "In2.Cu"]
+    assert [(net, at) for net, at, _ in board.pours] == [(design.net_ids["GND"], 3)]
+    assert sorted((tuple(round(v, 1) for v in o.shape.bounds), o.layers) for o in board.obstacles) == [
+        ((1.0, -3.0, 3.0, -1.0), frozenset({2})), ((9.0, -6.0, 11.0, -4.0), frozenset({0})),   # the keepouts on In1 and on F.Cu,
+        ((11.9, -2.1, 18.1, -1.9), frozenset({2}))]                                              # the fixed trace on In1
+    assert read_dsn(str(path)).board.unrouted == []   # (all routed: as before)
+    # The front pads of ground get vias down to its plane inside; each is drilled through all four layers.
+    assert main([str(path), "--layers", "F.Cu", "B.Cu", "-o", str(ses), "--quiet", "--workers", "1"]) == 0
+    assert "not routed: In1.Cu, In2.Cu" in capsys.readouterr().out
+    session = parse_sexpr(ses.read_text(encoding="utf-8"))
+    library = next(c for c in next(c for c in session if isinstance(c, list) and c[0] == "routes") if isinstance(c, list) and c[0] == "library_out")
+    padstack = next(c for c in library if isinstance(c, list) and c[0] == "padstack")
+    assert sorted(shape[1][1] for shape in padstack if isinstance(shape, list) and shape[0] == "shape") == ["B.Cu", "F.Cu", "In1.Cu", "In2.Cu"]
+
+
+def test_one_layer_routed_and_its_plane_on_the_other(tmp_path):
+    """Two layers, ground poured on the back, routed on the front only: the
+    front pads of ground are on the front alone (not on every layer, as they
+    are on every layer routed), so each gets a via down to the pour; a pad of
+    a part on the back is no pad of the routing, but copper its vias keep
+    clear of."""
+    from weaveengine.router import route_board
+    path = tmp_path / "front.dsn"
+    path.write_text(KICAD_STYLE.replace(
+        '    (via "Via[0-1]_800:400_um")', '    (plane GND (polygon B.Cu 0  0 0  20000 0  20000 -10000  0 -10000  0 0))\n'
+                                         '    (via "Via[0-1]_800:400_um")').replace(
+        "    (component TP (place TP1 10000 -8000 back 0))", "    (component TP (place TP1 10000 -8000 back 0))\n"
+                                                             "    (component C_B (place C1 3000 -5000 back 0))").replace(
+        "    (image TP (pin Round[A]Pad_1500_um 1 0 0))", "    (image TP (pin Round[A]Pad_1500_um 1 0 0))\n"
+                                                         "    (image C_B (pin Rect[T]Pad_1000x1300_um 1 0 0))").replace(
+        '(pins R1-2 R2-1)', '(pins R1-2 R2-1 C1-1)'), encoding="utf-8")
+    design = read_dsn(str(path), layers=["F.Cu"])
+    board = design.board
+    pads = {p.name: p for p in board.pads}
+    assert board.unrouted == ["B.Cu"] and pads["R1-1"].layers == frozenset({0}) and pads["TP1-1"].layers is None
+    assert "C1-1" not in pads
+    under = [o for o in board.obstacles if o.layers == frozenset({1})]
+    assert len(under) == 1 and under[0].copper and under[0].net_id == design.net_ids["Net-(R1-Pad2)"]
+    assert abs(under[0].shape.centroid.x - 3.0) < 1e-6
+    result = route_board(board, options=Options(portfolio=1), workers=1)
+    assert result.stats["fanout"] == 2 and result.stats["plane_left"] == []   # R1-1 and R2-2; TP1-1 is in the pour already
+    assert all(v.shape.distance(under[0].shape) >= board.rules.clearance - 1e-6 for v in result.vias)
