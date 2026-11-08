@@ -549,7 +549,7 @@ def apply(design, kicad: KicadBoard) -> str:
         said.append(f"solder-mask openings wider than the clearance on {masked} pads")
     # Holes where no copper of their pad is: on every layer for one without plating, else on the layers it lacks.
     holes = 0
-    every = frozenset(range(len(board.layers)))
+    every = frozenset(range(len(board.layers) + len(board.unrouted)))
     for kp in kicad.pads:
         if kp.hole is None:
             continue

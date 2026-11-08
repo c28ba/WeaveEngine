@@ -271,7 +271,8 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         if not forbids(shape, wire):
             ignored += 1
             continue
-        on = layer_set([layer], unrouted_too=True)
+        # (On a layer left out of the routing, only an area that forbids vias as well stands in their way.)
+        on = layer_set([layer], unrouted_too=not wire)
         if on is None or on:
             board.obstacles.append(Obstacle(shape, layers=on))
 
@@ -371,7 +372,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             # The part's own keepouts: KiCad writes a hole without copper (NPTH) as one per layer.
             for k in _children(image, "keepout") + _children(image, "wire_keepout"):
                 for shape, layer, _ in filter(None, (_shape(d, scale) for d in k[1:] if isinstance(d, list))):
-                    on = layer_set([layer], back, unrouted_too=True)
+                    on = layer_set([layer], back, unrouted_too=k[0] == "keepout")
                     if on is None or on:
                         board.obstacles.append(Obstacle(on_board(shape), layers=on))
             for k in _children(image, "via_keepout"):

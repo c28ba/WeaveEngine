@@ -711,6 +711,26 @@ def test_layers_left_out_of_the_routing_keep_their_copper_and_planes(tmp_path, c
     assert sorted(shape[1][1] for shape in padstack if isinstance(shape, list) and shape[0] == "shape") == ["B.Cu", "F.Cu", "In1.Cu", "In2.Cu"]
 
 
+def test_an_area_forbidding_tracks_on_a_layer_left_out_lets_vias_through(tmp_path):
+    """A layer left out of the routing carries no traces, so a rule area
+    there that forbids only tracks (``wire_keepout``) is nothing in the way:
+    the vias that go through it are allowed. One that forbids everything
+    (``keepout``) still keeps them out."""
+    path = tmp_path / "inner.dsn"
+    path.write_text(KICAD_STYLE.replace(
+        "    (layer B.Cu", "    (layer In1.Cu (type signal) (property (index 1)))\n    (layer B.Cu").replace(
+        '    (via "Via[0-1]_800:400_um")', '    (wire_keepout "" (rect In1.Cu 1000 -1000 3000 -3000))\n'
+                                         '    (keepout "" (rect In1.Cu 15000 -1000 17000 -3000))\n'
+                                         '    (via "Via[0-1]_800:400_um")'), encoding="utf-8")
+    board = read_dsn(str(path), layers=["F.Cu", "B.Cu"]).board
+    assert board.unrouted == ["In1.Cu"]
+    inner = [tuple(round(v, 1) for v in o.shape.bounds) for o in board.obstacles if o.layers == frozenset({2})]
+    assert inner == [(15.0, -3.0, 17.0, -1.0)]
+    # Routed, the same area does forbid traces there.
+    routed = read_dsn(str(path)).board
+    assert any(tuple(round(v, 1) for v in o.shape.bounds) == (1.0, -3.0, 3.0, -1.0) for o in routed.obstacles)
+
+
 def test_one_layer_routed_and_its_plane_on_the_other(tmp_path):
     """Two layers, ground poured on the back, routed on the front only: the
     front pads of ground are on the front alone (not on every layer, as they
