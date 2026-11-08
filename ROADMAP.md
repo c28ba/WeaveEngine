@@ -18,11 +18,13 @@ every run (lily58-pro's two results were KiCad exporting its outline two
 ways: the router gives the same routing from the same DSN every time).
 Still to do:
 
-- **Where vias may stand, for every board.** #5 keeps a via from being
-  planned in the triangle of the via before it (`Reach.placeable`); it is
-  applied only with a layer cost, since on every board it routed 17 more
-  connections over the medium boards but cost four boards one each. Find why
-  those four lose one, and apply it always if nothing is worse.
+- **Where vias may stand, for every board** (tried 2026-11, kept as is). #5's
+  filter (`Reach.placeable`) stays on only with a layer cost. On identical
+  DSNs, applied always it lost a connection on kicad-openair and solo-a: a
+  via seed from another layer takes a triangle's best cost, so a dearer path
+  on the layer itself is never recorded and the filter drops the triangle.
+  Letting seeds not record it restored openair, but lost one on
+  hackrf-operacake and solo-a, and gained nothing.
 - **The board sweep on GitHub** prepares each board afresh on its runner, so
   it can still see KiCad's other DSN of a board: keep `WE_SWEEP_DIR/prepared`
   in the Actions cache as the sources are. (Results also differ slightly
