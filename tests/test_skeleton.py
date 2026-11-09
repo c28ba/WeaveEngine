@@ -1,5 +1,6 @@
 """Pours that stay whole (design 11.3): a skeleton in each pour keeps traces from cutting it."""
 import numpy as np
+import pytest
 from shapely.geometry import Point, box
 
 from weaveengine import pours
@@ -74,3 +75,51 @@ def test_a_skeleton_is_held_inside_its_pour():
     assert [bool(x) for x, kind in zip(front, pmap.edge_kind_list) if kind == 0] == inside
     assert not back.any() and skeleton.region(pmap, SIG) is None
     assert np.count_nonzero(front) < len(front)
+
+
+def test_one_tree_for_a_net_poured_on_two_layers():
+    """Pads through the board are in the pours of both layers: the net's skeleton is one spanning tree over all its
+    pads, each join through one pour, not a tree per pour. A pad its zone does not join is left out."""
+    from weaveengine.board import Zone
+    board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu", "B.Cu"])
+    board.pads += [Pad.circle(0, 5, 5, 0.6, GND, "T1"), Pad.circle(1, 15, 5, 0.6, GND, "T2"),
+                   Pad.circle(2, 25, 5, 0.6, GND, "F1", FRONT), Pad.circle(3, 15, 15, 0.6, GND, "B1", frozenset({1})),
+                   Pad.circle(4, 5, 15, 0.6, GND, "F2", FRONT)]
+    board.plane_nets.add(GND)
+    board.pours += [(GND, 0, box(1, 1, 39, 29)), (GND, 1, box(1, 1, 39, 29))]
+    layers = _layers(board, 1)
+    joins = skeleton.plan(board, layers)
+    assert len(joins) == 4 and {(a, b) for _, a, b, _ in joins} == {(0, 1), (1, 2), (1, 3), (0, 4)}
+    board.pads[4].zone_connect = "none"
+    assert len(skeleton.plan(board, layers)) == 3
+
+
+def test_a_skeleton_keeps_out_of_a_pour_of_higher_priority():
+    from weaveengine.board import Zone
+    board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu"])
+    board.pads += [Pad.circle(0, 5, 5, 0.6, GND, "G1", FRONT), Pad.circle(1, 35, 5, 0.6, GND, "G2", FRONT)]
+    board.plane_nets |= {GND, SIG}
+    board.pours += [(GND, 0, box(1, 1, 39, 29)), (SIG, 0, box(18, 0, 22, 30))]
+    assert skeleton.area(board, 0).equals(box(1, 1, 39, 29))
+    board.pour_zone[(SIG, 0)] = Zone(priority=1)
+    assert skeleton.area(board, 0).geom_type == "MultiPolygon"  # (cut in two: no skeleton gets across)
+
+
+def test_a_skeleton_is_wide_enough_for_the_fill_at_the_zones_clearance():
+    from weaveengine.board import Zone
+    board = bay((20, 9, 0.6), (20, 25, 0.6))
+    assert skeleton.width(board, GND) == pytest.approx(0.25 + skeleton.SLACK)
+    board.pour_zone[(GND, 0)] = Zone(clearance=0.5)  # (0.3 more than the board's either side)
+    assert skeleton.width(board, GND) == pytest.approx(0.25 + skeleton.SLACK + 0.6)
+
+
+def test_a_pad_its_zone_does_not_join_gets_a_trace_into_the_fill():
+    """A pad whose zone connection is "none" sits in its pour, which KiCad keeps clear of it: fan-out joins it by
+    a short trace into the fill beside it."""
+    from weaveengine.plan.fanout import fanout
+    board = bay((20, 25, 0.6), (5, 25, 0.6))
+    vias, traces, left = fanout(board, {}, {}, {})
+    assert not vias and not traces and not left
+    board.pads[0].zone_connect = "none"
+    vias, traces, left = fanout(board, {}, {}, {})
+    assert not vias and not left and len(traces) == 1 and traces[0][0] == GND

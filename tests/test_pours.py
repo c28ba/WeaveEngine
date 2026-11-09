@@ -89,7 +89,7 @@ def test_fanout_puts_no_via_where_the_plane_has_no_fill():
 
 def test_a_zones_minimum_thickness_sets_the_slivers_its_fill_drops(tmp_path):
     """The .kicad_pcb zone's min_thickness is read per zone, and a fill is not narrower than it; the setting
-    overrides it, and the skeleton is drawn 1.4 times as wide."""
+    overrides it, and the skeleton is routed a little wider (``skeleton.SLACK``)."""
     from weaveengine.io.kicad import read_kicad
     from weaveengine.plan import skeleton
     pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
@@ -113,6 +113,77 @@ def test_a_zones_minimum_thickness_sets_the_slivers_its_fill_drops(tmp_path):
     assert board.pour_width(GND, 1) == 0.4 and not thin()
     board.pour_override = 0.25
     assert board.pour_width(GND, 1) == 0.25 and thin()
-    assert skeleton.width(board, GND) == pytest.approx(0.35)
+    assert skeleton.width(board, GND) == pytest.approx(0.30)
     board.pour_override = 0.0
-    assert skeleton.width(board, GND) == pytest.approx(0.56)
+    assert skeleton.width(board, GND) == pytest.approx(0.45)
+
+
+def test_a_zones_clearance_thermal_reliefs_and_priority_are_read(tmp_path):
+    """From the .kicad_pcb: each zone's clearance, thermal gap and spoke width, how it joins its pads and its
+    priority; and a pad's own way of joining a zone, or its part's."""
+    from weaveengine.io.kicad import read_kicad
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (footprint "R" (layer "F.Cu") (at 5 5) (zone_connect 2) (property "Reference" "R1")
+    (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu"))
+    (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (zone_connect 0) (thermal_gap 0.3)))
+  (zone (net 1) (net_name "GND") (layer "B.Cu") (priority 2) (connect_pads (clearance 0.5)) (min_thickness 0.4)
+    (fill yes (thermal_gap 0.6) (thermal_bridge_width 0.7))
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+  (zone (net 1) (net_name "GND") (layer "F.Cu") (connect_pads yes (clearance 0.3)) (fill yes)
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+)
+"""
+    (tmp_path / "z.kicad_pcb").write_text(pcb, encoding="utf-8")
+    kicad = read_kicad(str(tmp_path / "z.kicad_pcb"))
+    back, front = sorted(kicad.zones, key=lambda z: z[1])
+    assert back[1] == "B.Cu" and (back[3].clearance, back[3].gap, back[3].spoke, back[3].connect, back[3].priority) == (0.5, 0.6, 0.7, "thermal", 2)
+    assert (front[3].clearance, front[3].connect, front[3].priority) == (0.3, "solid", 0)
+    one, two = kicad.pads
+    assert (one.zone_connect, one.thermal_gap) == ("solid", None) and (two.zone_connect, two.thermal_gap) == ("none", 0.3)
+
+
+def walled(board: Board, x: float, y: float, half: float) -> dict:
+    """Four traces of SIG round (x, y), each ``half`` from it, square: a box with its corners open."""
+    return {0: [(x - half, y - half + 1), (x - half, y + half - 1)], 1: [(x + half, y - half + 1), (x + half, y + half - 1)],
+            2: [(x - half + 1, y - half), (x + half - 1, y - half)], 3: [(x - half + 1, y + half), (x + half - 1, y + half)]}
+
+
+def test_a_pad_joined_by_a_thermal_relief_is_cut_off_where_no_spoke_reaches_the_fill():
+    """The fill keeps the relief's gap from the pad and joins it only by spokes along its sides, whose ends must be
+    in the fill: four traces close round the pad, each leaving room for the pour between it and the pad's
+    clearance but not past the gap, starve every spoke. The fill still reaches round them by the corners."""
+    from weaveengine.board import Zone
+    board = board_with_pour()
+    board.pads[2] = Pad.rect(2, 20, 22, 1.0, 1.0, GND, name="C3-2", layers=BACK)
+    lines = walled(board, 20, 22, 1.3)  # (0.8 from the pad's sides: the trace and the clearance take 0.3 of it)
+    nets, layers = {w: SIG for w in lines}, {w: 1 for w in lines}
+    board.pour_zone[(GND, 1)] = Zone(gap=0.6, spoke=0.4)
+    assert pours.estimate(board, lines, nets, layers)[0].cut_off == ["C3-2"]
+    board.pour_zone[(GND, 1)] = Zone(gap=0.2, spoke=0.4)   # (a gap small enough for the spokes to land)
+    assert pours.estimate(board, lines, nets, layers)[0].cut_off == []
+    board.pour_zone[(GND, 1)] = Zone(gap=0.6, spoke=0.4, connect="solid")
+    assert pours.estimate(board, lines, nets, layers)[0].cut_off == []
+    board.pads[2].zone_connect = "none"  # (a pad the zone does not join is not one it cuts off)
+    assert pours.estimate(board, lines, nets, layers)[0].cut_off == []
+
+
+def test_a_zones_own_clearance_and_a_zone_of_higher_priority():
+    from weaveengine.board import Zone
+    board = board_with_pour()
+    lines = {0: [(1, 14.8), (39, 14.8)], 1: [(1, 15.9), (39, 15.9)]}   # (0.2 wide: 0.5 of fill between at the board's 0.2)
+    nets, layers = {0: SIG, 1: SIG}, {0: 1, 1: 1}
+    strip = lambda: any(p.shape.contains(Point(30, 15.35)) for p in pours.estimate(board, lines, nets, layers)[0].pieces)
+    assert strip()
+    board.pour_zone[(GND, 1)] = Zone(clearance=0.3)  # (0.3 left: still wider than the minimum 0.25)
+    assert strip()
+    board.pour_zone[(GND, 1)] = Zone(clearance=0.4)
+    assert not strip()
+    # A pour of SIG over the right half, of higher priority: GND's fill keeps its clearance from SIG's fill.
+    board = board_with_pour()
+    board.pours.append((SIG, 1, box(25, 1, 39, 29)))
+    board.pour_zone[(SIG, 1)] = Zone(priority=1)
+    ground, signal = pours.estimate(board, {}, {}, {})
+    assert ground.cut_off == ["U1-2"] and not ground.pieces[0].shape.intersects(box(25, 1, 39, 29))
+    board.pour_zone[(SIG, 1)] = Zone(priority=0)  # (equal priority: neither gives way, as before)
+    assert pours.estimate(board, {}, {}, {})[0].cut_off == []

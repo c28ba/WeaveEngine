@@ -34,10 +34,12 @@ FILL = 0.25        # mm: a pour's fill is not narrower than this (KiCad's defaul
 
 def covered(board: Board, pad: Pad, cut=frozenset()) -> bool:
     """Whether a plane of the pad's net reaches the pad on a layer it has copper on
-    (not one where it is in a piece ``cut`` off from the rest: (pad, layer) pairs)."""
+    (not one where it is in a piece ``cut`` off from the rest: (pad, layer) pairs;
+    nor one whose zone does not join it, its connection being "none": ``pours.joined``)."""
+    from weaveengine.pours import joined
     centre = Point(pad.centre)
     return any(net == pad.net_id and pad.on(layer) and (pad.pad_id, layer) not in cut and shape.contains(centre)
-               for net, layer, shape in board.pours)
+               and joined(pad, board.zone(net, layer)) != "none" for net, layer, shape in board.pours)
 
 
 def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), cut=frozenset(), teardrops=None) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
@@ -68,7 +70,8 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     for o in board.obstacles:
         for i in range(every):
             if o.on(i):
-                things[i].append((o.shape, o.net_id if (o.copper or o.net_id >= 0) else -2, rules.apart(o.clearance)))
+                # (copper drawn on a part is of no net to KiCad, even where it touches a pad of this one)
+                things[i].append((o.shape, -1 if o.copper else o.net_id if o.net_id >= 0 else -2, rules.apart(o.clearance)))
     for w, line in lines.items():
         if len(line) >= 2 and w in wire_layer:
             net = wire_net[w]
@@ -160,10 +163,11 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
                 return False
             return all(clear(disc, pad.net_id, i, keep, drilled=True) for i in range(every)) and stub_ok(x, y)
 
-        # A plane of its net on its own layer that stops short of it: a short trace into the plane, no via.
+        # A plane of its net on its own layer that stops short of it, or does not join it: a short trace into the
+        # plane's fill (its pieces that reach the net's pads, not the one this pad may be cut off in), no via.
         into = None
         for at, shape, _ in pours.get(pad.net_id, ()):
-            if at == layer and (pad.pad_id, at) not in cut and pad.shape.distance(shape) <= REACH:
+            if at == layer and pad.shape.distance(shape) <= REACH:
                 inner = shape.buffer(-(half + GAP))
                 if not inner.is_empty:
                     q = shapely.ops.nearest_points(inner, Point(start))[0]

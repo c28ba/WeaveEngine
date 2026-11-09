@@ -16,6 +16,7 @@ DSN, they are read for these.
 
 Coordinates here are those of KiCad's DSN export: millimetres, y turned over.
 """
+import copy
 import json
 import math
 import os
@@ -47,6 +48,9 @@ class KicadPad:
     plated: bool = True
     size: float = 0.0                      # the smaller side of the pad
     clearance: float = 0.0                 # its local clearance, else its part's (0: none)
+    zone_connect: str | None = None        # how a pour joins it, its own or its part's (``Pad.zone_connect``; None: the zone's)
+    thermal_gap: float | None = None       # its thermal relief gap and spoke width, its own or its part's (None: the zone's)
+    spoke: float | None = None
     hole: object = None                    # the hole as a shape, if it has one
     outlines: tuple = ()                   # a custom pad's copper, as placed and as placed mirrored (see ``apply``)
     mask: float | None = None              # how far its solder-mask opening reaches past its copper, its own or its part's
@@ -70,6 +74,7 @@ class KicadBoard:
     skipped: list[str] = field(default_factory=list)                  # those of the custom rules not read, each with why
     courtyards: dict = field(default_factory=dict)                    # footprint reference -> its courtyard
     thickness: list[tuple] = field(default_factory=list)              # (net name, canonical copper layer, outline, min_thickness) of each copper zone
+    zones: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, outline, ``Zone``) of each copper zone
     areas: dict = field(default_factory=dict)                         # name -> outline of a named zone or rule area
 
 
@@ -139,6 +144,51 @@ def _thickness(item, out: KicadBoard) -> None:
             for layer in _layers(item):
                 if layer.endswith(".Cu"):
                     out.thickness.append((name, layer, Polygon(pts).buffer(0), float(least[1])))
+
+
+CONNECT = {"0": "none", "1": "thermal", "2": "solid", "3": "tht"}  # a pad's zone_connect, as KiCad writes it
+
+
+def _number(item, name: str) -> float | None:
+    node = _child(item, name)
+    return float(node[1]) if node and len(node) > 1 and _is_number(node[1]) else None
+
+
+def _settings(item, out: KicadBoard) -> None:
+    """What a copper zone asks of its fill (``board.Zone``): its clearance, its thermal reliefs, how it joins its
+    pads and its priority."""
+    from weaveengine.board import Zone
+    zone = Zone()
+    pads = _child(item, "connect_pads")
+    if pads:
+        how = next((x for x in pads[1:] if isinstance(x, str)), None)
+        zone.connect = {"yes": "solid", "no": "none", "thru_hole_only": "tht"}.get(how, "thermal")
+        zone.clearance = _number(pads, "clearance")
+    fill = _child(item, "fill")
+    if fill:
+        zone.gap = _number(fill, "thermal_gap")
+        zone.spoke = _number(fill, "thermal_bridge_width")
+    priority = _number(item, "priority")
+    zone.priority = int(priority) if priority is not None else 0
+    net = _child(item, "net_name") or _child(item, "net")
+    name = net[1] if net and len(net) > 1 and isinstance(net[1], str) and not _is_number(net[1]) else ""
+    for polygon in _children(item, "polygon"):
+        pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+        if len(pts) >= 3:
+            for layer in _layers(item):
+                if layer.endswith(".Cu"):
+                    out.zones.append((name, layer, Polygon(pts).buffer(0), zone))
+
+
+def _thermal(item, pad: KicadPad) -> None:
+    """A pad's own way of joining a pour, or its part's, where it sets one."""
+    connect = _child(item, "zone_connect")
+    if connect and len(connect) > 1 and connect[1] in CONNECT:
+        pad.zone_connect = CONNECT[connect[1]]
+    pad.thermal_gap = _number(item, "thermal_gap") if _child(item, "thermal_gap") else pad.thermal_gap
+    for name in ("thermal_bridge_width", "thermal_width"):
+        if _child(item, name):
+            pad.spoke = _number(item, name)
 
 
 def _zone(item, out: KicadBoard) -> None:
@@ -242,8 +292,13 @@ def _footprint(item, out: KicadBoard) -> None:
     own = _local_clearance(item)
     mask = _mask_margin(item)
     yard = []
+    whole = KicadPad(ref, "", 0.0, 0.0, set())
+    _thermal(item, whole)
     for pad in _children(item, "pad"):
         _pad(pad, place, angle, ref, own, out)
+        kp = out.pads[-1]
+        kp.zone_connect, kp.thermal_gap, kp.spoke = whole.zone_connect, whole.thermal_gap, whole.spoke
+        _thermal(pad, kp)
         out.pads[-1].mask = -1.0 if not any(l.endswith(".Mask") for l in _layers(pad)) else \
             next((m for m in (_mask_margin(pad), mask) if m is not None), None)
     for x in item[1:]:
@@ -501,6 +556,7 @@ def _rule_area(item, out: KicadBoard) -> None:
     if keepout is None:
         _zone(item, out)
         _thickness(item, out)
+        _settings(item, out)
         return  # a copper zone, not a rule area
     if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
         return  # it does keep traces out
@@ -592,6 +648,7 @@ def apply(design, kicad: KicadBoard) -> str:
         if (kp.x - cx) ** 2 + (kp.y - cy) ** 2 > 4.0:
             continue
         need = 0.0
+        pad.zone_connect, pad.thermal_gap, pad.spoke = kp.zone_connect, kp.thermal_gap, kp.spoke
         local += kp.clearance > rules.clearance + 1e-9
         # Foreign copper inside a pad's solder-mask opening is bared beside it: KiCad's "solder mask bridge".
         opening = kicad.mask if kp.mask is None else kp.mask
@@ -707,6 +764,21 @@ def apply(design, kicad: KicadBoard) -> str:
                 least[thick] = least.get(thick, 0) + 1
     if least:
         said.append("pour minimum width " + " and ".join(f"{t:g} mm" for t in sorted(least)) + " from the zones")
+    # Each pour's clearance, thermal reliefs and priority are its zone's (``pours.estimate``, ``plan.skeleton``).
+    # (Two zones of a net on a layer: the larger clearance, gap and priority, the narrower spoke.)
+    for k, (net, at, shape) in enumerate(board.pours):
+        for name, layer, outline, zone in kicad.zones:
+            if on(layer) == at and design.net_ids.get(name) == net and outline.symmetric_difference(shape).area < 0.01 * shape.area:
+                had = board.pour_zone.get((net, at))
+                if had is not None:
+                    most = lambda a, b: b if a is None else a if b is None else max(a, b)
+                    zone = copy.copy(zone)
+                    zone.clearance, zone.gap = most(had.clearance, zone.clearance), most(had.gap, zone.gap)
+                    zone.spoke = had.spoke if zone.spoke is None else zone.spoke if had.spoke is None else min(had.spoke, zone.spoke)
+                    zone.priority = max(had.priority, zone.priority)
+                board.pour_zone[(net, at)] = zone
+    if any(z.clearance and z.clearance > rules.clearance - rules.margin + 1e-9 for z in board.pour_zone.values()):
+        said.append("the zones' own clearances")
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
         for name, layer, outline, radius, chamfer in kicad.rounded:
