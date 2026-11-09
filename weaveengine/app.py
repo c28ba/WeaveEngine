@@ -535,7 +535,7 @@ class BoardView(QGraphicsView):
                 for ring in (piece.shape.exterior, *piece.shape.interiors):
                     path.addPolygon(QPolygonF([QPointF(x, -y) for x, y in ring.coords]))
                 if piece.kind in ("main", "via"):
-                    pen, brush = QPen(Qt.NoPen), QBrush(QColor(color.red(), color.green(), color.blue(), 45))
+                    pen, brush = QPen(color, 0), QBrush(QColor(color.red(), color.green(), color.blue(), 70))  # (outlined: two layers' pours over each other blend)
                 else:
                     mark = QColor("#ff4d4d" if piece.kind == "cut" else "#ffd24d")
                     pen, brush = QPen(mark, 0), QBrush(QColor(mark.red(), mark.green(), mark.blue(), 110), Qt.BDiagPattern)
