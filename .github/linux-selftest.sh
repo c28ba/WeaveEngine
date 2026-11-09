@@ -12,7 +12,7 @@ apt-cache show "$glib" > /dev/null 2>&1 || glib=libglib2.0-0   # (the name befor
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb xauth \
   libegl1 libgl1 "$glib" libfontconfig1 libdbus-1-3 libxkbcommon-x11-0 \
   libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-randr0 libxcb-render-util0 \
-  libxcb-image0 libxcb-xinerama0 libxcb-xkb1 > /dev/null || exit 1
+  libxcb-image0 libxcb-xinerama0 libxcb-xkb1 > /dev/null || { echo "::error title=Linux self-test on Ubuntu $version::installing the libraries failed (apt)"; exit 1; }
 echo "Ubuntu $version: libraries the app cannot find:"
 find dist/WeaveEngine -name "*.so*" -type f -exec ldd {} \; 2>/dev/null | grep "not found" | sort -u
 log="selftest/linux-$version.log"
