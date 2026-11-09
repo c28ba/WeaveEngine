@@ -1368,3 +1368,14 @@ def test_taper_is_left_out_where_the_wide_stretch_would_crowd_other_copper():
     assert width == pytest.approx(0.25) and narrow[0] == (10.0, 5.0) and narrow[-1] == wide[0] and wide[-1] == (17.0, 5.0)
     board.pads.append(Pad.circle(9, 15, 5.4, 0.2, 7))   # its edge is 0.2 from the trace: too near for a wide one
     assert taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2}) == {}
+
+
+def test_a_wire_of_a_narrowed_net_with_no_fine_end_goes_back_to_full_width():
+    from weaveengine.realize.taper import taper
+    board = pins_board(0.2)
+    full = board.rules
+    board.rules = Rules(0.25, 0.2, margin=0.01, min_width=0.2)
+    board.rules.net_width = {1: 0.2}
+    lines, nets, layers, ends = {0: [(13.0, 5.0), (17.0, 5.0)]}, {0: 1}, {0: 0}, {0: (2, 3)}
+    got = taper(board, full, lines, nets, layers, ends, {1: 0.2}, {4})   # (neither end of it is a fine pin)
+    assert got == {0: [(lines[0], 0.25)]}

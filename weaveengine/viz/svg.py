@@ -9,8 +9,9 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
                wire_net: dict[int, int] | None = None, pmap=None,
                unrouted: list[tuple[tuple[float, float], tuple[float, float]]] | None = None, violations=None,
                scale: float | None = None, padding: float = 20.0, wire_layer: dict[int, int] | None = None,
-               teardrops: dict[int, list] | None = None) -> None:
-    """Traces are coloured by net on a one-layer board and by layer otherwise."""
+               teardrops: dict[int, list] | None = None, widths: dict[int, list] | None = None) -> None:
+    """Traces are coloured by net on a one-layer board and by layer otherwise.
+    ``widths``: wire -> [(points, width)] for traces drawn in pieces (``realize.taper``)."""
     min_x, min_y, max_x, max_y = board.outline.bounds
     if scale is None:
         scale = 900.0 / max(max_x - min_x, max_y - min_y)
@@ -48,10 +49,11 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
         net = wire_net.get(wire, wire)
         layer = wire_layer.get(wire, 0)
         color = LAYER_COLORS[layer % len(LAYER_COLORS)] if by_layer else NET_COLORS[net % len(NET_COLORS)]
-        stroke = max(1.0, board.rules.drawn(net) * scale)
         label = f"wire {wire} (net {board.net_names.get(net, net)}, {board.layers[layer]})"
-        out.append(f'<polyline points="{pts(line)}" fill="none" stroke="{color}" stroke-width="{stroke:.2f}" '
-                   f'stroke-linecap="round" stroke-linejoin="round" opacity="0.85"><title>{label}</title></polyline>')
+        for piece, width in (widths or {}).get(wire) or [(line, board.rules.drawn(net))]:
+            stroke = max(1.0, width * scale)
+            out.append(f'<polyline points="{pts(piece)}" fill="none" stroke="{color}" stroke-width="{stroke:.2f}" '
+                       f'stroke-linecap="round" stroke-linejoin="round" opacity="0.85"><title>{label}</title></polyline>')
         for poly in (teardrops or {}).get(wire, []):
             out.append(f'<polygon points="{pts(poly[:5])}" fill="{color}" opacity="0.85"/>')
     for a, b in unrouted or []:
@@ -78,4 +80,4 @@ def export_result(result, filename: str, mesh: bool = False, **kwargs) -> None:
     unrouted = [(centre[result.connections[w].src], centre[result.connections[w].dst]) for w in result.unrouted]
     export_svg(result.board, filename, result.polylines, result.wire_net, pmap=result.pmap if mesh else None,
                unrouted=unrouted, violations=result.violations, wire_layer=result.wire_layer,
-               teardrops=result.teardrops, **kwargs)
+               teardrops=result.teardrops, widths=result.widths, **kwargs)

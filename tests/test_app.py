@@ -250,3 +250,26 @@ def test_settings_has_a_pours_tab_and_search_filters_rows():
     assert dialog.tabs.tabText(dialog.tabs.currentIndex()) == "Pours (1)"
     dialog.search.setText("")
     assert other.isRowVisible(ofirst) and "Pours" in [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+
+
+def test_tapered_traces_are_drawn_at_the_width_of_each_piece():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import BoardView
+    from weaveengine.board import Board, Rules
+    app = QApplication.instance() or QApplication([])
+    board = Board.rectangle(40.0, 30.0, Rules(0.25, 0.2))
+    view = BoardView()
+    view.resize(800, 600)
+    view.set_board(board)
+    view.widths = {1: 0.2}   # a net narrowed (``router.reach``)
+    pieces = [([(5.0, 15.0), (7.0, 15.0)], 0.2), ([(7.0, 15.0), (35.0, 15.0)], 0.25)]
+    view.show_routing([(0, 1, [(5.0, 15.0), (7.0, 15.0), (35.0, 15.0)], pieces), (0, 1, [(5.0, 20.0), (35.0, 20.0)])])
+    assert [round(w, 3) for _, w, _ in view.trace_items] == [0.2, 0.25, 0.2]   # the plain wire: the net's narrowed width
+    view.show_routing(*view.last[:5], rough=True)
+    assert all(w == 0 for _, w, _ in view.trace_items)
+    view.show_routing(*view.last[:5])   # the final picture again: real widths, and pens to match at a zoom that shows them
+    view.scale(40, 40)
+    view._level_of_detail()
+    assert all(item.pen().widthF() > 0 for item, _, _ in view.trace_items)
+    app.processEvents()

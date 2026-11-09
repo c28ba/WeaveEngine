@@ -35,8 +35,9 @@ def _cut(line: list, dist: float) -> tuple[list, list]:
 
 def taper(board: Board, full: Rules, lines: dict, wire_net: dict, wire_layer: dict, ends: dict,
           narrowed: dict, fine: set) -> dict[int, list]:
-    """wire -> its pieces [(points, width)] in order, for each trace drawn partly
-    wider than the narrow stretch at the end(s) on a pad of ``fine``. ``board``:
+    """wire -> its pieces [(points, width)] in order, for each trace of a narrowed
+    net drawn at the net's width again: all along, or but for a narrow stretch
+    at each end on a pad of ``fine``. ``board``:
     the routed board, with the narrowed rules and the vias as pads. ``full``:
     the rules before the nets were narrowed. ``ends``: wire -> its two pads.
     ``narrowed``: net -> the width its traces are drawn at."""
@@ -44,7 +45,7 @@ def taper(board: Board, full: Rules, lines: dict, wire_net: dict, wire_layer: di
     pads = {p.pad_id: p for p in board.pads}
     todo = {w: net for w, net in wire_net.items()
             if net in narrowed and w in lines and w in wire_layer and len(lines[w]) >= 2
-            and full.width(net) > narrowed[net] + 1e-9 and any(p in fine for p in ends[w])}
+            and full.width(net) > narrowed[net] + 1e-9}
     if not todo:
         return {}
     width = {w: rules.drawn(net) for w, net in wire_net.items() if w in lines}  # as drawn now, updated as traces widen
@@ -89,10 +90,10 @@ def taper(board: Board, full: Rules, lines: dict, wire_net: dict, wire_layer: di
             pad = pads.get(pad_id)
             return 0.0 if pad is None else max(math.dist(pad.centre, p) for p in pad.shape.convex_hull.exterior.coords)
 
-        for stretch in STRETCHES:
+        for stretch in STRETCHES if a_fine or b_fine else STRETCHES[:1]:  # (no fine end: the whole trace, or none)
             a = reach_of(ends[w][0]) + stretch * wide if a_fine else 0.0
             b = reach_of(ends[w][1]) + stretch * wide if b_fine else 0.0
-            if a + b >= total - wide:
+            if a + b >= total - wide and (a_fine or b_fine):
                 break  # no room left for a wide stretch worth the name
             body = _cut(line, a)[1] if a else line
             body = _cut(body, _length(body) - b)[0] if b else body
