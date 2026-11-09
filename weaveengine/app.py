@@ -27,6 +27,7 @@ from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
 from weaveengine.pours import of_result as estimate_pours
+from weaveengine.realize.taper import with_wedges
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
@@ -217,8 +218,8 @@ class BoardView(QGraphicsView):
         for item in self.detail_items:
             item.setVisible(scale >= 6.0)
         rules = self.board.rules if self.board is not None else None
-        thin = rules is not None and rules.base_width * scale < 1.6          # traces about a pixel wide
-        if thin != self._thin or force:
+        thin = sum(1 for _, width, _ in self.trace_items if width * scale >= 1.6)   # (how many are wider than a hairline)
+        if rules is None or thin != self._thin or force:
             self._thin = thin
             for item, width, color in self.trace_items:
                 if width * scale < 1.6:
@@ -387,7 +388,7 @@ class BoardView(QGraphicsView):
                         "outline": [list(pad.shape.exterior.coords)], "pad": pad}
         wires = self.last[0] if self.last else []
         best = None
-        for index, (layer, net, pts) in enumerate(wires):
+        for index, (layer, net, pts) in enumerate(w[:3] for w in wires):  # (a wire may carry its pieces as a fourth item)
             if not self.visible.get(layer, True):
                 continue
             limit = max(reach, board.rules.width(net) / 2.0)
@@ -401,7 +402,7 @@ class BoardView(QGraphicsView):
                 if d <= limit and (best is None or d < best[0] or (d == best[0] and layer < wires[best[1]][0])):
                     best = (d, index)
         if best is not None:
-            layer, net, pts = wires[best[1]]
+            layer, net, pts = wires[best[1]][:3]
             length = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
             same = [w for w in wires if w[1] == net]
             info = {"kind": "trace", "net": names.get(net, str(net)), "layer": board.layers[layer],
@@ -458,8 +459,10 @@ class BoardView(QGraphicsView):
         rules = self.board.rules
         self.trace_items, self.detail_items = [], []
         layers = len(self.board.layers)
-        shown = [w for w in wires if self.visible.get(w[0], True) and len(w[2]) >= 2]
-        for (layer, net, _), pts in zip(shown, thin([w[2] for w in shown], DRAWN)):  # (arcs come in finer steps than a screen shows)
+        # A wire may carry its pieces of different widths as a fourth item (a tapered trace, ``realize.taper``).
+        shown = [(w[0], w[1], pts, width) for w in wires if self.visible.get(w[0], True)
+                 for pts, width in (w[3] if len(w) > 3 else [(w[2], self.widths.get(w[1], rules.width(w[1])))]) if len(pts) >= 2]
+        for (layer, net, _, width), pts in zip(shown, thin([w[2] for w in shown], DRAWN)):  # (arcs come in finer steps than a screen shows)
             path = QPainterPath()
             path.moveTo(pts[0][0], -pts[0][1])
             for x, y in pts[1:]:
@@ -471,10 +474,10 @@ class BoardView(QGraphicsView):
             self.live_items.append(item)
             # The rough picture while routing is redrawn twice a second: always as
             # hairlines, which draw 25 times faster than traces at their width.
-            self.trace_items.append((item, 0.0 if rough else self.widths.get(net, rules.width(net)), color))
+            self.trace_items.append((item, 0.0 if rough else width, color))
         if changed:
             glow = QPainterPath()
-            for layer, _, pts in changed:
+            for layer, _, pts in (c[:3] for c in changed):
                 if self.visible.get(layer, True) and len(pts) >= 2:
                     glow.moveTo(pts[0][0], -pts[0][1])
                     for x, y in pts[1:]:
@@ -1295,8 +1298,9 @@ class MainWindow(QMainWindow):
     def _show(self, result) -> None:
         """Draws a result and puts its figures in the panel."""
         stats = result.stats
-        teardrops = [(result.wire_layer[w], poly[:5]) for w, drops in result.teardrops.items() for poly in drops]
-        wires = [(result.wire_layer[w], result.wire_net[w], pts) for w, pts in result.polylines.items()]
+        teardrops = [(result.wire_layer[w], poly[:5]) for w, drops in with_wedges(result.teardrops, result.wedges).items() for poly in drops]
+        wires = [(result.wire_layer[w], result.wire_net[w], pts) + ((result.widths[w],) if w in result.widths else ())
+                 for w, pts in result.polylines.items()]
         centre = {p.pad_id: p.centre for p in result.board.pads}
         open_pairs = [(centre[c.src], centre[c.dst]) for c in result.connections.values()]
         pad_name = {p.pad_id: (p.name or str(p.pad_id)) for p in result.board.pads}

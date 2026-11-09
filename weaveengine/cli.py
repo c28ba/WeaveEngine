@@ -100,6 +100,29 @@ class Checkpoint:
               f"{stats['vias']} vias -> {self.path}", flush=True)
 
 
+# Each routing switch of ``Options`` and the flag that turns it off, and the numbers of ``Options`` and ``CostParams``
+# the settings carry and their flags (a test holds these to the dataclasses).
+OPTION_SWITCHES = {
+    "global_selection": ("--no-global-selection", "no global choice of routes for all nets together (phase 1)"),
+    "regret_order": ("--no-regret-order", "commit routes shortest first, not most constrained first (phase 2)"),
+    "lookahead": ("--no-lookahead", "no airwire-crossing and closure costs in the search"),
+    "demand": ("--no-demand", "no demand map reserving scarce channels for the nets that need them"),
+    "ripup": ("--no-ripup", "no rip-up and reroute (phase 3)"),
+    "refine": ("--no-refine", "do not reroute each wire once more to shorten it (phase 4)"),
+    "slide": ("--no-slide-vias", "do not move vias to where their traces run straighter"),
+    "smooth": ("--no-smooth", "do not round sharp corners"),
+    "untangle": ("--no-untangle", "do not undo long detours by moving the wires in their way"),
+    "taper": ("--no-taper", "draw a net narrowed to reach fine-pitch pins narrow all along, not tapered to the pins "
+                            "(a wedge from the full width over the last stretch)"),
+}
+OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
+                "skeleton": "--skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
+                "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing",
+                **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
+COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rounds": "--max-rounds", "h_weight": "--heuristic-weight",
+              "layer_cost": "--layer-cost"}
+
+
 def main(argv: list[str] | None = None) -> int:
     started = time.time()  # the time limit runs from here
     ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter.")
@@ -111,6 +134,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--svg", help="also write an SVG picture of the result")
     ap.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
     ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
+    for name, (flag, text) in OPTION_SWITCHES.items():
+        ap.add_argument(flag, dest="no_" + name, action="store_true", help=text)
+    ap.add_argument("--teardrop-max-length", type=float, default=Options.teardrop_max_length, metavar="MM",
+                    help="longest teardrop beyond the pad's edge (default %(default)g)")
+    ap.add_argument("--teardrop-max-width", type=float, default=Options.teardrop_max_width, metavar="MM",
+                    help="widest teardrop, across at the pad (default %(default)g)")
+    ap.add_argument("--teardrop-breathing", type=float, default=Options.teardrop_breathing, metavar="N",
+                    help="clearances a teardrop keeps from foreign copper, else it is left out (default %(default)g)")
     ap.add_argument("--no-fanout", action="store_true",
                     help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
     ap.add_argument("--skeleton", action="store_true",
@@ -145,6 +176,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-rounds", type=int, metavar="N",
                     help="rip-up rounds at most, as the app's rip-up round limit (default 100; design-rule repair adds up to 5 "
                          "of its own each time it runs): fewer finish sooner, with more left open")
+    ap.add_argument("--candidates", type=int, metavar="K", help="alternative routes considered per connection in phase 1 (default 6)")
+    ap.add_argument("--reroute-candidates", type=int, metavar="K", help="alternative routes considered per reroute in rip-up (default 2)")
+    ap.add_argument("--heuristic-weight", type=float, metavar="W",
+                    help="search heuristic weight: 1 is exact, above 1 is faster and less exact (default 1)")
+    ap.add_argument("--drc-rounds", type=int, default=4, metavar="N",
+                    help="reroute attempts for traces that fail the final check (default 4)")
     ap.add_argument("--time-limit", type=float, metavar="MINUTES",
                     help="stop bettering the routing after this many minutes from the start, and write the best found so far "
                          "(its geometry and check take a little longer still; default: no limit)")
@@ -153,6 +190,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--quiet", action="store_true", help="no progress bar")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
+    for flag, value in (("--candidates", args.candidates), ("--reroute-candidates", args.reroute_candidates)):
+        if value is not None and value < 1:
+            ap.error(f"{flag}: at least 1")
+    if args.heuristic_weight is not None and args.heuristic_weight < 1.0:
+        ap.error("--heuristic-weight: 1 or more")
+    if args.drc_rounds < 0:
+        ap.error("--drc-rounds: not below 0")
     if args.max_rounds is not None and args.max_rounds < 0:
         ap.error("--max-rounds: not below 0 (0 = no rip-up)")
     if args.time_limit is not None and not 0 < args.time_limit < math.inf:
@@ -233,11 +277,16 @@ def main(argv: list[str] | None = None) -> int:
     rules.edge_clearance = want_edge + args.margin
     rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
-                      fanout=not args.no_fanout, skeleton=args.skeleton)
+                      fanout=not args.no_fanout, skeleton=args.skeleton, teardrop_max_length=args.teardrop_max_length,
+                      teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing,
+                      **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
     overrides = {}
     if args.max_rounds is not None:
         overrides["max_rounds"] = args.max_rounds
+    for name, value in (("K", args.candidates), ("K_reroute", args.reroute_candidates), ("h_weight", args.heuristic_weight)):
+        if value is not None:
+            overrides[name] = value
     if layer_cost:
         overrides["layer_cost"] = layer_cost
     params = CostParams.for_map(planar_map.build(design.board), **overrides) if overrides else None
@@ -248,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     out = args.output or (args.dsn.rsplit(".", 1)[0] + ".ses")
     saver = Checkpoint(design, out, not args.no_ses_teardrops, bar, not args.no_ses_arcs)
     try:
-        result = route_board(design.board, params, options=options, seed=args.seed,
+        result = route_board(design.board, params, options=options, seed=args.seed, drc_rounds=args.drc_rounds,
                              workers=args.workers, events=bar.event if bar else None, deadline=deadline, checkpoint=saver)
     except KeyboardInterrupt:
         if bar:

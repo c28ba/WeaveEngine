@@ -21,6 +21,7 @@ from weaveengine.plan.slide import slide
 from weaveengine.pours import estimate as estimate_pours
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
+from weaveengine.realize.taper import taper as make_tapers, with_wedges
 from weaveengine.realize.teardrop import teardrops as make_teardrops
 from weaveengine.realize.terminals import straighten
 from weaveengine.topo.runs import path_from_steps
@@ -44,6 +45,8 @@ class Result:
     teardrops: dict[int, list] = field(default_factory=dict)
     stats: dict = field(default_factory=dict)
     wire_pads: dict[int, tuple[int, int]] = field(default_factory=dict)  # wire -> the two pads it joins
+    widths: dict[int, list] = field(default_factory=dict)  # wire -> [(points, width)], for traces drawn in pieces of different widths (``realize.taper``)
+    wedges: dict[int, list] = field(default_factory=dict)  # wire -> the wedges (polygons) where a tapered trace narrows (``realize.taper``)
     kept: dict | None = field(default=None, repr=False)  # the routing itself, to go on from (``route_board(resume=...)``)
 
     def summary(self) -> "Result":
@@ -52,7 +55,7 @@ class Result:
         open_pairs = {w: self.connections[w] for w in self.unrouted}
         return Result(self.board, [], open_pairs, self.polylines, self.wire_net, self.wire_layer,
                       self.violations, self.unrouted, self.vias, self.teardrops, self.stats,
-                      {w: (c.src, c.dst) for w, c in self.connections.items() if w in self.polylines}, self.kept)
+                      {w: (c.src, c.dst) for w, c in self.connections.items() if w in self.polylines}, self.widths, self.wedges, self.kept)
 
     @property
     def complete(self) -> bool:
@@ -105,6 +108,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     layers = _layers(board, workers)
     pairs, buried = decompose(board, layers)
     narrowed: dict[int, float] = {}
+    full_rules, fine = board.rules, set(buried)
     if options.narrow and buried:
         board, layers, narrowed = reach(board, layers, buried, workers)
         if narrowed:
@@ -163,11 +167,16 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         limits = (options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing)
         for found in parallel.run(_teardrop_task, (work, wire_net, limits), tasks, workers):
             drops.update(found)
+    pieces: dict[int, list] = {}
+    wedges: dict[int, list] = {}
+    if options.taper and narrowed:
+        pieces, wedges = make_tapers(work, full_rules, lines, wire_net, wire_layer,
+                                     {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}, narrowed, fine)
     planed, unplaned = [], []
     if options.fanout and work.pours:  # vias down to the planes, among everything routed (``plan.fanout``)
         shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drops.items() if w in wire_layer for poly in polys]
         # With skeletons: a pad its pour reaches only in a piece cut off from the rest is joined as one the pour does not reach.
-        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, drops) for piece in pour.pieces
+        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, with_wedges(drops, wedges), widths=pieces) for piece in pour.pieces
                if piece.kind == "cut" for p in piece.pad_ids} if skeletons else set()
         planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut, drops)
         work.pads = work.pads + planed
@@ -216,7 +225,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
-    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, kept=routing)
+    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing)
 
 
 def _drawn(ctx: Context, work: Board, lines: dict, violations: list) -> tuple[dict, list, dict, list[Pad]]:

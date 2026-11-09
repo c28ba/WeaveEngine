@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import shapely
 from shapely.geometry import LineString
 
+from weaveengine.realize.taper import with_wedges
 
 
 @dataclass
@@ -34,10 +35,11 @@ class Pour:
 
 
 def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict | None = None,
-             clearance: float | None = None, min_width: float | None = None) -> list[Pour]:
+             clearance: float | None = None, min_width: float | None = None, widths: dict | None = None) -> list[Pour]:
     """The estimated fill of each pour of ``board`` (its vias among its pads) for the routed
     ``lines``. ``clearance``: the zones' (default: the board's, less the routing margin). ``min_width``: the
-    narrowest fill (default: each zone's own minimum thickness, ``Board.pour_width``)."""
+    narrowest fill (default: each zone's own minimum thickness, ``Board.pour_width``).
+    ``widths``: wire -> [(points, width)] for traces drawn in pieces (``realize.taper``)."""
     rules = board.rules
     base = rules.clearance - rules.margin if clearance is None else clearance
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance) - rules.margin
@@ -56,7 +58,8 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
     for w, line in lines.items():
         if len(line) >= 2 and wire_layer.get(w) in layers:
             net = wire_net[w]
-            copper[wire_layer[w]].append((LineString(line).buffer(rules.drawn(net) / 2.0, quad_segs=4), net, base))
+            for pts, width in (widths or {}).get(w) or [(line, rules.drawn(net))]:
+                copper[wire_layer[w]].append((LineString(pts).buffer(width / 2.0, quad_segs=4), net, base))
     for w, drops in (teardrops or {}).items():
         if wire_layer.get(w) in layers:
             for poly in drops:
@@ -113,7 +116,7 @@ def _join(pours: list[Pour]) -> None:
 
 
 def of_result(result) -> list[Pour]:
-    return estimate(result.board, result.polylines, result.wire_net, result.wire_layer, result.teardrops)
+    return estimate(result.board, result.polylines, result.wire_net, result.wire_layer, with_wedges(result.teardrops, result.wedges), widths=result.widths)
 
 
 def note(pour: Pour, board) -> str:
