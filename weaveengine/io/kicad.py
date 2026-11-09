@@ -644,7 +644,8 @@ def apply(design, kicad: KicadBoard) -> str:
         if not mine:
             continue
         cx, cy = pad.centre
-        kp = min(mine, key=lambda p: (p.x - cx) ** 2 + (p.y - cy) ** 2)
+        # (the nearest; of pads at one place, one through the board for one through the board: a part can stack them)
+        kp = min(mine, key=lambda p: (round((p.x - cx) ** 2 + (p.y - cy) ** 2, 6), (pad.layers is None) != ("*" in p.layers)))
         if (kp.x - cx) ** 2 + (kp.y - cy) ** 2 > 4.0:
             continue
         need = 0.0

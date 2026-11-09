@@ -94,9 +94,9 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         fill = fill.buffer(-least / 2.0).buffer(least / 2.0)
         # The net's own pads are copper whatever their width; one joined by a thermal relief, only with the spokes that reach the fill.
         joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] == "solid"]
-        for p in own:
-            if how[p.pad_id] == "thermal":
-                joins += [p.shape.intersection(inside), *spokes(p, zone, fill)]
+        thermal = [p for p in own if how[p.pad_id] == "thermal"]
+        for p in thermal:
+            joins += [p.shape.intersection(inside), *spokes(p, zone, fill, [q for q in thermal if q is not p])]
         fill = shapely.union_all([fill, *joins])
         filled.setdefault(at, []).append((net, zone.priority, fill))
         own = [p for p in own if how[p.pad_id] != "none"]
@@ -110,8 +110,28 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
                 pour.pieces.append(Piece(g, "main" if j == main and names else "", names, {p.pad_id for p in has[j]}))
         found[k] = pour
     pours = [found[k] for k in range(len(board.pours))]
-    _join(pours)
+    _join(pours, _touching(board, {pour.net for pour in pours}))
     return pours
+
+
+def _touching(board, nets: set) -> dict:
+    """Pad id -> one pad of the group of the net's pads whose copper meets on a layer they share (a pad through
+    the board inside a part's surface pad, say): KiCad sees them joined, on any layer."""
+    pads = [p for p in board.pads if p.net_id in nets]
+    group = {p.pad_id: p.pad_id for p in pads}
+
+    def root(a: int) -> int:
+        while group[a] != a:
+            group[a] = a = group[group[a]]
+        return a
+
+    if pads:
+        a, b = shapely.STRtree([p.shape for p in pads]).query([p.shape for p in pads], predicate="intersects")
+        for i, j in zip(a.tolist(), b.tolist()):
+            p, q = pads[i], pads[j]
+            if i < j and p.net_id == q.net_id and (p.layers is None or q.layers is None or p.layers & q.layers):
+                group[root(p.pad_id)] = root(q.pad_id)
+    return {k: root(k) for k in group}
 
 
 GAP, SPOKE = 0.5, 0.5  # mm: KiCad's default thermal relief gap and spoke width
@@ -133,10 +153,12 @@ def relief(pad, zone) -> tuple[float, float]:
     return pad.thermal_gap or zone.gap or GAP, pad.spoke or zone.spoke or SPOKE
 
 
-def spokes(pad, zone, fill) -> list:
+def spokes(pad, zone, fill, others=()) -> list:
     """The spokes of the thermal relief of ``pad`` that reach ``fill``: four, along the
     pad's sides (at 45 degrees to them for a round pad, as KiCad draws them by default),
-    each from the pad across its gap; one is kept if its end, just past the gap, is in the fill."""
+    each from the pad across its gap; one is kept if its end, just past the gap, is in the fill,
+    or in the relief of another of ``others`` (pads of the net packed closer than their gaps: KiCad
+    joins a spoke that ends in another), which it then joins."""
     gap, width = relief(pad, zone)
     cx, cy = pad.centre
     points = list(pad.shape.exterior.coords) if hasattr(pad.shape, "exterior") else []
@@ -149,15 +171,20 @@ def spokes(pad, zone, fill) -> list:
         dx, dy = math.cos(turn + k * math.pi / 2.0), math.sin(turn + k * math.pi / 2.0)
         reach = max(((x - cx) * dx + (y - cy) * dy for x, y in points), default=0.0)
         end = reach + gap + width / 2.0
-        if fill.distance(Point(cx + dx * (reach + gap + TIP), cy + dy * (reach + gap + TIP))) > 1e-6:
+        tip = Point(cx + dx * (reach + gap + TIP), cy + dy * (reach + gap + TIP))
+        if fill.distance(tip) > 1e-6:
+            near = next((q for q in others if q.shape.distance(tip) <= relief(q, zone)[0]), None)
+            if near is None:
+                continue
+            out.append(LineString([(cx, cy), (tip.x, tip.y), near.centre]).buffer(width / 2.0, cap_style="flat"))
             continue
         out.append(LineString([(cx, cy), (cx + dx * end, cy + dy * end)]).buffer(width / 2.0, cap_style="flat"))
     return out
 
 
-def _join(pours: list[Pour]) -> None:
+def _join(pours: list[Pour], same: dict | None = None) -> None:
     """Gives the pieces their kind. A pad through the board or a via is in a piece of each layer's pour of its net:
-    pieces that share one are joined, and the joined pieces that hold a main piece are connected (KiCad sees the
+    pieces that share one (or pads whose copper meets: ``same``) are joined, and the joined pieces that hold a main piece are connected (KiCad sees the
     pad connect them); the rest hold pads that are cut off, or none."""
     for net in {pour.net for pour in pours}:
         pieces = [piece for pour in pours if pour.net == net for piece in pour.pieces]
@@ -171,7 +198,7 @@ def _join(pours: list[Pour]) -> None:
 
         first: dict[int, int] = {}
         for i, piece in enumerate(pieces):
-            for pad in piece.pad_ids:
+            for pad in {(same or {}).get(x, x) for x in piece.pad_ids}:
                 group[find(i)] = find(first.setdefault(pad, i))
         joined = {find(i) for i, piece in enumerate(pieces) if piece.kind == "main"}
         for i, piece in enumerate(pieces):

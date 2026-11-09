@@ -187,3 +187,16 @@ def test_a_zones_own_clearance_and_a_zone_of_higher_priority():
     assert ground.cut_off == ["U1-2"] and not ground.pieces[0].shape.intersects(box(25, 1, 39, 29))
     board.pour_zone[(SIG, 1)] = Zone(priority=0)  # (equal priority: neither gives way, as before)
     assert pours.estimate(board, {}, {}, {})[0].cut_off == []
+
+
+def test_pads_whose_copper_meets_are_joined_whatever_the_pour():
+    """A pad ringed off in the pour on the back is joined all the same where its copper meets, on the front, a pad
+    of the net that the pour reaches: KiCad sees one piece of copper."""
+    board = board_with_pour()
+    board.pads[2] = Pad.circle(2, 20, 22, 0.6, GND, "C3-2")  # (through the board)
+    board.pads.append(Pad.rect(3, 22.5, 22, 7.0, 1.0, GND, name="C3-3", layers=frozenset({0})))  # (on the front, under it)
+    board.pads.append(Pad.circle(4, 26, 22, 0.6, GND, "C3-4"))  # (through the board, outside the ring)
+    lines, nets, layers = {0: ring(20, 22, 3)}, {0: SIG}, {0: 1}
+    assert pours.estimate(board, lines, nets, layers)[0].cut_off == []
+    board.pads.pop()
+    assert pours.estimate(board, lines, nets, layers)[0].cut_off == ["C3-2"]
