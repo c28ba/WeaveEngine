@@ -26,6 +26,8 @@ from shapely import affinity
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 
+from weaveengine.io.kicad_rules import last, read_rules
+
 ARC_STEPS = 16       # segments of a drawn arc or circle
 AROUND = 1.0 / math.cos(math.pi / ARC_STEPS)  # a circle's polygon is drawn round it, never inside (a 3.4 mm hole inside: 0.03 mm short)
 CHAR = 1.3           # width of a character of KiCad's stroke font, of the font width (its widest, '>', and room about it)
@@ -64,6 +66,10 @@ class KicadBoard:
                                                                       # margin widens it): solder mask left open on purpose
     rounded: list[tuple] = field(default_factory=list)                # (net name, canonical copper layer, outline, radius,
                                                                       # chamfered): zones whose fill has its corners rounded or cut
+    custom: list = field(default_factory=list)                        # the custom rules (``kicad_rules.Rule``) beside the board
+    skipped: list[str] = field(default_factory=list)                  # those of the custom rules not read, each with why
+    courtyards: dict = field(default_factory=dict)                    # footprint reference -> its courtyard
+    areas: dict = field(default_factory=dict)                         # name -> outline of a named zone or rule area
 
 
 def project_rules(path: str) -> dict[str, float]:
@@ -96,6 +102,7 @@ def read_kicad(dsn_path: str) -> KicadBoard | None:
             out.rules = project_rules(stem + ".kicad_pro")
         except (OSError, ValueError, KeyError, TypeError):
             pass
+    out.custom, out.skipped = read_rules(stem)
     for layer in _children(_child(root, "layers"), None):
         if len(layer) >= 3 and isinstance(layer[1], str) and layer[1].endswith(".Cu"):
             out.layer_names[layer[1]] = layer[3] if len(layer) > 3 and isinstance(layer[3], str) else layer[1]
@@ -107,6 +114,7 @@ def read_kicad(dsn_path: str) -> KicadBoard | None:
             continue
         kind = item[0]
         if kind == "zone":
+            _named(item, out)
             _rule_area(item, out)
         elif kind == "footprint" or kind == "module":
             _footprint(item, out)
@@ -217,6 +225,7 @@ def _footprint(item, out: KicadBoard) -> None:
             ref = text[2]
     own = _local_clearance(item)
     mask = _mask_margin(item)
+    yard = []
     for pad in _children(item, "pad"):
         _pad(pad, place, angle, ref, own, out)
         out.pads[-1].mask = -1.0 if not any(l.endswith(".Mask") for l in _layers(pad)) else \
@@ -227,7 +236,13 @@ def _footprint(item, out: KicadBoard) -> None:
         if x[0] in ("fp_text", "fp_text_box") or (x[0] == "property" and _child(x, "layer")):
             _text(x, place, out, x[0], angle, ref)
         elif x[0].startswith("fp_"):
+            if any(l.endswith(".CrtYd") for l in _layers(x)) and x[0] in ("fp_line", "fp_rect", "fp_poly", "fp_circle", "fp_arc"):
+                got = _shape(x, place, x[0])
+                if got is not None and ref:
+                    yard.append(got)
             _drawing(x, place, out, x[0], ref)
+    if yard:
+        out.courtyards[ref] = unary_union(yard).convex_hull
 
 
 def _mask_margin(item) -> float | None:
@@ -457,6 +472,14 @@ def _text(item, place, out: KicadBoard, kind: str, fp_angle: float = 0.0, ref: s
         out.copper.append((shape, layer, what))
 
 
+def _named(item, out: KicadBoard) -> None:
+    name = _child(item, "name")
+    for polygon in _children(item, "polygon")[:1]:
+        pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+        if name and len(name) > 1 and len(pts) >= 3:
+            out.areas[name[1]] = Polygon(pts).buffer(0)
+
+
 def _rule_area(item, out: KicadBoard) -> None:
     keepout = _child(item, "keepout")
     if keepout is None:
@@ -480,8 +503,27 @@ def apply(design, kicad: KicadBoard) -> str:
     was taken, or "" if nothing was."""
     import shapely
     from weaveengine.board import Obstacle
-    board, rules, r = design.board, design.board.rules, kicad.rules
-    said = []
+    board, rules, r = design.board, design.board.rules, dict(kicad.rules)
+    said, unread = [], set()
+    # Custom rules that hold for every item: a larger minimum than the board's is taken as the board's. (Ones for
+    # some items only are taken per pad and per net below, or, for what is not per item, left out.)
+    custom = kicad.custom
+    wide = [x for x in custom if x.test is None and not x.layer]
+    for kind, key in (("via_diameter", "via_diameter"), ("hole_clearance", "hole_clearance"), ("edge_clearance", "edge_clearance")):
+        if (rule := next((x for x in reversed(wide) if kind in x.limits and "min" in x.limits[kind]), None)):
+            r[key] = max(r.get(key, 0.0), rule.limits[kind]["min"])
+    if (rule := next((x for x in reversed(wide) if "min" in x.limits.get("clearance", ())), None)) \
+            and rule.limits["clearance"]["min"] > r.get("min_clearance", 0.0):
+        r["min_clearance"] = rule.limits["clearance"]["min"]
+    if r.get("edge_clearance", 0.0) > kicad.rules.get("edge_clearance", 0.0) + 1e-9:
+        rules.edge_clearance = max(rules.edge_clearance or 0.0, r["edge_clearance"])
+        said.append(f"an edge clearance of {r['edge_clearance']:g} mm (a custom rule)")
+    for x in custom:  # (what is asked of some items only, and that is not per pad or net, nothing here can keep)
+        for kind in ("via_diameter", "hole_clearance", "edge_clearance"):
+            if kind in x.limits and x not in wide:
+                unread.add(x.name)
+        if "clearance" in x.limits and x.test is None and (x.layer or x.limits["clearance"].get("min", math.inf) < max(rules.clearance, r.get("min_clearance", 0.0))):
+            unread.add(x.name)
     index = {name: i for i, name in enumerate(board.layers + board.unrouted)}  # (the layers left out too: vias keep clear there)
     on = lambda canonical: index.get(kicad.layer_names.get(canonical, canonical))
     rules.min_width = max(r.get("min_track_width", 0.0), NARROWEST)
@@ -522,7 +564,7 @@ def apply(design, kicad: KicadBoard) -> str:
     found: dict[tuple[str, str], list[KicadPad]] = {}
     for pad in kicad.pads:
         found.setdefault((pad.ref, pad.number), []).append(pad)
-    local = narrow = masked = 0
+    local = narrow = masked = custom_pads = 0
     for pad in board.pads:
         ref, _, number = pad.name.split("@")[0].rpartition("-")
         mine = found.get((ref, number))
@@ -532,7 +574,7 @@ def apply(design, kicad: KicadBoard) -> str:
         kp = min(mine, key=lambda p: (p.x - cx) ** 2 + (p.y - cy) ** 2)
         if (kp.x - cx) ** 2 + (kp.y - cy) ** 2 > 4.0:
             continue
-        need = kp.clearance
+        need = 0.0
         local += kp.clearance > rules.clearance + 1e-9
         # Foreign copper inside a pad's solder-mask opening is bared beside it: KiCad's "solder mask bridge".
         opening = kicad.mask if kp.mask is None else kp.mask
@@ -542,7 +584,24 @@ def apply(design, kicad: KicadBoard) -> str:
         if kp.drill and kp.plated and hole > (kp.size - kp.drill) / 2.0 + 1e-9:
             narrow += hole - (kp.size - kp.drill) / 2.0 > rules.clearance + 1e-9
             need = max(need, hole - (kp.size - kp.drill) / 2.0)
-        pad.clearance = max(pad.clearance, need)
+        own = kp.clearance
+        if custom:
+            context = {"net": design.net_names.get(pad.net_id, ""), "class": design.net_classes.get(design.net_names.get(pad.net_id, ""), ""),
+                       "ref": ref, "shape": pad.shape, "kind": "Pad", "areas": kicad.areas,
+                       "courtyards": kicad.courtyards}
+            rule = last(custom, "clearance", context, unread)
+            ask = rule.limits["clearance"].get("min") if rule else None
+            if ask is not None and ask < rules.clearance - 1e-9 and (rule.test is None or rule.layer):
+                unread.add(rule.name)  # (it would lower every clearance, or on some layers only: not kept)
+            elif ask is not None:
+                custom_pads += abs(ask - own) > 1e-9
+                own = ask
+        if own < rules.clearance - 1e-9 and own != kp.clearance and need <= own + 1e-9:
+            pad.clearance = -max(own, 0.001)  # (asks less than the board's clearance: ``Rules.apart``)
+            continue
+        pad.clearance = max(pad.clearance, need, own)
+    if custom_pads:
+        said.append(f"clearances of custom rules on {custom_pads} pads")
     if local:
         said.append(f"local clearances on {local} pads")
     if masked:
@@ -603,6 +662,25 @@ def apply(design, kicad: KicadBoard) -> str:
     if opened:
         said.append(f"{opened} openings in the solder mask")
     board.margin = list(kicad.margin)
+    # Track widths a custom rule asks of a net (by its class or name): at least the rule's minimum, at most its maximum.
+    wider = 0
+    for name, net in design.net_ids.items() if custom else ():
+        rule = last(custom, "track_width", {"net": name, "class": design.net_classes.get(name, ""), "kind": "Track", "areas": kicad.areas}, unread)
+        if rule is None:
+            continue
+        if rule.layer:
+            unread.add(rule.name)
+            continue
+        ask, was = rule.limits["track_width"], rules.width(net)
+        now = min(max(was, ask.get("min", 0.0)), max(ask.get("max", math.inf), rules.min_width))
+        if abs(now - was) > 1e-9:
+            rules.net_width[net] = now
+            wider += 1
+    if wider:
+        said.append(f"track widths of custom rules on {wider} nets")
+    if unread or kicad.skipped:
+        names = sorted(unread) + [n for n in kicad.skipped if n.split(" (")[0] not in unread]
+        said.append(f"skipped custom rules {', '.join(names)}")
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
         for name, layer, outline, radius, chamfer in kicad.rounded:

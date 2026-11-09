@@ -913,3 +913,44 @@ def test_drawings_on_the_margin_layer_are_a_warning(tmp_path, capsys):
     assert len(design.warnings) == 1 and design.warnings[0].startswith("2 drawings on the Margin layer")
     main([str(tmp_path / "m.dsn"), "-o", str(tmp_path / "m.ses"), "--max-rounds", "1"])
     assert "WARNING: 2 drawings on the Margin layer" in capsys.readouterr().out
+
+
+def test_custom_design_rules(tmp_path):
+    """A .kicad_dru beside the DSN: a clearance for a part's pads (less than the
+    board's, which only pads can be held to), a track width for a net, and a
+    note naming the rules that were not understood."""
+    from weaveengine.io.kicad_rules import parse_rules
+    rules = """(version 1)
+# a comment (with a parenthesis
+(rule "fine R1" (condition "A.Reference == 'R1' && A.Type == 'Pad'") (constraint clearance (min 0.1mm)))
+(rule "yard" (condition "A.insideCourtyard('R2')") (constraint clearance (min 4mil)))
+(rule "gnd" (condition "A.NetName == 'G*' || A.hasNetclass('power')") (constraint track_width (min 0.4mm) (max 1mm)))
+(rule "zone" (condition "A.NetClass == 'x' && B.Type == 'Zone'") (constraint clearance (min 1mm)))
+(rule "length" (condition "A.fromTo('R1-1', 'R2-1')") (constraint length (max 40mm)))
+"""
+    parsed, skipped = parse_rules(rules)
+    assert [r.name for r in parsed] == ["fine R1", "yard", "gnd"] and skipped == ["zone (B.Type)"]
+    assert parsed[1].limits["clearance"]["min"] == pytest.approx(0.1016)
+    dsn = KICAD_STYLE.replace("(pcb demo.dsn", "(pcb dru.dsn")
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (footprint "R_0805" (layer "F.Cu") (at 15 5)
+    (property "Reference" "R2" (at 0 0 0) (layer "F.SilkS"))
+    (fp_rect (start -2 -1.5) (end 2 1.5) (layer "F.CrtYd"))
+    (pad "1" smd rect (at -0.9 0) (size 1 1.3) (layers "F.Cu" "F.Mask")))
+  (footprint "R_0805" (layer "F.Cu") (at 5 5)
+    (property "Reference" "R1" (at 0 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at -0.9 0) (size 1 1.3) (layers "F.Cu" "F.Mask")))
+)
+"""
+    (tmp_path / "dru.dsn").write_text(dsn, encoding="utf-8")
+    (tmp_path / "dru.kicad_pcb").write_text(pcb, encoding="utf-8")
+    (tmp_path / "dru.kicad_dru").write_text(rules, encoding="utf-8")
+    design = read_dsn(str(tmp_path / "dru.dsn"))
+    pads = {p.name: p for p in design.board.pads}
+    assert pads["R1-1"].clearance == pytest.approx(-0.1)    # asks 0.1, less than the board's 0.2
+    assert pads["R2-1"].clearance == pytest.approx(-0.1016)
+    assert pads["R1-2"].clearance == 0.0                     # no rule for it
+    assert design.board.rules.apart(pads["R1-1"].clearance) == pytest.approx(0.1)
+    assert design.board.rules.width(design.net_ids["GND"]) == pytest.approx(0.4)
+    assert "zone (B.Type)" in design.kicad and "length" not in design.kicad

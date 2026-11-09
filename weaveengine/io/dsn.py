@@ -62,6 +62,7 @@ class Design:
     via_shapes: list[list] = field(default_factory=list)  # raw shape descriptors of the via padstack
     defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
     dropped_wiring: str = ""                                 # what was done with routing already in the file
+    net_classes: dict[str, str] = field(default_factory=dict)  # net name -> its class
     kicad: str = ""                                          # what was taken from the KiCad board and project beside the DSN
     warnings: list[str] = field(default_factory=list)        # things about the board to tell the person (shown as WARNING)
     walled: list[str] = field(default_factory=list)          # layers a keepout covers whole, not routed (a single-sided board)
@@ -308,6 +309,7 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             pin_net[pin] = net_id
     board.net_names = design.net_names
     for cls, w, _ in classes:
+        design.net_classes.update({name: cls[1] for name in cls[2:] if isinstance(name, str) and len(cls) > 1})
         if w and abs(w - width) > 1e-9:
             for name in cls[2:]:
                 if isinstance(name, str) and name in design.net_ids:

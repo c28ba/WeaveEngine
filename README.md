@@ -129,10 +129,14 @@ KiCad's own design rules check.
   trace width, WeaveEngine routes that net narrower, down to the board's
   minimum track width (never below 0.127 mm), and says which nets it narrowed.
   Settings can turn this off.
-- **Custom design rules (`.kicad_dru`) are not read.** Pins closer together
-  than the clearance itself are usually routed in KiCad under a custom rule.
-  WeaveEngine cannot reach them; it leaves their connections open and names
-  the pads.
+- **Custom design rules (`.kicad_dru`) are read in part.** Beside the DSN,
+  the rules that test `A.NetClass`, `A.NetName`, `A.Reference`, an area or a
+  courtyard (joined by `&&`, `||`) are taken: a clearance below the board's
+  is kept from the pads they match (not from tracks), and a track width
+  minimum or maximum is given to the nets they match. Rules about
+  differential pairs, lengths, `B.` items and the like are named in the
+  import note as skipped, and pins they would allow closer than the
+  clearance stay open and named.
 - **Copper pours are left to KiCad.** A net with a zone is not routed as
   traces. After importing the session, refill the zones (**B**): until then
   KiCad shows the pour it filled around the old routing, running straight over
