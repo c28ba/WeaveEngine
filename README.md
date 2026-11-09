@@ -144,8 +144,9 @@ KiCad's own design rules check.
   if you want them redone: KiCad keeps its own teardrops as zones, and those
   are not taken out when the session is imported. Locked traces and vias are
   kept as they are, routed around, and count as joining a pad to its plane.
-- **Drawings on the Margin layer** are not treated as board edge, though
-  KiCad's check holds traces to the edge clearance from them.
+- **Drawings on the Margin layer** are board edge, except round pads: a gap
+  is left about each pad, so copper there can still be closer than the edge
+  clearance to a drawing that runs through it.
 - **Closed solder jumpers and net ties.** Copper drawn in a footprint that joins
   pads of two nets is kept clear by other nets' traces, but KiCad gives that
   copper no net, so its check reports a clearance error or a short wherever a

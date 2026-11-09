@@ -7,10 +7,10 @@ the drill of every hole (so the hole clearance), what a rule area forbids
 (one that forbids neither tracks nor vias, only parts or pours, is written as
 a plain keepout all the same), and the board's own minimums.
 (Drawings on the Margin layer, which KiCad's check holds to the edge
-clearance, are not taken as edge: boards draw there what is not an edge,
-closer to their own pads than that, and taken as edge those pads could not be
-reached. Only the vias and traces that join pads to planes keep clear of
-them, being optional: ``Board.margin``.) When the board
+clearance, are taken as edge, but not where a pad is: boards draw there what
+is not an edge, closer to their own pads than that, and taken as edge those
+pads could not be reached. A gap is left round each pad. Vias and traces that
+join pads to planes keep clear of them whole: ``Board.margin``.) When the board
 (``.kicad_pcb``) and project (``.kicad_pro``) of the same name lie beside the
 DSN, they are read for these.
 
@@ -60,6 +60,7 @@ class KicadBoard:
     rules: dict[str, float] = field(default_factory=dict)             # the project's minimums (``project_rules``)
     mask: float = 0.0                                                 # the board's solder-mask opening past a pad's copper
     margin: list = field(default_factory=list)                        # drawings on the Margin layer (lines, as drawn)
+    stroked: list = field(default_factory=list)                       # the same, as the copper-free shapes their strokes fill
     openings: list[tuple] = field(default_factory=list)               # (shape, canonical copper layer, how far the board's
                                                                       # margin widens it): solder mask left open on purpose
     rounded: list[tuple] = field(default_factory=list)                # (net name, canonical copper layer, outline, radius,
@@ -366,6 +367,7 @@ def _drawing(item, place, out: KicadBoard, kind: str, ref: str = "") -> None:
         shape = _shape(item, place, kind)
         if shape is not None:
             out.margin.append(shape.boundary if shape.geom_type == "Polygon" else shape)
+            out.stroked.append(shape)
     if not layers and not bared:
         return
     shape = _shape(item, place, kind)
@@ -603,6 +605,19 @@ def apply(design, kicad: KicadBoard) -> str:
     if opened:
         said.append(f"{opened} openings in the solder mask")
     board.margin = list(kicad.margin)
+    # Drawings on the Margin layer are board edge to KiCad's check: copper on every layer is held to the edge clearance
+    # from them, as from the outline, but a gap is left round each pad (a drawing that runs through one would bury it).
+    if kicad.stroked:
+        edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
+        grown = shapely.union_all([m.buffer(max(edge - rules.clearance, 0.0) + 1e-3) for m in kicad.stroked])
+        gap = edge + rules.base_width
+        near = [p for p in board.pads if p.shape.intersects(grown.buffer(gap))]
+        for i in range(len(board.layers) + len(board.unrouted)):
+            holes = [p.shape.buffer(gap) for p in near if p.on(i)]
+            shape = grown.difference(shapely.union_all(holes)) if holes else grown
+            if not shape.is_empty:
+                board.obstacles.append(Obstacle(shape, layers=frozenset({i}), copper=True))
+        said.append(f"{len(kicad.stroked)} drawings on the Margin layer as board edge")
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
         for name, layer, outline, radius, chamfer in kicad.rounded:

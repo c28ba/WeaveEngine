@@ -1,7 +1,7 @@
 import math
 
 import pytest
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from bench.generators import channel
 from weaveengine.cli import main
@@ -682,6 +682,25 @@ def test_copper_text_that_is_a_number_and_a_mounting_hole_s_own_clearance(tmp_pa
     texts = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(3, -2))]
     holes = [o for o in design.board.obstacles if o.copper and o.shape.contains(Point(16, -8))]
     assert texts and holes and holes[0].clearance == pytest.approx(1.55)
+
+
+def test_drawings_on_the_margin_layer_are_board_edge_except_round_pads(tmp_path):
+    """KiCad holds copper to the edge clearance from a Margin drawing. It is an
+    obstacle on every copper layer, with a gap left round the pads it runs through."""
+    dsn = KICAD_STYLE.replace("(pcb demo.dsn", "(pcb edge.dsn")
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (gr_line (start 2 5) (end 18 5) (layer "Margin") (width 0.1))
+)
+"""
+    (tmp_path / "edge.dsn").write_text(dsn, encoding="utf-8")
+    (tmp_path / "edge.kicad_pcb").write_text(pcb, encoding="utf-8")
+    board = read_dsn(str(tmp_path / "edge.dsn")).board
+    edge = [o for o in board.obstacles if o.copper and o.shape.intersects(Point(8, -5).buffer(0.01))]
+    assert len(edge) == 2 and {min(o.layers) for o in edge} == {0, 1}   # (one per layer)
+    pad = {p.name: p for p in board.pads}["R1-2"]
+    assert pad.shape.intersects(LineString([(2, -5), (18, -5)]))
+    assert not any(o.shape.intersects(pad.shape) for o in board.obstacles if o.copper and o.on(0))   # (on the pad's own layer)
 
 
 def test_solder_mask_openings_are_kept_clear_of_other_nets(tmp_path):
