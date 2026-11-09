@@ -43,7 +43,7 @@ def compare(base_path: str, new_path: str) -> bool:
     """Prints the comparison; True if any board is worse."""
     base, new = load(base_path), load(new_path)
     worse_any = False
-    total = {"drc": [0, 0], "islands": [0, 0], "apart": [0, 0], "open": [0, 0], "time": [0.0, 0.0]}
+    total = {"drc": [0, 0], "islands": [0, 0], "apart": [0, 0], "open": [0, 0], "cut": [0, 0], "time": [0.0, 0.0]}
     for bid in sorted(new):
         a, b = base.get(bid), new[bid]
         if a is None:
@@ -70,15 +70,17 @@ def compare(base_path: str, new_path: str) -> bool:
         ta, tb = a.get("route_s") or 0, b.get("route_s") or 0
         slow = " (slower)" if tb > 1.3 * ta and tb - ta > 5 else ""
         worse_any |= bool(why)
-        for key, x, y in (("drc", na, nb), ("islands", ia, ib), ("apart", ma, mb), ("open", ua, ub), ("time", ta, tb)):
+        ca, cb = a.get("cut_off"), b.get("cut_off")  # (pads cut off from their pour, by the estimate: older runs have none)
+        for key, x, y in (("drc", na, nb), ("islands", ia, ib), ("apart", ma, mb), ("open", ua, ub), ("cut", ca, cb), ("time", ta, tb)):
             if x is not None and y is not None:
                 total[key][0] += x
                 total[key][1] += y
         print(f"{bid:26s} routed {a.get('routed')}/{a.get('connections')} -> {b.get('routed')}/{b.get('connections')}  "
               f"drc {na} -> {nb} {kinds or ''}  islands {ia} -> {ib}  mask/thermal {ma} -> {mb}  open {ua} -> {ub}  "
-              f"{ta:.0f} -> {tb:.0f} s{slow}" + (f"  WORSE: {', '.join(why)}" if why else ""))
-    d, i, m, o, t = total["drc"], total["islands"], total["apart"], total["open"], total["time"]
+              f"{'' if ca is None and cb is None else f'cut off {ca} -> {cb}  '}{ta:.0f} -> {tb:.0f} s{slow}" + (f"  WORSE: {', '.join(why)}" if why else ""))
+    d, i, m, o, c, t = total["drc"], total["islands"], total["apart"], total["open"], total["cut"], total["time"]
     print(f"TOTAL drc {d[0]} -> {d[1]}, islands {i[0]} -> {i[1]}, mask/thermal {m[0]} -> {m[1]}, open {o[0]} -> {o[1]}, "
+          f"cut off {c[0]} -> {c[1]} (where both have it), "
           f"routing time {t[0]:.0f} -> {t[1]:.0f} s" + ("  (some boards worse)" if worse_any else ""))
     return worse_any
 

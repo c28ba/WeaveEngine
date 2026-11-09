@@ -203,7 +203,7 @@ class Options:
     teardrop_max_width: float = 2.0    # mm across
     teardrop_breathing: float = 1.5    # clearances a teardrop keeps from foreign copper, else it is left out
     portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
-    skeleton: bool = False          # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``; off: it costs connections, design 11.3)
+    skeleton: bool = True           # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``, design 11.3)
 
 
 class Context:
@@ -244,6 +244,8 @@ class Context:
         self.next_wire = len(self.conns) + 1             # ids of the pieces of connections through vias; never reused
         self.next_pad = max((p.pad_id for p in board.pads), default=-1) + 1   # pad ids of via sites
         self._legal = None
+        # The pours' skeletons are put in once the traces have been negotiated (``ripup.settle``), not before.
+        self.later = bool(skeletons)
         self.trail: list | None = None  # while recording (``record``): how to take out each commit, in order
         self._setup()
 
@@ -307,6 +309,8 @@ class Context:
     def _setup(self) -> None:
         """Phase 0: airwire paths and the demand map (9.2)."""
         for c in self.conns.values():
+            if c.skeleton and self.later:
+                continue  # (skeletons put in later: nothing of theirs is seen before)
             for li in c.layers:
                 layer = self.layers[li]
                 pmap = layer.pmap
@@ -719,14 +723,17 @@ class Context:
         return total
 
     def copper(self) -> dict[int, float]:
-        """``wire_copper`` of every routed connection, its pieces together."""
+        """``wire_copper`` of every routed connection, its pieces together (not the skeletons': the pours')."""
         out: dict[int, float] = {}
         for layer in self.layers:
             for w in layer.state.wire_path:
+                if self.conns[w].skeleton:
+                    continue
                 whole = self.conns[w].parent or w
                 out[whole] = out.get(whole, 0.0) + self.wire_copper(layer, w)
         return out
 
     def estimated_length(self) -> float:
         """The copper of the routing as it stands, through the middles of the gates; a trunk wires of one net share is counted once."""
-        return sum(self.wire_copper(layer, w, first=True) for layer in self.layers for w in layer.state.wire_path)
+        return sum(self.wire_copper(layer, w, first=True) for layer in self.layers for w in layer.state.wire_path
+                   if not self.conns[w].skeleton)  # (a skeleton is not copper: the pour's)

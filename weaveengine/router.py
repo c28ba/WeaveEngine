@@ -175,9 +175,10 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     planed, unplaned = [], []
     if options.fanout and work.pours:  # vias down to the planes, among everything routed (``plan.fanout``)
         shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drops.items() if w in wire_layer for poly in polys]
-        # With skeletons: a pad its pour reaches only in a piece cut off from the rest is joined as one the pour does not reach.
-        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, with_wedges(drops, wedges), widths=pieces) for piece in pour.pieces
-               if piece.kind == "cut" for p in piece.pad_ids} if skeletons else set()
+        # A pad its pour reaches only in a piece cut off from the rest (or by spokes that reach no fill) is joined as one
+        # the pour does not reach.
+        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, with_wedges(drops, wedges), widths=pieces)
+               for piece in pour.pieces if piece.kind == "cut" for p in piece.pad_ids}
         planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut, drops)
         work.pads = work.pads + planed
         vias = vias + planed
@@ -502,6 +503,9 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             selection = select(ctx, cands)
         # Phase 2: commit in regret order.
         commit_all(ctx, cands, selection)
+        if ctx.later:  # (the skeletons wait till the traces are settled: ``ripup.settle``)
+            for conn in ctx.conns.values():
+                conn.dead = conn.dead or conn.skeleton
     else:
         for conn in ctx.conns.values():  # what could not be done then may be possible now: try everything again
             conn.fails, conn.dead = 0, False
@@ -514,6 +518,10 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
     # Realisation, with DRC feedback into Phase 3 (13.2).
     ctx.report("geometry")
     lines, violations, wire_net = _realize(ctx)
+    for _ in range(2):  # skeletons beside a violation give way first: often that is all it needs, without repair
+        if not violations or not _crowding(ctx, violations):
+            break
+        lines, violations, wire_net = _realize(ctx)
     ctx.emit_snapshot(force=True, lines=lines)
     disturbed = False  # whether anything has moved since the routing was settled
     for fix in range(drc_rounds):
@@ -523,6 +531,12 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             break
         ctx.report("design-rule repair", fix, drc_rounds)
         disturbed = True
+        if opts.refine and not ctx.late():  # the skeletons wait out the repair: settling puts them back (``ripup.settle``)
+            for conn in [c for c in ctx.conns.values() if c.skeleton and c.parent is None]:
+                if conn.routed:
+                    ctx.rip(conn.wire_id)
+                conn.dead = True
+            ctx.rebuild_barrier()
         if opts.ripup and not ctx.late():
             negotiate(ctx, max_rounds=ctx.rounds + 5)
         legalise(ctx)
@@ -570,7 +584,8 @@ def _realize(ctx: Context):
         for w in changed:
             layer.paths[w] = path_from_steps(layer.pmap, layer.state.wire_path[w])
         lines.update(l)
-        violations += v
+        # (a pour's skeleton is not copper: what comes too near it is not a violation, the fill there is only narrower)
+        violations += [x for x in v if not any(w in ctx.conns and ctx.conns[w].skeleton for w in x.wires)]
         wire_net.update(n)
     return lines, violations, wire_net
 
@@ -604,6 +619,25 @@ def _teardrop_task(shared, task):
     board, wire_net, limits = shared
     on_layer, ends, index = task
     return make_teardrops(board, on_layer, wire_net, ends, index, *limits)
+
+
+def _crowding(ctx: Context, violations) -> bool:
+    """Takes out the pours' skeletons on a gate that a trace in a violation
+    passes (``plan.skeleton``): a skeleton is wider than a trace, and where the
+    room estimated for it is not there in the geometry, the traces beside it
+    are pushed into each other or into a pad. Returns whether any was."""
+    out = set()
+    for v in violations:
+        layer = ctx.layers[v.layer]
+        for w in v.wires:
+            if w in layer.paths:
+                for g in layer.paths[w].gates:
+                    out |= {ctx.conns[x].parent or x for x in layer.state.gate_order[g] if ctx.conns[x].skeleton}
+    for w in sorted(out):
+        ctx.rip(w)
+    if out:
+        ctx.rebuild_barrier()
+    return bool(out)
 
 
 def _penalise(ctx: Context, violations) -> bool:

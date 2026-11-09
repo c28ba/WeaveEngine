@@ -52,8 +52,8 @@ DESCRIPTIONS = {
                         "narrower, down to the board's minimum track width (from the KiCad project)", "Routing"),
     "fanout_to_planes": ("Join pads to planes with vias", "A pad of a poured net (GND, say) that its pour does not reach on its "
                          "own layer gets a via beside it down to the pour, routed before the other traces", "Pours"),
-    "pour_skeletons": ("Keep pours whole", "Route a thin path through each pour joining its pads, which traces go round instead "
-                       "of across, so that no trace cuts the pour into pieces. Some boards route fewer connections with it", "Pours"),
+    "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which "
+                       "traces move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it", "Pours"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
                        "pours' skeletons are drawn to. From the board: each zone's own minimum thickness", "Pours"),
     "show_pours": ("Show pours", "Draw the estimated fill of each copper pour after routing", "Pours"),
@@ -195,7 +195,7 @@ class Settings:
     narrow_to_reach: bool = True
     taper_to_pins: bool = True
     fanout_to_planes: bool = True
-    pour_skeletons: bool = False
+    pour_skeletons: bool = True
     pour_min_width: float = 0.0  # mm; 0 = from the board's zones
     show_pours: bool = True
     show_pour_islands: bool = False

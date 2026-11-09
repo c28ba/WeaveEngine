@@ -45,6 +45,10 @@ Done:
   pads they lose in magenta, islands on request, a Pours switch).
 - [x] Pours that stay whole: built, as an option off by default ("Keep pours
   whole", `--skeleton`); the zones' own minimum width, with an override.
+- [x] Pours that stay whole by default (branch `pours-default`): skeletons put
+  in after the traces are negotiated, traces moved off them only where every
+  one goes back; each zone's clearance, thermal reliefs and priority read and
+  used; `--no-skeleton` to leave them out. Design 11.3.
 - [x] Fan-out vias only where the plane's fill really is (no via to nowhere).
 - [x] Teardrop notches.
 - [x] KiCad custom rules (`.kicad_dru`): the pad and net subset
@@ -56,8 +60,7 @@ To do, in order:
 1. [ ] Traces pulled fully taut. Likely cause: via sites left unused stay in
    the map as holes that traces keep passing round (design 13.1). Check it on a
    board with many vias, or the reporter's.
-2. [ ] Pours that stay whole by default: skeletons that cost traces less,
-   room for thermal spokes, each zone's clearance and priority (below).
+2. [x] Pours that stay whole by default (done above; what is left is below).
 3. [ ] Room used where there is room.
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
 5. [ ] The Margin layer as board edge: a directional rule (below).
@@ -120,28 +123,36 @@ To do, in order:
 ### Pours and planes
 
 - **Pours that stay whole.** A ground or power pour is left to KiCad to fill
-  around the traces, and the routing often cuts it into islands: pieces of
-  copper joined to nothing, or sections cut off from the rest of the net.
-  The plan: route each pour as one more wire, a skeleton on its layer as wide
-  as the pour's minimum width, joining its pads and taking its room in the
-  gates like any other wire. Wires never cross, so no trace can cut it, and
-  KiCad's fill covers it. Where a dense board has no room for it, its pad is
-  joined by a via to the net's plane on another layer, as now, and named.
-  Design 11.3. Merged as an option ("Keep pours whole", `--skeleton`, off
-  by default): cut-off pads 379 to 57 on tier 2 and 412 open items instead
-  of 512 in KiCad, but 29 connections fewer routed on three dense boards and
-  twice the time. Still to do, to make it the default:
-  - skeletons that cost traces less: thinner where room is short, or priced
-    below a trace in negotiation;
-  - room for KiCad's thermal-relief spokes where a skeleton meets a pad;
-  - each zone's own clearance (the board's is used now) and zone priorities.
+  around the traces, and the routing often cuts it into islands. Each pour is
+  now given a skeleton, a wire on its layer joining its pads that no trace
+  crosses (design 11.3), on by default ("Keep pours whole", `--no-skeleton`).
+  The skeletons go in once the traces are negotiated, and traces in a
+  skeleton's way are moved only where every one of them goes back, so no
+  connection is lost to them; a pad its skeleton cannot reach, or whose
+  thermal spokes the estimate finds starved, gets a via down to the net's
+  plane (or a short trace into the fill), and is named. Measured on the Mac against main:
+  tier 1 routes the same, KiCad open items 134 to 104, cut-off pads 80 to
+  51; tier 2 one more routed, open items 515 to 364, cut-off pads 357 to
+  125; time +24 % on tier 1 and +11 % on tier 2 (cm5-minima twice main's).
+  Still to do:
+  - room for the thermal spokes where a skeleton meets a pad: the estimate
+    now sees starved spokes and fan-out joins such pads where there is room,
+    but the skeleton does not yet arrive along a spoke (pic-programmer's DIP
+    pins on a one-layer pour);
+  - more skeletons in where traces could move with a via more, or several
+    moved at once (about one join in four still gives way on the dense
+    boards; fomu and sweep-half-swept keep more pads cut off than the old,
+    negotiated skeleton did);
+  - pads whose copper is stacked or packed closer than their relief gaps
+    (connectors' stitching pins, jumper footprints) are estimated with care
+    but not checked against KiCad on every board.
 - **Pours shown while routing.** Done after routing: the estimated fill on
   the board view, a key, cut-off pieces and the pads they lose marked in
   magenta, islands on request. Still to do:
   - the estimate during routing, not only on the result;
-  - thermal-relief spokes in the estimate: it misses pads KiCad leaves
-    unconnected because their spokes are starved (lumen-ringlight,
-    hackrf-lna915).
+  - (done on `pours-default`: thermal-relief spokes, zone clearance and
+    priority in the estimate; lumen-ringlight's pads were those its zone
+    does not join at all, now given a trace into the fill.)
 
 ### Rules
 

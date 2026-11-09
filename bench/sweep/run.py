@@ -198,6 +198,7 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
     route = [args.python, "-m", "weaveengine.cli", "board.dsn", "--quiet"]
     if args.workers:
         route += ["--workers", str(args.workers)]
+    route += args.route_args.split() if args.route_args else []
     code, text, s = sh(route, timeout=args.limit, log=os.path.join(out, "route.log"), cwd=out)
     rec["route_s"], rec["route_code"] = round(s, 1), code
     m = re.search(r"(\d+)/(\d+) connections routed .*?; (\d+) vias\)", text)
@@ -205,6 +206,10 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
         rec.update(routed=int(m[1]), connections=int(m[2]), vias=int(m[3]))
     m = re.search(r"-> (OK|VIOLATIONS)\s*$", text.strip(), re.M)
     rec["measured"] = m[1] if m else None
+    # The pours' estimated fill (``pours.estimate``): pads cut off from their pour; skeleton joins that gave way.
+    rec["cut_off"] = sum(int(n) for n in re.findall(r"(\d+) pads? cut off", text))
+    m = re.search(r"pours: (\d+) of (\d+) joins", text)
+    rec["skeleton_open"] = int(m[1]) if m else 0
     if code == "timeout":  # (it may have left the best routing it had in board.ses: that is not this board's result)
         rec.update(stage="route", error=f"no result within {args.limit} s")
         return rec
@@ -259,6 +264,7 @@ def main() -> int:
     ap.add_argument("--label", help="name of this run (default: the git branch and commit)")
     ap.add_argument("--jobs", type=int, default=1, help="boards at a time (default 1; give each fewer --workers)")
     ap.add_argument("--workers", type=int, help="processes per routing (default: all cores)")
+    ap.add_argument("--route-args", metavar="ARGS", help='more options for the routing, as one string ("--skeleton")')
     ap.add_argument("--limit", type=int, default=2400, help="seconds a routing may take (default 2400)")
     ap.add_argument("--python", default=sys.executable, help="the Python with WeaveEngine (default: this one)")
     ap.add_argument("--keep-from", metavar="LABEL",

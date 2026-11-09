@@ -82,6 +82,9 @@ class Pad:
     clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``); negative: asks only that, less
     fanout: bool = False             # a via put beside a pad to join it to its net's plane (``plan.fanout``)
     anchor: tuple[float, float] | None = None  # where traces join it, if not its centroid (which a bent custom pad's is not on)
+    zone_connect: str | None = None  # how a pour joins it, its own or its part's ("thermal", "solid", "none"; ``Zone``): None, the zone's
+    thermal_gap: float | None = None  # its own thermal relief gap and spoke width, if it sets them (None: the zone's)
+    spoke: float | None = None
 
     @property
     def centre(self) -> tuple[float, float]:
@@ -127,6 +130,17 @@ class Obstacle:
 
 
 @dataclass
+class Zone:
+    """What a pour's zone asks, from the .kicad_pcb (``io.kicad``). None: not
+    known; the board's clearance, or KiCad's defaults."""
+    clearance: float | None = None   # what its fill keeps from other nets' copper
+    gap: float | None = None         # how far its fill keeps from a pad it joins by a thermal relief
+    spoke: float | None = None       # the width of the relief's spokes
+    connect: str = "thermal"         # how it joins its pads: "thermal", "solid", "none", or "tht" (thermal for pads through the board, solid for the rest)
+    priority: int = 0                # where zones of two nets overlap, the higher fills first and the other keeps clear of it
+
+
+@dataclass
 class Component:
     """A placed part, for display and selection (the router itself only needs its pads)."""
     reference: str
@@ -162,6 +176,7 @@ class Board:
     skip_nets: set[int] = field(default_factory=set)   # nets left unrouted by the user's choice (a pour, if any, is still fanned out to)
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     pour_min: dict = field(default_factory=dict)       # (net, layer index) -> the least width of that pour's fill, from its zone's min_thickness
+    pour_zone: dict = field(default_factory=dict)      # (net, layer index) -> its zone's settings (``Zone``), from the .kicad_pcb
     pour_override: float = 0.0                         # mm: the least width of every pour's fill if set (the user's), else the zones' own
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
@@ -178,6 +193,17 @@ class Board:
         """The narrowest the fill of the pour of ``net`` on ``layer`` may be: the user's choice, else its zone's
         minimum thickness, else KiCad's default (0.25 mm)."""
         return self.pour_override or self.pour_min.get((net, layer), 0.25)
+
+    def zone(self, net: int, layer: int) -> Zone:
+        """The settings of the zone of the pour of ``net`` on ``layer`` (KiCad's defaults if not known)."""
+        return self.pour_zone.get((net, layer)) or Zone()
+
+    def pour_clearance(self, net: int, layer: int) -> float:
+        """What the fill of that pour keeps from other nets' copper: its zone's clearance, or the board's,
+        whichever is more (KiCad's fill keeps the larger), less the routing margin."""
+        rules = self.rules
+        zone = self.zone(net, layer).clearance or 0.0
+        return max(rules.clearance - rules.margin, zone)
 
     def pad(self, pad_id: int) -> Pad:
         return {p.pad_id: p for p in self.pads}[pad_id]

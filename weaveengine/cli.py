@@ -116,7 +116,7 @@ OPTION_SWITCHES = {
                             "(a wedge from the full width over the last stretch)"),
 }
 OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
-                "skeleton": "--skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
+                "skeleton": "--no-skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
                 "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing",
                 **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
 COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rounds": "--max-rounds", "h_weight": "--heuristic-weight",
@@ -144,9 +144,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="clearances a teardrop keeps from foreign copper, else it is left out (default %(default)g)")
     ap.add_argument("--no-fanout", action="store_true",
                     help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
-    ap.add_argument("--skeleton", action="store_true",
-                    help="a skeleton in each pour, which traces go round, so that none cuts the pour into pieces "
-                         "(design 11.3; some boards route fewer connections with it)")
+    ap.add_argument("--no-skeleton", action="store_true",
+                    help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
+                         "traces are routed, which traces move off where they can; design 11.3)")
+    ap.add_argument("--skeleton", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for scripts that ask for it)
     ap.add_argument("--pour-min-width", type=float, default=0.0, metavar="MM",
                     help="the narrowest copper a pour's fill may have, in the estimate of the fill and the skeletons "
                          "(default: each zone's min_thickness from the .kicad_pcb, else 0.25)")
@@ -277,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     rules.edge_clearance = want_edge + args.margin
     rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
-                      fanout=not args.no_fanout, skeleton=args.skeleton, teardrop_max_length=args.teardrop_max_length,
+                      fanout=not args.no_fanout, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
                       teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)

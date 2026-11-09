@@ -209,7 +209,7 @@ def _generate_task(ctx: Context, wire_id: int) -> list[Candidate]:
 def generate_all(ctx: Context) -> dict[int, list[Candidate]]:
     """Phase 1 candidates for every connection. Read-only on the state, so the
     connections are spread over worker processes (section 3 rule 7)."""
-    ids = list(ctx.conns)
+    ids = [w for w, c in ctx.conns.items() if not (c.skeleton and ctx.later)]  # (skeletons put in later: none)
     found = parallel.run(_generate_task, ctx, ids, ctx.workers)
     return dict(zip(ids, found))
 
