@@ -110,6 +110,7 @@ class BoardView(QGraphicsView):
         self.pad_items, self.selection = [], None
         self.pour_items, self.pour_shown = [], None
         self.show_pour_fill = True  # (the "Pours" switch)
+        self.show_pour_islands = False
         self.board = board
         self.widths = {}  # net -> width drawn, where the routing narrowed it (``router.reach``)
         self.visible = {i: True for i in range(len(board.layers))}
@@ -180,6 +181,7 @@ class BoardView(QGraphicsView):
                 from PySide6.QtOpenGLWidgets import QOpenGLWidget
                 wanted = QSurfaceFormat()
                 wanted.setSamples(4)  # smooth edges: the card's own, in place of the painter's
+                wanted.setStencilBufferSize(8)  # the card fills a shape with the stencil: without one, only outlines
                 # Ask for a context before trusting a widget to get one: a widget that
                 # gets none shows nothing at all.
                 context, surface = QOpenGLContext(), QOffscreenSurface()
@@ -519,7 +521,7 @@ class BoardView(QGraphicsView):
 
     def show_pours(self, pours) -> None:
         """The estimated fill of each pour (``pours.estimate``), faint under the routing on its layer: the main
-        piece plain, the others hatched, a cut-off one (pads of the net) red, an island (none) yellow."""
+        piece plain, the others hatched, a cut-off one (pads of the net) magenta cross-hatched, an island (none) yellow if shown."""
         self.pour_shown = pours
         scene = self.scene()
         for item in self.pour_items:
@@ -531,14 +533,17 @@ class BoardView(QGraphicsView):
                 continue
             color = QColor(LAYER_COLORS[pour.layer % len(LAYER_COLORS)])
             for piece in pour.pieces:
+                if piece.kind == "island" and not self.show_pour_islands:
+                    continue
                 path = QPainterPath()
                 for ring in (piece.shape.exterior, *piece.shape.interiors):
                     path.addPolygon(QPolygonF([QPointF(x, -y) for x, y in ring.coords]))
                 if piece.kind in ("main", "via"):
                     pen, brush = QPen(color, 0), QBrush(QColor(color.red(), color.green(), color.blue(), 70))  # (outlined: two layers' pours over each other blend)
                 else:
-                    mark = QColor("#ff4d4d" if piece.kind == "cut" else "#ffd24d")
-                    pen, brush = QPen(mark, 0), QBrush(QColor(mark.red(), mark.green(), mark.blue(), 110), Qt.BDiagPattern)
+                    mark = QColor(CUT_OFF_COLOR if piece.kind == "cut" else "#ffd24d")
+                    pen = QPen(mark, 0)
+                    brush = QBrush(QColor(mark.red(), mark.green(), mark.blue(), 110), Qt.DiagCrossPattern if piece.kind == "cut" else Qt.BDiagPattern)
                 item = scene.addPath(path, pen, brush)
                 item.setZValue(1 + pour.layer * 0.01 + (layers - pour.layer) * 0.001)
                 item.setToolTip(f"{self.board.net_names.get(pour.net, pour.net)} pour, estimated: "
@@ -555,6 +560,9 @@ class BoardView(QGraphicsView):
             self.show_routing(*self.last)
         if not on:
             self._drop_selection("trace", "pad", "via")
+
+
+CUT_OFF_COLOR = "#ff00ff"  # (unlike every layer colour)
 
 
 class SettingsDialog(QDialog):
@@ -574,6 +582,13 @@ class SettingsDialog(QDialog):
         self.readers: dict[str, object] = {}   # name -> function returning the value
         self.writers: dict[str, object] = {}   # name -> function taking a value
         tabs = QTabWidget()
+        self.tabs = tabs
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search settings")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        self.rows: dict[str, tuple[QFormLayout, int, int]] = {}   # name -> its form, first row, row after its last
+        self.groups: list[str] = []   # each tab's group
         forms: dict[str, QFormLayout] = {}
         for name, (label, description, group) in DESCRIPTIONS.items():
             if group not in forms:
@@ -585,7 +600,9 @@ class SettingsDialog(QDialog):
                 scroll.setWidgetResizable(True)
                 scroll.setFrameShape(QFrame.NoFrame)
                 tabs.addTab(scroll, group)
+                self.groups.append(group)
             form = forms[group]
+            first = form.rowCount()
             value = getattr(Settings(), name)
             if name == "portfolio":
                 self._race_row(form, label, description)
@@ -610,16 +627,19 @@ class SettingsDialog(QDialog):
             hint.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 6px;")
             hint.setWordWrap(True)
             form.addRow(hint)
+            self.rows[name] = (form, first, form.rowCount())
         if detected and any(value is None for value, _ in detected.values()):
             for i in range(tabs.count()):
                 if tabs.tabText(i) == "Rules":
                     tabs.setTabText(i, "Rules ⚠")
+        self.titles = [tabs.tabText(i) for i in range(tabs.count())]   # (what the tabs say when nothing is searched for)
         self.load(settings)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel | QDialogButtonBox.RestoreDefaults)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self.restore_defaults)
         layout = QVBoxLayout(self)
+        layout.addWidget(self.search)
         layout.addWidget(tabs)
         where = QLabel(f"Saved to {path}")
         where.setStyleSheet("color: gray; font-size: 11px;")
@@ -628,6 +648,24 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
         screen = (parent.screen() if parent is not None else QApplication.primaryScreen()).availableGeometry()
         self.resize(min(520, screen.width() - 40), min(640, screen.height() - 80))
+
+    def _filter(self, text: str) -> None:
+        """Show only the settings whose label or description contains ``text``; each tab's title gets its match count."""
+        text = text.strip().lower()
+        counts: dict[str, int] = {}
+        for name, (form, first, end) in self.rows.items():
+            label, description, group = DESCRIPTIONS[name]
+            hit = not text or text in label.lower() or text in description.lower()
+            counts[group] = counts.get(group, 0) + hit
+            for row in range(first, end):
+                form.setRowVisible(row, hit)
+        for i, title in enumerate(self.titles):
+            self.tabs.setTabText(i, f"{title} ({counts.get(self.groups[i], 0)})" if text else title)
+        if text:
+            for i, group in enumerate(self.groups):
+                if counts.get(group):
+                    self.tabs.setCurrentIndex(i)
+                    break
 
     @staticmethod
     def _detected_label(name: str, detected: dict | None, board: str) -> QLabel:
@@ -843,7 +881,7 @@ class MainWindow(QMainWindow):
         self.name_box.toggled.connect(self._toggle_names)
         self.pour_box = QCheckBox("Pours")
         self.pour_box.setToolTip("Draw the estimated fill of each copper pour after routing")
-        self.pour_box.setChecked(True)
+        self.pour_box.setChecked(self.settings.show_pours)
         self.pour_box.toggled.connect(self._toggle_pours)
         show.addWidget(self.outline_box)
         show.addWidget(self.name_box)
@@ -855,6 +893,7 @@ class MainWindow(QMainWindow):
         self.pour_key.hide()
         col.addWidget(self.pour_key)
         self.view.show_outlines, self.view.show_names = self.settings.show_outlines, self.settings.show_names
+        self.view.show_pour_fill, self.view.show_pour_islands = self.settings.show_pours, self.settings.show_pour_islands
 
         self.selection_label = QLabel("Click a trace, a pad or a part to see what it is.\nScroll to zoom, right-drag to pan.")
         self.selection_label.setWordWrap(True)
@@ -921,6 +960,7 @@ class MainWindow(QMainWindow):
         self.view.show_pour_fill = on
         self.view.show_pours(self.view.pour_shown or [])
         self.pour_key.setVisible(on and bool(self.view.pour_shown))
+        self._remember(show_pours=on)
 
     def show_pour_key(self, pours) -> None:
         """What the drawn pours mean, and each pour's state: its net and layer, and the pads it does not reach."""
@@ -931,18 +971,20 @@ class MainWindow(QMainWindow):
         swatch = lambda color, text: f"<span style='background:{color}; color:{color}'>&nbsp;&nbsp;&nbsp;</span> {text}"
         lines = ["<b>Pours</b> (estimated fill, as KiCad will pour it)",
                  swatch("#5a7a9a", "the pour, in its layer's colour"),
-                 swatch("#ff4d4d", "cut off: pads of the net it no longer joins"),
-                 swatch("#ffd24d", "an island: copper joined to nothing (KiCad removes these)")]
+                 swatch(CUT_OFF_COLOR, "cut off (cross-hatched): pads of the net it no longer joins")]
+        show_islands = self.view.show_pour_islands
+        if show_islands:
+            lines.append(swatch("#ffd24d", "an island: copper joined to nothing (KiCad removes these)"))
         for pour in pours:
             name = board.net_names.get(pour.net, pour.net) if board is not None else pour.net
             layer = board.layers[pour.layer] if board is not None and pour.layer < len(board.layers) else pour.layer
             reached = sum(len(p.pads) for p in pour.pieces if p.kind in ("main", "via"))
             cut = [pad for p in pour.pieces if p.kind == "cut" for pad in p.pads]
-            islands = sum(1 for p in pour.pieces if p.kind == "island")
+            islands = sum(1 for p in pour.pieces if p.kind == "island") if show_islands else 0
             text = f"{html.escape(str(name))} on {html.escape(str(layer))}: joins {reached} pads"
             if cut:
                 shown = ", ".join(cut[:6]) + (f" and {len(cut) - 6} more" if len(cut) > 6 else "")
-                text += f"; <span style='color:#ff4d4d'>{len(cut)} cut off ({html.escape(shown)})</span>"
+                text += f"; <span style='color:{CUT_OFF_COLOR}'>{len(cut)} cut off ({html.escape(shown)})</span>"
             if islands:
                 text += f"; {islands} island{'s' if islands > 1 else ''}"
             lines.append(text)
@@ -1084,7 +1126,7 @@ class MainWindow(QMainWindow):
         self.timings = Timings(os.path.join(os.path.dirname(os.path.abspath(self.settings_path)), "timings.json"))
         try:  # (going on from a routing takes another time than routing: it is not on that record)
             self.run_key = None if improving else Timings.key(self.dsn_path, {k: v for k, v in asdict(self.settings).items()
-                                                                              if k not in ("show_outlines", "show_names", "gpu_drawing")})
+                                                                              if k not in ("show_outlines", "show_names", "gpu_drawing", "show_pours", "show_pour_islands")})
         except OSError:
             self.run_key = None
         self.started = time.time()
@@ -1308,6 +1350,10 @@ class MainWindow(QMainWindow):
             self.settings = dialog.settings()
             self.outline_box.setChecked(self.settings.show_outlines)
             self.name_box.setChecked(self.settings.show_names)
+            self.pour_box.setChecked(self.settings.show_pours)
+            self.view.show_pour_islands = self.settings.show_pour_islands
+            self.view.show_pours(self.view.pour_shown or [])
+            self.show_pour_key(self.view.pour_shown or [])
             try:
                 self.settings.save(self.settings_path)
                 self.say(f"Settings saved to {self.settings_path}")

@@ -50,9 +50,11 @@ DESCRIPTIONS = {
     "narrow_to_reach": ("Narrow traces to reach fine-pitch pins", "Where a net's pads cannot be reached at its class's width, route it "
                         "narrower, down to the board's minimum track width (from the KiCad project)", "Routing"),
     "fanout_to_planes": ("Join pads to planes with vias", "A pad of a poured net (GND, say) that its pour does not reach on its "
-                         "own layer gets a via beside it down to the pour, routed before the other traces", "Routing"),
+                         "own layer gets a via beside it down to the pour, routed before the other traces", "Pours"),
     "pour_skeletons": ("Keep pours whole", "Route a thin path through each pour joining its pads, which traces go round instead "
-                       "of across, so that no trace cuts the pour into pieces. Some boards route fewer connections with it", "Routing"),
+                       "of across, so that no trace cuts the pour into pieces. Some boards route fewer connections with it", "Pours"),
+    "show_pours": ("Show pours", "Draw the estimated fill of each copper pour after routing", "Pours"),
+    "show_pour_islands": ("Show islands", "Draw the islands of a pour: pieces joined to nothing, which KiCad removes", "Pours"),
     "slide_vias": ("Straighten vias", "Move each via to where its traces run through it with less of a bend", "Routing"),
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
     "teardrops": ("Teardrops", "Add teardrops where traces meet pads and vias", "Teardrops"),
@@ -109,6 +111,8 @@ class Settings:
     narrow_to_reach: bool = True
     fanout_to_planes: bool = True
     pour_skeletons: bool = False
+    show_pours: bool = True
+    show_pour_islands: bool = False
     skip_nets: str = ""  # comma-separated net names or patterns
     smooth_corners: bool = True
     show_outlines: bool = True

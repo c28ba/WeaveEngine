@@ -186,3 +186,42 @@ def test_the_warnings_panel_lists_what_is_wrong_with_the_board(tmp_path):
     assert "Warnings (" in text and "2 drawings on the Margin layer" in text
     window.show_warnings([])
     assert not window.warnings_label.isHidden() and window.warnings_label.text() == "No warnings"
+
+
+def test_islands_are_hidden_unless_asked_for():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import BoardView
+    from weaveengine.settings import Settings
+    from weaveengine.board import Board, Rules
+    from weaveengine import pours
+    from shapely.geometry import box
+    app = QApplication.instance() or QApplication([])
+    assert Settings().show_pour_islands is False and Settings().show_pours is True
+    board = Board.rectangle(40.0, 30.0, Rules(), layers=["F.Cu", "B.Cu"])
+    view = BoardView()
+    view.set_board(board)
+    pour = pours.Pour(0, 1, box(1, 1, 5, 5), [pours.Piece(box(1, 1, 5, 5), "island")])
+    view.show_pours([pour])
+    assert not view.pour_items
+    view.show_pour_islands = True
+    view.show_pours([pour])
+    assert len(view.pour_items) == 1
+
+
+def test_settings_has_a_pours_tab_and_search_filters_rows():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import SettingsDialog
+    from weaveengine.settings import Settings
+    app = QApplication.instance() or QApplication([])
+    dialog = SettingsDialog(Settings(), "settings.json")
+    titles = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+    assert "Pours" in titles
+    form, first, end = dialog.rows["pour_skeletons"]
+    other, ofirst, _ = dialog.rows["clearance"]
+    dialog.search.setText("KEEP POURS")
+    assert form.isRowVisible(first) and not other.isRowVisible(ofirst)
+    assert dialog.tabs.tabText(dialog.tabs.currentIndex()) == "Pours (1)"
+    dialog.search.setText("")
+    assert other.isRowVisible(ofirst) and "Pours" in [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
