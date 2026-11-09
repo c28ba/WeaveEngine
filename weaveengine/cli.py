@@ -9,6 +9,7 @@ from weaveengine import __version__, accel, safe_output
 from weaveengine.io.check import kicad_project_rules, measure
 from weaveengine.io.dsn import read_dsn, walled_note
 from weaveengine.io.ses import write_ses
+from weaveengine.pours import note as pour_note, of_result as estimate_pours
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
 from weaveengine.router import route_board
@@ -257,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {narrowed_note(stats['narrowed'], names)}")
     if stats["buried_pads"]:
         print(f"  {unreachable_note(stats['buried_pads'], result.board)}")
+    for pour in estimate_pours(result):
+        print(f"  pours: {pour_note(pour, result.board)}")
     m = measure(design, out, want_clearance, want_edge)
     print(f"measured from {os.path.basename(out)}: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
           f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"

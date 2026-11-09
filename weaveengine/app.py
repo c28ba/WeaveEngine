@@ -25,6 +25,7 @@ from weaveengine.cli import narrowed_note, plane_left_note, unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
+from weaveengine.pours import of_result as estimate_pours
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
@@ -83,6 +84,8 @@ class BoardView(QGraphicsView):
         self.show_outlines = True
         self.show_names = True
         self.static_items: list = []
+        self.pour_items: list = []     # the estimated fill of the pours (``show_pours``)
+        self.pour_shown: list | None = None
         self.live_items: list = []
         self.outline_items: list = []
         self.name_items: list = []
@@ -100,6 +103,7 @@ class BoardView(QGraphicsView):
         self.outline_items, self.name_items, self.selection_items = [], [], []
         self.trace_items, self.detail_items, self._thin = [], [], None
         self.pad_items, self.selection = [], None
+        self.pour_items, self.pour_shown = [], None
         self.board = board
         self.widths = {}  # net -> width drawn, where the routing narrowed it (``router.reach``)
         self.visible = {i: True for i in range(len(board.layers))}
@@ -507,8 +511,38 @@ class BoardView(QGraphicsView):
 
         self._level_of_detail(force=True)
 
+    def show_pours(self, pours) -> None:
+        """The estimated fill of each pour (``pours.estimate``), faint under the routing on its layer: the main
+        piece plain, the others hatched, a cut-off one (pads of the net) red, an island (none) yellow."""
+        self.pour_shown = pours
+        scene = self.scene()
+        for item in self.pour_items:
+            scene.removeItem(item)
+        self.pour_items = []
+        layers = len(self.board.layers) if self.board is not None else 0
+        for pour in pours:
+            if pour.layer >= layers or not self.visible.get(pour.layer, True):
+                continue
+            color = QColor(LAYER_COLORS[pour.layer % len(LAYER_COLORS)])
+            for piece in pour.pieces:
+                path = QPainterPath()
+                for ring in (piece.shape.exterior, *piece.shape.interiors):
+                    path.addPolygon(QPolygonF([QPointF(x, -y) for x, y in ring.coords]))
+                if piece.kind in ("main", "via"):
+                    pen, brush = QPen(Qt.NoPen), QBrush(QColor(color.red(), color.green(), color.blue(), 45))
+                else:
+                    mark = QColor("#ff4d4d" if piece.kind == "cut" else "#ffd24d")
+                    pen, brush = QPen(mark, 0), QBrush(QColor(mark.red(), mark.green(), mark.blue(), 110), Qt.BDiagPattern)
+                item = scene.addPath(path, pen, brush)
+                item.setZValue(1 + pour.layer * 0.01 + (layers - pour.layer) * 0.001)
+                item.setToolTip(f"{self.board.net_names.get(pour.net, pour.net)} pour, estimated: "
+                                + {"main": "the main piece", "via": "joined on by a via", "cut": "cut off: " + ", ".join(piece.pads),
+                                   "island": "an island, no pad"}[piece.kind])
+                self.pour_items.append(item)
+
     def set_layer_visible(self, layer: int, on: bool) -> None:
         self.visible[layer] = on
+        self.show_pours(self.pour_shown or [])
         for item, pad in self.pad_items:
             item.setVisible(self._pad_shown(pad))
         if self.last is not None:
@@ -968,6 +1002,8 @@ class MainWindow(QMainWindow):
         improving = self.result is not None and self.result.kept is not None
         self.variants, self.shown_variant, self.previous = {}, None, {}
         self.snapshots_seen = 0
+        if not improving and self.view.board is not None:
+            self.view.show_pours([])  # (the last routing's fill is not this one's)
         # The time this board took with these settings before, if it is on record: the best estimate there is.
         self.timings = Timings(os.path.join(os.path.dirname(os.path.abspath(self.settings_path)), "timings.json"))
         try:  # (going on from a routing takes another time than routing: it is not on that record)
@@ -1127,6 +1163,7 @@ class MainWindow(QMainWindow):
                                for i, w in enumerate(result.polylines) if w in result.wire_pads}
         self.view.widths = result.stats.get("narrowed", {})
         self.view.show_routing(wires, open_pairs, result.vias, teardrops, result.violations)
+        self.view.show_pours(estimate_pours(result))
         self.stats["routed"].setText(f"{stats['routed']} / {stats['connections']}")
         self.stats["open"].setText(str(stats["connections"] - stats["routed"]))
         self.stats["vias"].setText(str(stats["vias"]))

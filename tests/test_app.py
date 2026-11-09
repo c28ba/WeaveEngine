@@ -1,4 +1,5 @@
 """The desktop application, driven without a person (Qt's offscreen platform)."""
+import math
 import os
 import subprocess
 import sys
@@ -117,3 +118,24 @@ def test_no_via_areas_are_drawn_hatched_blue():
     view.set_board(board)
     hatched = [i for i in view.scene().items() if isinstance(i, QGraphicsPolygonItem) and i.brush().style() == Qt.BDiagPattern]
     assert len(hatched) == 1
+
+
+def test_the_estimated_fill_is_drawn_per_layer():
+    """Roadmap 1.1: a pour's pieces under the routing, the cut-off ones marked, hidden with their layer."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from shapely.geometry import box
+    from weaveengine import pours
+    from weaveengine.app import BoardView
+    from weaveengine.board import Board, Pad, Rules
+    app = QApplication.instance() or QApplication([])
+    board = Board.rectangle(40.0, 30.0, Rules(), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.circle(0, 5, 5, 0.5, 0, "U1-1"), Pad.circle(1, 20, 15, 0.5, 0, "U1-2")]
+    board.pours.append((0, 1, box(1, 1, 39, 29)))
+    ring = [(20 + 3 * math.cos(a * math.pi / 16), 15 + 3 * math.sin(a * math.pi / 16)) for a in range(33)]
+    view = BoardView()
+    view.set_board(board)
+    view.show_pours(pours.estimate(board, {0: ring}, {0: 1}, {0: 1}))
+    assert len(view.pour_items) == 2 and any("cut off: U1-2" in i.toolTip() for i in view.pour_items)
+    view.set_layer_visible(1, False)
+    assert not view.pour_items
