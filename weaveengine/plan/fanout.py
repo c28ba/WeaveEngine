@@ -18,7 +18,7 @@ import math
 
 import shapely
 import shapely.ops
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 
 from weaveengine.board import Board, Pad, circle_polygon
 
@@ -28,6 +28,7 @@ STEP = 0.1         # mm between the places tried along a ray
 SHARE = 1.0        # mm: a via of the net this near the pad is joined to instead of a new one
 GAP = 0.05         # mm between a pad and its via
 HOLES = 0.25       # mm a via keeps from a through-hole pad or fixed via of its own net (drill to drill: KiCad's default minimum)
+LANDING = 0.02    # mm a via may stand nearer the edge of the fill than its radius (its pad is no bigger than its copper, and KiCad's fill gives it a little room)
 FILL = 0.25        # mm: a pour's fill is not narrower than this (KiCad's default zone minimum width)
 
 
@@ -39,9 +40,9 @@ def covered(board: Board, pad: Pad, cut=frozenset()) -> bool:
                for net, layer, shape in board.pours)
 
 
-def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), cut=frozenset()) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
+def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), cut=frozenset(), teardrops=None) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
     """For the routed ``board`` (its vias among its pads), its traces and other
-    copper ``shapes`` (shape, net, layer: teardrops): the vias to add, the
+    copper ``shapes`` (shape, net, layer: teardrops; and the same as ``teardrops``, wire -> polygons, for the fill): the vias to add, the
     traces to add as (net, layer, points), and the pads that were left with no
     place for one. ``cut``: (pad, layer) of the pads a pour reaches only in a
     piece cut off from the rest of it (``pours.estimate``): joined as if that
@@ -78,24 +79,20 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     through |= {o.shape for o in board.obstacles if o.via}
     trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
     widest = max([keep, rules.clearance] + [t[2] for ts in things for t in ts])
-    def filled(shape, net: int, layer: int):
-        """Roughly where KiCad's fill of a pour of ``net`` will be: its outline, held off the board edge and
-        foreign copper, without the parts narrower than a fill's minimum width."""
-        tree = trees[layer]
-        near = [things[layer][i] for i in tree.query(shape, predicate="dwithin", distance=widest).tolist()] if tree else []
-        held = [s.buffer(asks if other != -2 else 0.0, quad_segs=4) for s, other, asks in near if other != net]
-        fill = shape.intersection(board.outline.buffer(-edge))
-        if held:
-            fill = fill.difference(shapely.union_all(held))
-        return fill.buffer(-FILL / 2.0).buffer(FILL / 2.0)
-
-    # net -> (layer, its fill, for a trace that ends in it; its outline drawn in by a via's radius, for a via: the
-    # fill flows round a via of its net, wherever there is room for the via among foreign copper)
+    # net -> (layer, its fill, for a trace that ends in it; that drawn in by a via's radius, for a via: the fill flows
+    # round a via of its net, wherever there is room for the via among foreign copper). The fill is the estimate of
+    # what KiCad will pour with the routing as it stands (``pours.estimate``): the pieces that reach the net's pads,
+    # not the pour's outline, which a trace or a keepout can leave empty.
     pours: dict[int, list] = {}
     wanted = {p.net_id for p in lonely}
-    for net, at, shape in board.pours:
-        if net in wanted:
-            pours.setdefault(net, []).append((at, filled(shape, net, at), shape.buffer(-r)))
+    from weaveengine import pours as estimates  # (it reads FILL from here)
+    for pour in estimates.estimate(board, lines, wire_net, wire_layer, teardrops):
+        if pour.net in wanted:
+            reach = [piece.shape for piece in pour.pieces if piece.kind in ("main", "via")]
+            if not reach:  # (a plane with no pad of its net on it, only vias to join: any of its fill will do)
+                reach = [piece.shape for piece in pour.pieces]
+            fill = shapely.union_all(reach) if reach else Polygon()
+            pours.setdefault(pour.net, []).append((pour.layer, fill, fill.buffer(-(r - LANDING))))
 
     def clear(shape, net: int, layer: int, need: float, drilled: bool = False) -> bool:
         """Whether ``shape`` (copper of ``net``) keeps ``need`` from everything foreign on ``layer``,

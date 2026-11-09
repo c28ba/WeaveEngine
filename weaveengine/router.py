@@ -169,7 +169,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         # With skeletons: a pad its pour reaches only in a piece cut off from the rest is joined as one the pour does not reach.
         cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, drops) for piece in pour.pieces
                if piece.kind == "cut" for p in piece.pad_ids} if skeletons else set()
-        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut)
+        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut, drops)
         work.pads = work.pads + planed
         vias = vias + planed
         w = max(list(ctx.conns) + list(lines), default=-1) + 1

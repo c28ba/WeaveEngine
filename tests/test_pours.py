@@ -67,3 +67,19 @@ def test_a_sliver_narrower_than_the_minimum_width_is_dropped():
         board.add_keepout([(0, top), (40, top), (40, 30), (0, 30)], layers=frozenset({1}))
         [pour] = pours.estimate(board, {}, {}, {})
         assert len(pour.pieces) == pieces
+
+
+def test_fanout_puts_no_via_where_the_plane_has_no_fill():
+    """A pad on the front has GND poured on the back, but a ring of another net's trace on the back cuts the
+    pour round the pad off from the pad it joins: the pour's outline is there, its fill is not. No via."""
+    from weaveengine.plan.fanout import fanout
+    board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu", "B.Cu"])
+    board.net_names = {GND: "GND", SIG: "SIG"}
+    board.pads += [Pad.circle(0, 20, 15, 0.5, GND, "U1-1", frozenset({0})), Pad.circle(1, 5, 5, 0.6, GND, "J1-1", BACK)]
+    board.plane_nets.add(GND)
+    board.pours.append((GND, 1, box(1, 1, 39, 29)))
+    vias, traces, left = fanout(board, {}, {}, {})
+    assert len(vias) == 1 and not left        # (nothing in the way: a via into the pour)
+    ringed = {0: ring(20, 15, 2.5)}
+    vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 1})
+    assert vias == [] and traces == [] and [p.name for p in left] == ["U1-1"]
