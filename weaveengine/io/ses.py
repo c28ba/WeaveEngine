@@ -81,6 +81,10 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
             if 0.0 <= along <= 1.0:
                 chord = (cx * (t1[1] - sy) - cy * (t1[0] - sx)) / across * length  # along the line, to the chord
                 reach = max(reach, chord - half / 2.0)
+        if i in (0, count - 1) and _to_segment((ex, ey), t1, t2) <= 0.75 * half:
+            # An outer line goes on nearer the teardrop's corner on the pad: stopping a
+            # half width short, its round end leaves a notch beside a rounded corner.
+            reach = max(reach, length - half / 2.0)
         f = reach / length
         end = (sx + dx * f, sy + dy * f)
         if _to_segment(end, t1, t2) > 0.75 * half:

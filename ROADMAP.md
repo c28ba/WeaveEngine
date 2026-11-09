@@ -55,7 +55,6 @@ sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
 6. The Margin layer as board edge (the KiCad reader only; most of the DRC
    errors the routing still causes).
 7. Room used where there is room.
-8. Teardrop notches.
 9. Traces tapered to fine-pitch pins.
 10. KiCad custom rules (`.kicad_dru`).
 11. No acute angles where copper of one net meets.
@@ -94,8 +93,6 @@ sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
   (about one via in five now has traces meeting under 90 degrees) moves with
   all its connections, which re-planning one connection cannot do (design
   13.3a). Design 13.3b.
-- **Teardrop notches.** Where a teardrop's fan meets a rounded pad corner, the
-  round ends of its traces leave small gaps (cosmetic only).
 - **Traces tapered to fine-pitch pins.** Where a trace is wider than the pin
   it enters, narrow it over its last stretch to the pin's width instead of
   routing the whole net narrower (`router.reach`) or running a wide trace
