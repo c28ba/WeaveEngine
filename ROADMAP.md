@@ -20,10 +20,11 @@ its outline two ways).
 Left over from it:
 - [ ] **A time estimate that is not hours out** without a time limit, on a
   board whose rip-up goes on improving for hours (design 24, Open).
-- [x] **The board sweep on GitHub** kept `WE_SWEEP_DIR/prepared` in the Actions
-  cache (one per board), so its runs route the same DSNs (Linux tier-1
-  baseline: `linux-t1-cache-a`/`-b` on sweep-results). (Results also differ slightly between macOS and Linux,
-  from floating point: compare runs only on one platform.)
+- [x] **The board sweep on GitHub** keeps each board's prepared DSN in the
+  Actions cache, so its runs route the same DSNs: two runs of tiers 1-3 came
+  out identical (Linux baseline: `sweep-cache-a-d4de30f` on sweep-results).
+  Results differ slightly between macOS and Linux, from floating point:
+  compare runs only on one platform.
 - [ ] Whether a DSN's power layers should be left out of the routing by
   default, and plane layers made dearer, measured with the pour counts.
 - Tried and kept as is: where vias may stand on every board. #5's filter
