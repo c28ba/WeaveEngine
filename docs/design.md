@@ -433,7 +433,7 @@ Once the board is routed, each such pad gets a via beside it: the nearest place,
 
 Done after routing, it takes no room a trace needed. Placed first, the vias were in the way: on hackrf-lna915 four signal connections that routed before were left open. Measured: lna915 30 open items in KiCad to 11 (the rest the Margin layer and its four open signals), olimex POE-M2 77 to 66, lumen-mobo 217 to 104, with every signal routed as before.
 
-### 11.3 Pours that stay whole (built 2026-11, branch `pour-skeleton`; off by default)
+### 11.3 Pours that stay whole (built 2026-11, branch `pour-skeleton`; on by default since branch `pours-default`)
 
 **The fault.** A pour is left to KiCad to fill round the traces (section 4), and nothing in the routing keeps it in one piece. Traces of other nets that run across it, or close a ring round part of it, cut it into islands with no pad, or into sections with pads that are no longer joined to the rest of the net. Fan-out (11.2) only joins pads the pour does not reach at all; it does not see a pour the routing has cut.
 
@@ -455,7 +455,7 @@ Done after routing, it takes no room a trace needed. Placed first, the vias were
 - Negotiated like any wire. What tells routings apart puts traces first: rip-up's best state is fewest open traces and over-full gates, then fewest skeletons open, then copper; the kept routing likewise; a design-rule violation drops the skeleton first. And at settling (`ripup.give_way`) an open trace whose way is barred by skeletons has those taken out and goes in, the skeletons put back where they fit; failing that, every skeleton out, kept only if a trace goes in.
 - Not drawn, not written, not counted as open or as copper (`router._drawn`, `Context.open`).
 - Where it loses: with the option on, a pad the fill estimate puts in a piece cut off from its pour is treated by fan-out (11.2) as one the pour does not reach: a via down to the net's plane on another layer.
-- Not built: thermal relief room at pad ends; the zone's own clearance and minimum width (the board's clearance and KiCad's default 0.25 mm are used); zone priorities.
+- Not built then: thermal relief room at pad ends; the zone's own clearance and minimum width (the board's clearance and KiCad's default 0.25 mm are used); zone priorities. (See below for what was done since.)
 
 **Measured** against the base it was branched from, same DSNs. Pour counts from the fill estimate (islands, cut-off pads); KiCad's from its DRC after refill (`isolated_copper`, unconnected).
 
@@ -465,6 +465,18 @@ Done after routing, it takes no room a trace needed. Placed first, the vias were
 | Tier 2 (Windows, 13 boards) | fewer on three: kicad-cm5-minima 156 to 136, kicad-stickhub 97 to 89, kicad-openair 228 to 227 | 512 to 412 | 3 to 5 | 1393 to 1206 | 379 to 57 | 971 to 2120 s |
 
 Also on tier 2: 4 annular-width errors on kicad-tinytapeout (vias), and one more open item on lumen-pi-interface. The pours stay whole as meant, and far fewer items are left open in KiCad, but on the dense multi-layer boards the skeletons take room traces needed (half of cm5-minima's skeleton joins gave way, and still 20 connections more were lost), and the routing takes twice as long. So it is off by default. Before an earlier version made skeletons give way at settling, tier 1 lost a connection each on fomu and lumen-blade13.
+
+**Made the default (2026-11, branch `pours-default`).** What changed from the version above, and why.
+
+- *Traces first, the skeletons after.* Negotiated with the traces, a skeleton won contests a trace needed, however it was priced: priced the same, cm5-minima lost 20 connections; with the skeletons yielding in rip-up (on an over-full gate they go first, an open skeleton rips up only skeletons, traces rerouted first) still 1 to 3 per dense board, and the time four to seven times. Now the skeletons are not in Phases 1 to 3 at all (no candidates, no demand, no airwires, `Context.later`): the traces are routed and negotiated exactly as without them, and the skeletons go in when the routing is settled (`ripup.settle`), where they fit. Then, for each that does not, the traces in its way are moved (`ripup.make_way`): its way with crossings allowed through gates wide enough for it on an empty board, the connections on it taken out, the skeleton put in and they put back with no more vias than they had; kept only if every trace goes back and no gate is over-full, else undone exactly. So no trace is lost to a skeleton, and a trace that crosses a pour where it could go round is moved round. During design-rule repair the skeletons are taken out and put back by the settling after it; a violation is never a skeleton's (it is not copper: what comes near it only narrows the fill), and a skeleton on a gate of a trace in a violation gives way before repair is tried (`router._crowding`). After refinement, `give_way` once more for what is still open. Skeletons are left out of refinement and via tidying, and their length out of the copper rip-up compares, so that rip-up stops when the traces stop improving.
+- *One tree per net.* A pad through the board is in the pours of every layer: the skeleton is now one spanning tree over all the net's pads in its pours, each join through one pour (the shortest joins of each pour's own spanning tree, Kruskal over them), not a tree per pour. Fewer joins, the same pads joined.
+- *Width.* What the fill needs, not 1.4 times its minimum: the zone's minimum width and 0.05 mm (`skeleton.SLACK`), and twice what the zone's clearance is above the board's, since traces keep the board's clearance from the skeleton and the fill the zone's from the traces. Never below the narrowest trace.
+- *The zone's own settings* are read from the .kicad_pcb (`io.kicad._settings`, `board.Zone`): its clearance, thermal gap and spoke width, how it joins pads (thermal, solid, none, thermal for through-hole only) and its priority; and each pad's own zone connection and relief, or its part's. Used by the estimate, the skeleton's width and region (a zone of another net with higher priority is taken out of it, `skeleton.area`), and fan-out.
+- *The estimate (`pours.estimate`)*: each zone's clearance; zones of higher priority filled first, a lower one keeping its clearance from their fill; a pad joined by a thermal relief is kept the gap clear of, and joined only by its spokes (four, along its sides, at 45 degrees for a round pad) whose end, just past the gap, is in the fill; a pad the zone does not join (connection "none") is not counted as cut off.
+- *Fan-out* treats a pad the zone does not join as one the pour does not reach, and a pad cut off by the estimate (traces or starved spokes) likewise, with the option on or off; such a pad may be joined by a short trace into the fill of its own layer's pour (the main piece), not only by a via to another layer. Copper drawn on a part is of no net to fan-out (KiCad sees it so: a stub ran into one). Two fan-out vias of a net keep the hole-to-hole distance.
+- Found on the way: a pad edge holding one net's run of wires (a skeleton through a pad of its net leaves it twice) was counted over-full; it is not, as one wire there is not.
+
+@@MEASURED@@
 
 ## 11a. Where the copper goes, and undoing detours (`ripup.untangle`, branch `detour-repair`)
 

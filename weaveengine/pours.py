@@ -95,8 +95,11 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         # The net's own pads are copper whatever their width; one joined by a thermal relief, only with the spokes that reach the fill.
         joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] == "solid"]
         thermal = [p for p in own if how[p.pad_id] == "thermal"]
+        index = shapely.STRtree([p.shape for p in thermal]) if thermal else None
         for p in thermal:
-            joins += [p.shape.intersection(inside), *spokes(p, zone, fill, [q for q in thermal if q is not p])]
+            reach = relief(p, zone)[0] * 2.0 + 0.5 * max(p.shape.bounds[2] - p.shape.bounds[0], p.shape.bounds[3] - p.shape.bounds[1])
+            near = [thermal[i] for i in index.query(p.shape, predicate="dwithin", distance=reach).tolist() if thermal[i] is not p]
+            joins += [p.shape.intersection(inside), *spokes(p, zone, fill, near)]
         fill = shapely.union_all([fill, *joins])
         filled.setdefault(at, []).append((net, zone.priority, fill))
         own = [p for p in own if how[p.pad_id] != "none"]
