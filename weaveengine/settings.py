@@ -179,6 +179,7 @@ class Settings:
         notes += [f"WARNING: {text}" for text in undetected(found, self)]
         if design.dropped_wiring:
             notes.append(design.dropped_wiring)
+        notes += [f"WARNING: {text}" for text in design.warnings]
         if design.kicad:
             notes.append(design.kicad)
         if design.walled:

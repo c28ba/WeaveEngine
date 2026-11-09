@@ -177,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         print(design.dropped_wiring)
     if design.kicad:
         print(design.kicad)
+    for text in design.warnings:
+        print(f"WARNING: {text}")
     if design.walled:
         print(walled_note(design.walled))
     if design.board.unrouted:
