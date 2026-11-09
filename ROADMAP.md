@@ -5,61 +5,64 @@ features.
 
 ## 1.1
 
-### Before 1.1: fixes users found (1.0.2)
+### 1.0.2 (released 2026-11-08): fixes users found
 
-From the first users' reports (r/PCB, 2026-11). Merged: rule areas that
-forbid only tracks or only vias are read (#1); fan-out vias share locked
-vias and keep their drills apart (#3); `--max-rounds` (#2); `--layers` keeps
-the other layers' pours and copper (#4); `--layer-cost` makes a layer dear
-(#5); a time limit for a run (`--time-limit`, and in the app's settings),
-with the command line writing the best routing so far as it goes, and the
-time estimate kept within the limit; the board sweep routing the same DSN
-every run (lily58-pro's two results were KiCad exporting its outline two
-ways: the router gives the same routing from the same DSN every time).
-Still to do:
+From the first users' reports (r/PCB, 2026-11): rule areas that forbid only
+tracks or only vias are read (#1); fan-out vias share locked vias and keep
+their drills apart (#3); `--max-rounds` (#2); `--layers` keeps the other
+layers' pours and copper (#4); `--layer-cost` (#5); `--time-limit`, with the
+best routing written as it goes; locked traces count as reaching their pad;
+blind and buried locked vias are kept on their own layers; vias checked
+against keepouts and no-via areas, which are drawn in the app; the sweep
+routes the same DSN every run (lily58-pro's two results were KiCad exporting
+its outline two ways).
 
-- **Where vias may stand, for every board** (tried 2026-11, kept as is). #5's
-  filter (`Reach.placeable`) stays on only with a layer cost. On identical
-  DSNs, applied always it lost a connection on kicad-openair and solo-a: a
-  via seed from another layer takes a triangle's best cost, so a dearer path
-  on the layer itself is never recorded and the filter drops the triangle.
-  Letting seeds not record it restored openair, but lost one on
-  hackrf-operacake and solo-a, and gained nothing.
-- **The board sweep on GitHub** prepares each board afresh on its runner, so
-  it can still see KiCad's other DSN of a board: keep `WE_SWEEP_DIR/prepared`
-  in the Actions cache as the sources are. (Results also differ slightly
-  between macOS and Linux, from floating point; compare runs only on one
-  platform.)
-- **Locked traces counted as reaching their pad**, so a pad inside a keepout
-  that a locked trace already leads out of is not named as unreachable.
-- **A time estimate that is not hours out.** With a time limit it no longer
-  passes the limit; without one it is still far too short on a board whose
-  rip-up goes on improving for hours (design 24, Open).
-- **Vias checked against keepouts and no-via areas** by the command line's own
-  check, and those areas drawn in the app.
-- Smaller: blind and buried locked vias are read as through vias; whether a
-  DSN's power layers should be left out of the routing by default, and plane
-  layers made dearer, measured with the sweep's pour-island count.
+Left over from it:
+- [ ] **A time estimate that is not hours out** without a time limit, on a
+  board whose rip-up goes on improving for hours (design 24, Open).
+- [ ] **The board sweep on GitHub** prepares each board afresh on its runner,
+  so it can see KiCad's other DSN of a board: keep `WE_SWEEP_DIR/prepared` in
+  the Actions cache. (Results also differ slightly between macOS and Linux,
+  from floating point: compare runs only on one platform.)
+- [ ] Whether a DSN's power layers should be left out of the routing by
+  default, and plane layers made dearer, measured with the pour counts.
+- Tried and kept as is: where vias may stand on every board. #5's filter
+  (`Reach.placeable`) stays on only with a layer cost: applied always it lost
+  a connection on kicad-openair and solo-a, and letting via seeds not record
+  a triangle's best cost lost one on hackrf-operacake and solo-a instead.
 
-### Order of work
+### 1.1 checklist
 
-Least disruptive first; each on its own branch, merged only when the board
-sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
+Each item on its own branch, merged only when the board sweep (`bench/sweep`,
+quick boards first) shows nothing worse than before. Done items are on main,
+not yet released.
 
-1. Traces pulled fully taut (a reported fault; needs the reporter's board).
-2. Arcs in the session (the SES writer only).
-3. Nets left unrouted by choice.
-4. The pour fill estimate, shown in the app and counted over the sweep: how
-   often pours are cut today.
-5. Pours that stay whole (the skeleton), measured with 4.
-6. The Margin layer as board edge (the KiCad reader only; most of the DRC
-   errors the routing still causes).
-7. Room used where there is room.
-9. Traces tapered to fine-pitch pins.
-10. KiCad custom rules (`.kicad_dru`): the pad and net subset is done (`io/kicad_rules.py`).
-11. No acute angles where copper of one net meets.
-12. The 45-degree option (a second way of drawing, off by default).
-13. A via size per net class.
+Done:
+- [x] Arcs in the session (`qarc`, at most 90 degrees each; `--no-ses-arcs`).
+- [x] Nets left unrouted by choice (`--skip-net`, a setting).
+- [x] The pour fill estimate, shown in the app (a key, cut-off pieces and the
+  pads they lose in magenta, islands on request, a Pours switch).
+- [x] Pours that stay whole: built, as an option off by default ("Keep pours
+  whole", `--skeleton`); the zones' own minimum width, with an override.
+- [x] Fan-out vias only where the plane's fill really is (no via to nowhere).
+- [x] Teardrop notches.
+- [x] KiCad custom rules (`.kicad_dru`): the pad and net subset
+  (`io/kicad_rules.py`).
+- [x] A Warnings section in the app, with a warning for Margin-layer drawings.
+- [x] Settings: a Pours tab and a search box.
+
+To do, in order:
+1. [ ] Traces pulled fully taut. Likely cause: via sites left unused stay in
+   the map as holes that traces keep passing round (design 13.1). Check it on a
+   board with many vias, or the reporter's.
+2. [ ] Pours that stay whole by default: skeletons that cost traces less,
+   room for thermal spokes, each zone's clearance and priority (below).
+3. [ ] Room used where there is room.
+4. [ ] Traces tapered to fine-pitch pins.
+5. [ ] The Margin layer as board edge: a directional rule (below).
+6. [ ] No acute angles where copper of one net meets.
+7. [ ] The 45-degree option (a second way of drawing, off by default).
+8. [ ] A via size per net class.
 
 ### Trace shape
 
