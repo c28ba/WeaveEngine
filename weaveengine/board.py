@@ -53,7 +53,10 @@ class Rules:
         """The clearance foreign copper keeps from an item that asks ``own`` of
         it (a local clearance of its part, or what the hole clearance needs where
         its copper ring is narrow), or only the rule's if that is more or ``own``
-        is 0. KiCad checks the larger of the two."""
+        is 0. KiCad checks the larger of the two. A negative ``own`` is a custom rule
+        that asks exactly ``-own``, less than the rule's (``io.kicad_rules``)."""
+        if own < 0:
+            return -own + self.margin
         return max(self.clearance, own + self.margin) if own > 0 else self.clearance
 
     @property
@@ -76,7 +79,7 @@ class Pad:
     layers: frozenset | None = None  # layer indices; None = every layer (through-hole)
     radius: float | None = None      # set for circular pads (teardrops)
     is_via: bool = False
-    clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
+    clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``); negative: asks only that, less
     fanout: bool = False             # a via put beside a pad to join it to its net's plane (``plan.fanout``)
     anchor: tuple[float, float] | None = None  # where traces join it, if not its centroid (which a bent custom pad's is not on)
 

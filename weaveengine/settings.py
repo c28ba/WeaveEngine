@@ -187,7 +187,7 @@ class Settings:
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
         elif found["edge_clearance"][0] is not None:
-            rules.edge_clearance = max(found["edge_clearance"][0], rules.clearance)
+            rules.edge_clearance = max(found["edge_clearance"][0], rules.clearance, rules.edge_clearance or 0.0)
             notes.append(f"edge clearance {rules.edge_clearance:g} mm, {found['edge_clearance'][1]}")
         if board.plane_nets:
             names = design.net_names

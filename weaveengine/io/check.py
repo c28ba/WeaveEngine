@@ -92,7 +92,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     pads += [(o.shape, o) for o in board.obstacles if o.net_id >= 0 or o.copper]
     keepouts = [o for o in board.obstacles if o.net_id < 0 and not o.copper]
     pad_net = [design.net_names.get(p.net_id, "") if p.net_id >= 0 else None for _, p in pads]
-    beyond = [max(0.0, p.clearance - clearance) for _, p in pads]
+    beyond = [-p.clearance - clearance if p.clearance < 0 else max(0.0, p.clearance - clearance) for _, p in pads]  # (negative: a custom rule asks less)
     pads += [(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32), None) for _, x, y in vias]
     pad_net += [net for net, _, _ in vias]
     beyond += [max(0.0, rules.via_clearance - clearance)] * len(vias)

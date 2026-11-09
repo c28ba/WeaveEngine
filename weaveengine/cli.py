@@ -188,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         rules.edge_clearance = args.edge_clearance
     elif os.path.exists(pro):
         project = kicad_project_rules(pro)
-        rules.edge_clearance = max(project["edge_clearance"], rules.clearance)
+        rules.edge_clearance = max(project["edge_clearance"], rules.clearance, rules.edge_clearance or 0.0)
         print(f"from {os.path.basename(pro)}: edge clearance {rules.edge_clearance:g} mm"
               + (f" (hole clearance {project['hole_clearance']:g} mm is not kept: a DSN has no drill sizes, and there is no "
                  f"{os.path.basename(os.path.splitext(pro)[0])}.kicad_pcb beside it)" if project["hole_clearance"]
