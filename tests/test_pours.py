@@ -7,6 +7,7 @@ from weaveengine import pours
 from weaveengine.board import Board, Pad, Rules
 
 GND, SIG = 0, 1
+BACK = frozenset({1})
 
 
 def ring(x: float, y: float, r: float) -> list[tuple[float, float]]:
@@ -16,7 +17,8 @@ def ring(x: float, y: float, r: float) -> list[tuple[float, float]]:
 def board_with_pour() -> Board:
     board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu", "B.Cu"])
     board.net_names = {GND: "GND", SIG: "SIG"}
-    board.pads += [Pad.circle(0, 8, 8, 0.6, GND, "U1-1"), Pad.circle(1, 30, 8, 0.6, GND, "U1-2"), Pad.circle(2, 20, 22, 0.6, GND, "C3-2")]
+    board.pads += [Pad.circle(0, 8, 8, 0.6, GND, "U1-1", BACK), Pad.circle(1, 30, 8, 0.6, GND, "U1-2", BACK),
+                  Pad.circle(2, 20, 22, 0.6, GND, "C3-2", BACK)]
     board.pours.append((GND, 1, box(1, 1, 39, 29)))
     return board
 
@@ -47,11 +49,15 @@ def test_a_ring_round_nothing_makes_an_island_and_other_layers_do_not_count():
     assert pours.note(pour, board) == "GND on B.Cu in 2 pieces: 1 island"
 
 
-def test_a_via_joins_a_cut_off_piece_on_and_a_trace_of_the_net_is_no_obstacle():
+def test_a_via_joins_a_cut_off_piece_to_the_pour_on_the_other_layer():
     board = board_with_pour()
-    board.pads.append(Pad.circle(3, 20, 24, 0.4, GND, "", None, True))
-    [pour] = pours.estimate(board, {0: ring(20, 22, 3), 1: [(2, 15), (38, 15)]}, {0: SIG, 1: GND}, {0: 1, 1: 1})
-    assert pour.cut_off == [] and sorted(p.kind for p in pour.pieces) == ["main", "via"]
+    board.pours.append((GND, 0, box(1, 1, 39, 29)))
+    board.pads += [Pad.circle(3, 20, 24, 0.4, GND, "", None, True), Pad.circle(4, 5, 25, 0.6, GND, "J1-1")]  # (a via, a pad through the board)
+    ringed = {0: ring(20, 22, 3), 1: [(2, 15), (38, 15)]}      # (a trace of the net is no obstacle)
+    [back, front] = pours.estimate(board, ringed, {0: SIG, 1: GND}, {0: 1, 1: 1})
+    assert back.cut_off == [] and sorted(p.kind for p in back.pieces) == ["main", "via"]
+    board.pads.pop(-2)                                         # without the via, nothing joins them
+    assert pours.estimate(board, ringed, {0: SIG, 1: GND}, {0: 1, 1: 1})[0].cut_off == ["C3-2"]
 
 
 def test_a_sliver_narrower_than_the_minimum_width_is_dropped():

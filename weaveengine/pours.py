@@ -13,8 +13,9 @@ from weaveengine.plan.fanout import FILL
 @dataclass
 class Piece:
     shape: object                                   # a Polygon
-    kind: str                                       # "main", "cut" (holds pads of the net, none of them reached), "via" (cut off, but a via joins it on) or "island"
+    kind: str                                       # "main", "cut" (holds pads of the net, none of them reached), "via" (a pad through the board or a via joins it to the main piece) or "island"
     pads: list[str] = field(default_factory=list)   # names of the net's pads in it (vias not among them)
+    pad_ids: set = field(default_factory=set)       # and the ids of those and of its vias
 
 
 @dataclass
@@ -78,18 +79,36 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         has = [[p for p in own if g.intersects(p.shape)] for g in parts]
         main = max(range(len(parts)), key=lambda k: (sum(not p.is_via for p in has[k]), parts[k].area), default=None)
         for k, g in enumerate(parts):
-            if g.is_empty or g.geom_type != "Polygon":
-                continue
-            names = [p.name or str(p.pad_id) for p in has[k] if not p.is_via]
-            if k == main and names:
-                kind = "main"
-            elif any(p.is_via for p in has[k]):
-                kind = "via"
-            else:
-                kind = "cut" if names else "island"
-            pour.pieces.append(Piece(g, kind, names))
+            if g.geom_type == "Polygon" and not g.is_empty:
+                names = [p.name or str(p.pad_id) for p in has[k] if not p.is_via]
+                pour.pieces.append(Piece(g, "main" if k == main and names else "", names, {p.pad_id for p in has[k]}))
         pours.append(pour)
+    _join(pours)
     return pours
+
+
+def _join(pours: list[Pour]) -> None:
+    """Gives the pieces their kind. A pad through the board or a via is in a piece of each layer's pour of its net:
+    pieces that share one are joined, and the joined pieces that hold a main piece are connected (KiCad sees the
+    pad connect them); the rest hold pads that are cut off, or none."""
+    for net in {pour.net for pour in pours}:
+        pieces = [piece for pour in pours if pour.net == net for piece in pour.pieces]
+        group = list(range(len(pieces)))
+
+        def find(i: int) -> int:
+            while group[i] != i:
+                group[i] = group[group[i]]
+                i = group[i]
+            return i
+
+        first: dict[int, int] = {}
+        for i, piece in enumerate(pieces):
+            for pad in piece.pad_ids:
+                group[find(i)] = find(first.setdefault(pad, i))
+        joined = {find(i) for i, piece in enumerate(pieces) if piece.kind == "main"}
+        for i, piece in enumerate(pieces):
+            if piece.kind != "main":
+                piece.kind = "via" if find(i) in joined and piece.pad_ids else "cut" if piece.pads else "island"
 
 
 def of_result(result) -> list[Pour]:
