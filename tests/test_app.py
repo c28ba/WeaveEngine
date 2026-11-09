@@ -166,7 +166,7 @@ def test_the_estimated_fill_is_drawn_per_layer():
     view = BoardView()
     view.set_board(board)
     view.show_pours(pours.estimate(board, {0: ring}, {0: 1}, {0: 1}))
-    assert len(view.pour_items) == 2 and any("cut off: U1-2" in i.toolTip() for i in view.pour_items)
+    assert len(view.pour_items) == 3 and any("cut off: U1-2" in i.toolTip() for i in view.pour_items)
     view.set_layer_visible(1, False)
     assert not view.pour_items
 
