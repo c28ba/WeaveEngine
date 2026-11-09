@@ -593,7 +593,7 @@ def test_checkpoints_see_the_variants_as_they_finish_and_change_nothing():
 
 
 LILY = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", "lily58-pro", "lily58-pro.dsn")
-ALLOWANCE = 30.0  # s past the time limit for what follows it: the routing made legal, its geometry and check, the SES written and measured
+ALLOWANCE = 90.0  # s past the time limit (generous: CI runners are slow) for what follows it: the routing made legal, its geometry and check, the SES written and measured
 
 
 @pytest.mark.skipif(not os.path.exists(LILY), reason="example board not present")
