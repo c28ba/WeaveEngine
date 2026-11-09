@@ -20,9 +20,9 @@ its outline two ways).
 Left over from it:
 - [ ] **A time estimate that is not hours out** without a time limit, on a
   board whose rip-up goes on improving for hours (design 24, Open).
-- [ ] **The board sweep on GitHub** prepares each board afresh on its runner,
-  so it can see KiCad's other DSN of a board: keep `WE_SWEEP_DIR/prepared` in
-  the Actions cache. (Results also differ slightly between macOS and Linux,
+- [x] **The board sweep on GitHub** kept `WE_SWEEP_DIR/prepared` in the Actions
+  cache (one per board), so its runs route the same DSNs (Linux tier-1
+  baseline: `linux-t1-cache-a`/`-b` on sweep-results). (Results also differ slightly between macOS and Linux,
   from floating point: compare runs only on one platform.)
 - [ ] Whether a DSN's power layers should be left out of the routing by
   default, and plane layers made dearer, measured with the pour counts.

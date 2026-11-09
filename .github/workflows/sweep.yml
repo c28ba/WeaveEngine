@@ -126,6 +126,17 @@ jobs:
         with:
           path: ${{ env.WE_SWEEP_DIR }}/dl
           key: sweep-sources-${{ hashFiles('bench/sweep/sources.txt') }}
+      # The board's prepared DSN (KiCad's export differs from run to run), kept
+      # so that later sweeps route the same one. One cache per board, as a
+      # cache is written once per key and the boards run side by side; with no
+      # exact hit, the board's latest one is taken (run.py itself looks at the
+      # hash of the board's files, prep.py and KiCad's version).
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.WE_SWEEP_DIR }}/prepared
+          key: sweep-prepared-${{ matrix.board.id }}-${{ hashFiles('bench/sweep/boards.txt', 'bench/sweep/sources.txt') }}
+          restore-keys: |
+            sweep-prepared-${{ matrix.board.id }}-
       # The routing may take all but the last 15 minutes of the job, so that a
       # board too slow for its tier still gives its line, as a timeout.
       - name: Route and check the board
