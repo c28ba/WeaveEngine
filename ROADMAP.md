@@ -119,7 +119,10 @@ To do, in order:
   skeleton's way are moved only where every one of them goes back, so no
   connection is lost to them; a pad its skeleton cannot reach, or whose
   thermal spokes the estimate finds starved, gets a via down to the net's
-  plane (or a short trace into the fill), and is named. @@ROADMAP_NUMBERS@@
+  plane (or a short trace into the fill), and is named. Measured on the Mac against main:
+  tier 1 routes the same, KiCad open items 134 to 104, cut-off pads 80 to
+  51; tier 2 one more routed, open items 515 to 364, cut-off pads 357 to
+  125; time +24 % on tier 1 and +11 % on tier 2 (cm5-minima twice main's).
   Still to do:
   - room for the thermal spokes where a skeleton meets a pad: the estimate
     now sees starved spokes and fan-out joins such pads where there is room,

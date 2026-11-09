@@ -476,7 +476,16 @@ Also on tier 2: 4 annular-width errors on kicad-tinytapeout (vias), and one more
 - *Fan-out* treats a pad the zone does not join as one the pour does not reach, and a pad cut off by the estimate (traces or starved spokes) likewise, with the option on or off; such a pad may be joined by a short trace into the fill of its own layer's pour (the main piece), not only by a via to another layer. Copper drawn on a part is of no net to fan-out (KiCad sees it so: a stub ran into one). Two fan-out vias of a net keep the hole-to-hole distance.
 - Found on the way: a pad edge holding one net's run of wires (a skeleton through a pad of its net leaves it twice) was counted over-full; it is not, as one wire there is not.
 
-@@MEASURED@@
+*Measured* on the Mac against `main` (6e3f9d7), same DSNs, one run each. Cut-off pads are all counted by the new estimate on the boards as KiCad imported them (so the runs are counted alike; the old estimate, with the board's clearance and no spokes, counted fewer); KiCad's open items from its DRC after refill.
+
+| Sweep | Routed | KiCad unconnected | Routing DRC | Cut-off pads (estimate) | Routing time |
+|---|---|---|---|---|---|
+| Tier 1, 12 boards: main / old skeleton / now | 562 / 562 / 562 | 134 / 119 / 104 | 9 / 9 / 9 | 80 / 40 / 51 | 29 / 45 / 36 s |
+| Tier 2, 16 boards: main / now | 2357 / 2358 (openair 229 to 230; none fewer) | 515 / 364 | 276 / 275 | 357 / 125 | 738 / 818 s @@OLD_T2@@ |
+
+The times are of a run with the Mac to itself (the final run of the same counts shared it with another program: 1306 s, not comparable). kicad-cm5-minima, the slowest relative to main, took 106 s against 55; castor-mainboard 88 against 65; the solo boards less than before. Worse than main on one count each: hackrf-operacake leaves 8 more items open in KiCad (33 against 25; fan-out finds no room for a via beside 25 pads of its two inner planes, against 16: with the skeletons in, the traces lie differently, and with them off it is 17); sweep-half-swept one more island. Skeleton joins that still give way to traces (of those planned, on the boards where any does): tier 1 38 of 144, tier 2 258 of 1011 (openair 83 of 175, cm5-minima 57 of 179). Against the old, negotiated skeleton, fewer pads stay joined on a few boards (fomu 22 to 28, sweep-half-swept 6 to 10): traces placed first close ways that negotiation kept open, and moving them is tried only where at most 12 connections are in the way and each goes back with no more vias.
+
+Not done: the skeleton does not yet arrive at a pad along one of its spokes (starved thermals are seen by the estimate and joined by fan-out where there is room, not prevented); a trace moved for a skeleton may not take a via more; pads packed closer than their relief gap are estimated by spokes that end in each other's relief, which KiCad does, but not checked on every board.
 
 ## 11a. Where the copper goes, and undoing detours (`ripup.untangle`, branch `detour-repair`)
 
