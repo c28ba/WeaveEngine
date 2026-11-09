@@ -28,7 +28,7 @@ STEP = 0.1         # mm between the places tried along a ray
 SHARE = 1.0        # mm: a via of the net this near the pad is joined to instead of a new one
 GAP = 0.05         # mm between a pad and its via
 HOLES = 0.25       # mm a via keeps from a through-hole pad or fixed via of its own net (drill to drill: KiCad's default minimum)
-LANDING = 0.02    # mm inside the fill a via's middle must be: KiCad joins a via of the net to the fill wherever they meet
+LANDING = 0.02    # mm a via may stand nearer the edge of the fill than its radius (its pad is no bigger than its copper, and KiCad's fill gives it a little room)
 FILL = 0.25        # mm: a pour's fill is not narrower than this (KiCad's default zone minimum width)
 
 
@@ -95,8 +95,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
             if not reach:  # (a plane with no pad of its net on it, only vias to join: any of its fill will do)
                 reach = [piece.shape for piece in pour.pieces]
             fill = shapely.union_all(reach) if reach else Polygon()
-            # (a via of the net is joined wherever the fill meets it: its middle in the fill, a little in)
-            pours.setdefault(pour.net, []).append((pour.layer, fill, fill.buffer(-LANDING)))
+            pours.setdefault(pour.net, []).append((pour.layer, fill, fill.buffer(-(r - LANDING))))
 
     def clear(shape, net: int, layer: int, need: float, drilled: bool = False) -> bool:
         """Whether ``shape`` (copper of ``net``) keeps ``need`` from everything foreign on ``layer``,

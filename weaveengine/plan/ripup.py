@@ -250,8 +250,8 @@ def make_way(ctx: Context, hold=frozenset()) -> int:
     an open skeleton rips up only other skeletons, so a trace placed across a
     pour stays there. Here, for each open skeleton whose cheapest way, with
     crossings allowed and capacity ignored, is barred by at most ``MOST_MOVED``
-    connections, none through a via, those are taken out, the skeleton put in and they put back
-    where they now fit, with no via. Kept only if every
+    connections, those are taken out, the skeleton put in and they put back
+    where they now fit, with no more vias than they had. Kept only if every
     trace among them goes back in and no gate is over-full, else undone
     exactly: no trace is lost to a skeleton. Returns the skeletons placed."""
     placed = 0
@@ -279,17 +279,16 @@ def make_way(ctx: Context, hold=frozenset()) -> int:
                 if not state.fits(g, conn.weight):
                     move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
         move -= set(hold)
-        # (not a connection through vias: moved, its vias move too, and the room beside pads where the vias down to
-        # the planes go after routing is what they take; hackrf-operacake lost nine of those)
-        if not move or len(move) > MOST_MOVED or any(ctx.conns[x].pieces for x in move):
+        if not move or len(move) > MOST_MOVED:
             continue
         lifted = [(ctx.conns[x], ctx.lift(ctx.conns[x])) for x in sorted(move) if ctx.conns[x].routed]
+        vias = {c.wire_id: len(c.pieces) - 1 if c.pieces else 0 for c, _ in lifted}
         ctx.record()
         ok = place(ctx, conn, find(ctx, conn, hard_cap=True), hard_cap=True)
         for c in sorted((c for c, _ in lifted), key=lambda c: (c.skeleton, c.air_len, c.wire_id)):
             if not ok:
                 break
-            back = place(ctx, c, find(ctx, c, max_vias=0, hard_cap=True), hard_cap=True)
+            back = place(ctx, c, find(ctx, c, max_vias=vias[c.wire_id], hard_cap=True), hard_cap=True)
             ok = back or c.skeleton  # (a skeleton moved for another may stay out)
         if ok and not any(layer.state.overflowed_gates() for layer in ctx.layers):
             ctx.trail = None
