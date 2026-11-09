@@ -186,7 +186,7 @@ def test_pads_a_pour_does_not_reach_are_outlined_in_the_cut_off_colour():
     view = BoardView()
     view.set_board(board)
     view.show_pours(pours.estimate(board, {0: ring}, {0: 1}, {0: 1}))
-    marks = [i for i in view.pour_items if i.pen().isCosmetic() and i.pen().color().name() == CUT_OFF_COLOR and i.pen().width() == 3]
+    marks = [i for i in view.pour_items if i.pen().isCosmetic() and i.pen().color().name() == CUT_OFF_COLOR and i.pen().width() == 5]
     assert len(marks) == 1 and "U1-2" in marks[0].toolTip()   # (the cut-off pad only, not U1-1)
     view.set_layer_visible(1, False)
     assert not view.pour_items
