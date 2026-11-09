@@ -605,18 +605,9 @@ def apply(design, kicad: KicadBoard) -> str:
     if opened:
         said.append(f"{opened} openings in the solder mask")
     board.margin = list(kicad.margin)
-    # Drawings on the Margin layer are board edge to KiCad's check: copper on every layer is held to the edge clearance
-    # from them, as from the outline, but a gap is left round each pad (a drawing that runs through one would bury it).
+    # Drawings on the Margin layer are board edge to KiCad's check (``Board.hold_margin``, once the edge clearance is known).
+    board.margin_edge = list(kicad.stroked)
     if kicad.stroked:
-        edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
-        grown = shapely.union_all([m.buffer(max(edge - rules.clearance, 0.0) + 1e-3) for m in kicad.stroked])
-        gap = edge + rules.base_width
-        near = [p for p in board.pads if p.shape.intersects(grown.buffer(gap))]
-        for i in range(len(board.layers) + len(board.unrouted)):
-            holes = [p.shape.buffer(gap) for p in near if p.on(i)]
-            shape = grown.difference(shapely.union_all(holes)) if holes else grown
-            if not shape.is_empty:
-                board.obstacles.append(Obstacle(shape, layers=frozenset({i}), copper=True))
         said.append(f"{len(kicad.stroked)} drawings on the Margin layer as board edge")
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):

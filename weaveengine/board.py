@@ -158,6 +158,7 @@ class Board:
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
+    margin_edge: list = field(default_factory=list)    # the same, as shapes (``hold_margin``)
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
     components: list[Component] = field(default_factory=list)
 
@@ -167,6 +168,25 @@ class Board:
 
     def add_keepout(self, vertices: list[tuple[float, float]], layers: frozenset | None = None) -> None:
         self.obstacles.append(Obstacle(Polygon(vertices), layers=layers))
+
+    def hold_margin(self) -> None:
+        """Copper is held to the edge clearance from the drawings on the Margin layer, as from the outline: an
+        obstacle on every layer, grown by the edge clearance less the clearance. A gap is left round each pad, which
+        such a drawing may run through (boards draw there what is not an edge). Call once the rules are final."""
+        import shapely
+        rules = self.rules
+        edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
+        if not self.margin_edge:
+            return
+        grown = shapely.union_all([m.buffer(max(edge - rules.clearance, 0.0) + 1e-3) for m in self.margin_edge])
+        gap = edge + rules.base_width
+        near = [p for p in self.pads if p.shape.intersects(grown.buffer(gap))]
+        for i in range(len(self.layers) + len(self.unrouted)):
+            holes = [p.shape.buffer(gap) for p in near if p.on(i)]
+            shape = grown.difference(shapely.union_all(holes)) if holes else grown
+            if not shape.is_empty:
+                self.obstacles.append(Obstacle(shape, layers=frozenset({i}), copper=True))
+        self.margin_edge = []
 
     def pad(self, pad_id: int) -> Pad:
         return {p.pad_id: p for p in self.pads}[pad_id]

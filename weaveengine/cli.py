@@ -211,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
     rules.clearance = want_clearance + args.margin
     rules.edge_clearance = want_edge + args.margin
+    design.board.hold_margin()
     rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout)

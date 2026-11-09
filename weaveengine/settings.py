@@ -191,6 +191,7 @@ class Settings:
         want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
         rules.clearance = want_clearance + self.margin
         rules.edge_clearance = want_edge + self.margin
+        board.hold_margin()
         rules.margin = self.margin
         return want_clearance, want_edge, notes
 

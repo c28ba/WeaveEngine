@@ -696,7 +696,10 @@ def test_drawings_on_the_margin_layer_are_board_edge_except_round_pads(tmp_path)
     (tmp_path / "edge.dsn").write_text(dsn, encoding="utf-8")
     (tmp_path / "edge.kicad_pcb").write_text(pcb, encoding="utf-8")
     board = read_dsn(str(tmp_path / "edge.dsn")).board
+    board.rules.edge_clearance = 0.5   # (known once the project is read)
+    board.hold_margin()
     edge = [o for o in board.obstacles if o.copper and o.shape.intersects(Point(8, -5).buffer(0.01))]
+    assert all(o.shape.intersects(Point(8, -5.25)) for o in edge)   # grown by 0.5 less the clearance, 0.2
     assert len(edge) == 2 and {min(o.layers) for o in edge} == {0, 1}   # (one per layer)
     pad = {p.name: p for p in board.pads}["R1-2"]
     assert pad.shape.intersects(LineString([(2, -5), (18, -5)]))
