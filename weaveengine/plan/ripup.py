@@ -23,7 +23,7 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
     first_violations = max(1, ctx.violations())
 
     for _ in range(max_rounds + 1):
-        key = (ctx.violations(), ctx.estimated_length())
+        key = (ctx.violations(), ctx.skeletons_open(), ctx.estimated_length())
         if best_key is None or key < best_key:
             best_key, best_snap, stall = key, ctx.snapshot(), 0
         else:
@@ -77,7 +77,7 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
             if ctx.late():
                 break  # the round is left half done; if it is worse than the best, the best is put back
 
-    if best_snap is not None and (ctx.violations(), ctx.estimated_length()) > best_key:
+    if best_snap is not None and (ctx.violations(), ctx.skeletons_open(), ctx.estimated_length()) > best_key:
         ctx.restore(best_snap)
 
 

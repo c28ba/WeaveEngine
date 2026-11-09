@@ -41,6 +41,7 @@ class Connection:
     pieces: tuple[int, ...] = ()                     # wire ids of the pieces, in order
     sites: tuple[int, ...] = ()                      # pad ids of the vias between them
     parent: int | None = None
+    skeleton: bool = False  # part of a pour's skeleton (``plan.skeleton``): held inside the pour, on its layer, and not drawn
 
     @property
     def routed(self) -> bool:
@@ -201,12 +202,13 @@ class Options:
     teardrop_max_width: float = 2.0    # mm across
     teardrop_breathing: float = 1.5    # clearances a teardrop keeps from foreign copper, else it is left out
     portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
+    skeleton: bool = True           # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``)
 
 
 class Context:
     def __init__(self, board: Board, layers: list[Layer], pairs: list[tuple[int, int, int]],
                  params: CostParams | None = None, options: Options | None = None, seed: int = 0,
-                 workers: int | None = None, progress=None, events=None):
+                 workers: int | None = None, progress=None, events=None, skeletons: list[tuple[int, int, int, int]] = ()):
         self.workers = workers      # None = all cores; 1 = this process only
         self.progress = progress    # callable(phase: str, done: float, total: float) or None
         self.events = events        # callable(dict) or None: live events for a front end (see weaveengine.session)
@@ -230,6 +232,10 @@ class Context:
                 i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
                 weight=1.0 + 2.0 * rules.extra(net_id) / rules.pitch,
                 layers=tuple(l.index for l in layers if a in l.pmap.pad_edges and b in l.pmap.pad_edges))
+        # The pours' skeletons (``plan.skeleton``), (net, pad, pad, layer): connections like the others, on their layer only.
+        for i, (net_id, a, b, at) in enumerate(skeletons, len(self.conns) + 1):
+            self.conns[i] = Connection(i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
+                                       weight=1.0 + 2.0 * rules.extra(net_id) / rules.pitch, layers=(at,), skeleton=True)
         nets = [c.net_id for c in self.conns.values()]
         self.pairs = {net for net in nets if nets.count(net) == 1}   # nets of two pads: a trace of theirs has no copper of its net to share
         self.unrouted: set[int] = set(self.conns)
@@ -371,8 +377,8 @@ class Context:
         keep = sites.keep_off(self.board.rules)
         new = [not isinstance(j, int) for j in joints]     # per joint: a via to be made (else copper that is there)
         pads = [conn.src, *(self.next_pad + sum(new[:n]) if new[n] else j for n, j in enumerate(joints)), conn.dst]
-        pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id)
-                  for n in range(len(routes))]
+        pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id,
+                             skeleton=conn.skeleton) for n in range(len(routes))]
         def mark():
             return [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]
 
@@ -603,7 +609,7 @@ class Context:
         for c in list(self.conns.values()):
             c.pieces, c.sites, ends = snap["pieces"].get(c.wire_id, ((), (), []))
             for w, (src, dst) in zip(c.pieces, ends):
-                self.conns[w] = Connection(w, c.net_id, src, dst, weight=c.weight, parent=c.wire_id,
+                self.conns[w] = Connection(w, c.net_id, src, dst, weight=c.weight, parent=c.wire_id, skeleton=c.skeleton,
                                            air_len=math.dist(self.pad_centre(src), self.pad_centre(dst)))
         for c in self.conns.values():
             c.layer = next((l.index for l in self.layers if c.wire_id in l.state.wire_path), None)
@@ -649,6 +655,8 @@ class Context:
             mids, centre = layer.pmap.edge_mid_list, layer.pmap.pad_centre
             for w, path in layer.paths.items():
                 conn = self.conns[w]
+                if conn.skeleton:
+                    continue  # not copper of its own: the pour's
                 if lines is not None:
                     if w not in lines:
                         continue  # not drawn: it would be a second trace (``router._redundant``)
@@ -662,22 +670,32 @@ class Context:
         # steps): drop those that move the line by less than can be seen.
         wires = [(layer, net, pts) for (layer, net), pts in zip(wires, thin(shapes, DRAWN if lines is not None else ROUGH * self.board.rules.pitch))]
         centre = self.pad_centre
-        total = sum(1 for c in self.conns.values() if c.parent is None)
+        total = sum(1 for c in self.conns.values() if c.parent is None and not c.skeleton)
         self.events({
             "type": "snapshot", "pass": self.pass_index, "variant": self.variant, "final": lines is not None,
             "wires": wires,
-            "open": [(centre(self.conns[w].src), centre(self.conns[w].dst)) for w in self.unrouted],
+            "open": [(centre(self.conns[w].src), centre(self.conns[w].dst)) for w in self.open],
             "vias": [p.centre for p in self.board.pads if p.is_via]
                     + [s.centre for s in self.layers[0].pmap.sites.values() if s.active],
-            "routed": total - len(self.unrouted), "total": total,
+            "routed": total - len(self.open), "total": total,
             "overflow": sum(len(l.state.overflowed_gates()) for l in self.layers),
             "rounds": self.rounds, "length": self.estimated_length(),
             "per_layer": {l.name: len(l.paths) for l in self.layers},
         })
 
     # -- metrics ------------------------------------------------------------
+    @property
+    def open(self) -> set[int]:
+        """The connections still to be routed, less the pours' skeletons (which are not traces)."""
+        return {w for w in self.unrouted if not self.conns[w].skeleton}
+
     def violations(self) -> int:
-        return len(self.unrouted) + sum(l.state.overflow(e) for l in self.layers for e in l.state.overflowed_gates())
+        """Open connections (not counting skeletons) and over-full gates: what rip-up drives to zero first."""
+        return len(self.open) + sum(l.state.overflow(e) for l in self.layers for e in l.state.overflowed_gates())
+
+    def skeletons_open(self) -> int:
+        """The skeletons' connections not routed: next, after ``violations``."""
+        return len(self.unrouted) - len(self.open)
 
     @staticmethod
     def wire_copper(layer: Layer, w: int, first: bool = False) -> float:
