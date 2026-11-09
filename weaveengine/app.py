@@ -875,16 +875,18 @@ class MainWindow(QMainWindow):
                                            ("length", "Trace length"), ("layers", "Wires per layer"),
                                            ("changed", "Just placed / rerouted"),
                                            ("showing", "Showing"), ("race", "Variants (open)")]):
-            grid.addWidget(QLabel(text), row, 0)
+            name = QLabel(text)
+            name.setWordWrap(True)
+            grid.addWidget(name, row, 0)
             self.stats[key] = QLabel("–")
             self.stats[key].setWordWrap(True)
             grid.addWidget(self.stats[key], row, 1)
         col.addLayout(grid)
 
-        self.layer_box = QHBoxLayout()
+        self.layer_box = QVBoxLayout()   # (one under another, so a narrow panel needs no width)
         col.addLayout(self.layer_box)
 
-        show = QHBoxLayout()
+        show = QVBoxLayout()
         self.outline_box = QCheckBox("Outlines")
         self.outline_box.setToolTip("Draw the outline of every part")
         self.outline_box.setChecked(self.settings.show_outlines)
@@ -919,13 +921,20 @@ class MainWindow(QMainWindow):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(2000)
+        self.log.setMinimumWidth(0)
         col.addWidget(self.log, 1)
 
         dock = QDockWidget("Routing", self)
-        dock.setWidget(panel)
+        scroll = QScrollArea()   # (what does not fit scrolls, so it never forces the width)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(panel)
+        dock.setWidget(scroll)
         dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        dock.setMinimumWidth(340)
+        dock.setMinimumWidth(60)
+        self.dock = dock
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.resizeDocks([dock], [340], Qt.Horizontal)   # (starts as wide as before, but can be dragged narrower)
 
     def say(self, text: str) -> None:
         self.log.appendPlainText(text)

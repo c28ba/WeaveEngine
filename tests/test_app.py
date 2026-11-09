@@ -250,3 +250,23 @@ def test_settings_has_a_pours_tab_and_search_filters_rows():
     assert dialog.tabs.tabText(dialog.tabs.currentIndex()) == "Pours (1)"
     dialog.search.setText("")
     assert other.isRowVisible(ofirst) and "Pours" in [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+
+
+def test_the_side_panel_can_shrink_to_a_thin_strip(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import MainWindow
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(str(tmp_path / "settings.json"))
+    dock = window.dock
+    assert dock.minimumSizeHint().width() < 100 and dock.minimumWidth() < 100
+    window.resize(1000, 700)
+    window.show()
+    window.resizeDocks([dock], [70], Qt.Horizontal)
+    window.resize(900, 650)
+    app.processEvents()
+    assert window.width() == 900 and dock.width() < 100
+    window.resizeDocks([dock], [400], Qt.Horizontal)
+    app.processEvents()
+    assert dock.width() > 300
