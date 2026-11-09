@@ -128,6 +128,7 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
     connection through vias is then planned again, the others being in their
     final places. The connections in ``hold`` are left exactly as they are."""
     legalise(ctx)
+    give_way(ctx, hold)
     if ctx.late():  # past the time limit: only what makes the routing legal, and what fits as it stands
         fill(ctx, hold)
         return
@@ -147,6 +148,71 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
                 break
             refine(ctx, hold=hold)
             fill(ctx, hold)
+
+
+def give_way(ctx: Context, hold=frozenset()) -> int:
+    """The pours' skeletons give way to traces (``plan.skeleton``). In
+    negotiation a skeleton is a connection like any other, and can be what keeps
+    a trace open at the end. For each open trace whose cheapest way, with
+    crossings allowed and capacity ignored, is barred only by skeletons (by
+    crossing them or by filling a gate on it), the skeletons among them are taken
+    out and the trace put in; the skeletons then go back wherever they fit. Kept
+    if the trace is in and no gate is over-full, else undone exactly. What is
+    still open is then tried with every skeleton out, kept only if that places
+    a trace. Returns the traces placed."""
+    if not any(c.skeleton for c in ctx.conns.values()):
+        return 0
+    placed = 0
+    for w in sorted(ctx.open - set(hold), key=lambda w: (ctx.conns[w].air_len, w)):
+        conn = ctx.conns[w]
+        if conn.dead:
+            continue
+        short = find(ctx, conn, mode="relaxed", congestion=False)
+        if short is None:
+            continue
+        move = {ctx.conns[x].parent or x for x in short.blocking}
+        for r in short.routes:
+            state = ctx.layers[r.layer].state
+            for g in r.gates:
+                if not state.fits(g, conn.weight):
+                    move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
+        move = {x for x in move if ctx.conns[x].skeleton} - set(hold)  # (the traces in the way stay where they are)
+        if not move:
+            continue
+        lifted = [(ctx.conns[x], ctx.lift(ctx.conns[x])) for x in sorted(move) if ctx.conns[x].routed]
+        ctx.record()
+        if place(ctx, conn, find(ctx, conn, hard_cap=True), hard_cap=True) \
+                and not any(layer.state.overflowed_gates() for layer in ctx.layers):
+            ctx.trail = None
+            placed += 1
+            for x in sorted(move, key=lambda x: (ctx.conns[x].air_len, x)):  # back where they still fit
+                place(ctx, ctx.conns[x], find(ctx, ctx.conns[x], hard_cap=True), hard_cap=True)
+        else:
+            ctx.undo()
+            for c, saved in reversed(lifted):
+                ctx.put_back(c, saved)
+    left = sorted(ctx.open - set(hold))
+    if left and not ctx.late():
+        # Still open: every skeleton out, what is open put in where it fits, and the skeletons back where they still fit.
+        skeletons = [c for c in ctx.conns.values() if c.skeleton and c.parent is None and c.routed and c.wire_id not in hold]
+        lifted = [(c, ctx.lift(c)) for c in skeletons]
+        ctx.record()
+        ctx.rebuild_barrier()
+        for w in left:
+            place(ctx, ctx.conns[w], find(ctx, ctx.conns[w], hard_cap=True), hard_cap=True)
+        more = len(left) - len(ctx.open - set(hold))
+        if more > 0:
+            ctx.trail = None
+            placed += more
+            for c in sorted(skeletons, key=lambda c: (c.air_len, c.wire_id)):
+                place(ctx, c, find(ctx, c, hard_cap=True), hard_cap=True)
+        else:
+            ctx.undo()
+            for c, saved in reversed(lifted):
+                ctx.put_back(c, saved)
+    if placed or left:
+        ctx.rebuild_barrier()
+    return placed
 
 
 def alone(ctx: Context) -> dict[int, float]:
