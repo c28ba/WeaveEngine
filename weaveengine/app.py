@@ -551,6 +551,19 @@ class BoardView(QGraphicsView):
                                 + {"main": "the main piece", "via": "joined on by a via", "cut": "cut off: " + ", ".join(piece.pads),
                                    "island": "an island, no pad"}[piece.kind])
                 self.pour_items.append(item)
+                if piece.kind == "cut":
+                    # Each pad of the net the pour does not reach: outlined in the cut-off colour, thick, whatever the zoom.
+                    pen = QPen(QColor(CUT_OFF_COLOR), 3)
+                    pen.setCosmetic(True)
+                    for pad in self.board.pads:
+                        if pad.pad_id in piece.pad_ids and not pad.is_via:
+                            ring = QPainterPath()
+                            for poly in getattr(pad.shape, "geoms", [pad.shape]):
+                                ring.addPolygon(QPolygonF([QPointF(x, -y) for x, y in poly.exterior.coords]))
+                            mark = scene.addPath(ring, pen)
+                            mark.setZValue(55)
+                            mark.setToolTip(f"{pad.name or pad.pad_id}: not reached by the {self.board.net_names.get(pour.net, pour.net)} pour")
+                            self.pour_items.append(mark)
 
     def set_layer_visible(self, layer: int, on: bool) -> None:
         self.visible[layer] = on
@@ -972,7 +985,7 @@ class MainWindow(QMainWindow):
         swatch = lambda color, text: f"<span style='background:{color}; color:{color}'>&nbsp;&nbsp;&nbsp;</span> {text}"
         lines = ["<b>Pours</b> (estimated fill, as KiCad will pour it)",
                  swatch("#5a7a9a", "the pour, in its layer's colour"),
-                 swatch(CUT_OFF_COLOR, "cut off (cross-hatched): pads of the net it no longer joins")]
+                 swatch(CUT_OFF_COLOR, "cut off (cross-hatched): pads of the net it no longer joins, each outlined in the same colour")]
         show_islands = self.view.show_pour_islands
         if show_islands:
             lines.append(swatch("#ffd24d", "an island: copper joined to nothing (KiCad removes these)"))

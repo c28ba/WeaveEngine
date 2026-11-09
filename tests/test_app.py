@@ -171,6 +171,31 @@ def test_the_estimated_fill_is_drawn_per_layer():
     assert not view.pour_items
 
 
+def test_pads_a_pour_does_not_reach_are_outlined_in_the_cut_off_colour():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from shapely.geometry import box
+    from weaveengine import pours
+    from weaveengine.app import CUT_OFF_COLOR, BoardView
+    from weaveengine.board import Board, Pad, Rules
+    app = QApplication.instance() or QApplication([])
+    board = Board.rectangle(40.0, 30.0, Rules(), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.circle(0, 5, 5, 0.5, 0, "U1-1"), Pad.circle(1, 20, 15, 0.5, 0, "U1-2")]
+    board.pours.append((0, 1, box(1, 1, 39, 29)))
+    ring = [(20 + 3 * math.cos(a * math.pi / 16), 15 + 3 * math.sin(a * math.pi / 16)) for a in range(33)]
+    view = BoardView()
+    view.set_board(board)
+    view.show_pours(pours.estimate(board, {0: ring}, {0: 1}, {0: 1}))
+    marks = [i for i in view.pour_items if i.pen().isCosmetic() and i.pen().color().name() == CUT_OFF_COLOR and i.pen().width() == 3]
+    assert len(marks) == 1 and "U1-2" in marks[0].toolTip()   # (the cut-off pad only, not U1-1)
+    view.set_layer_visible(1, False)
+    assert not view.pour_items
+    view.set_layer_visible(1, True)
+    view.show_pour_fill = False
+    view.show_pours(view.pour_shown)
+    assert not view.pour_items
+
+
 def test_the_warnings_panel_lists_what_is_wrong_with_the_board(tmp_path):
     from PySide6.QtWidgets import QApplication
     from tests.test_io import KICAD_STYLE, MARGIN_PCB
