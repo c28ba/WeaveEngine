@@ -1,7 +1,6 @@
 """Shared routing context: layers, connections, demand map, airwire index, barrier (Phase 0)."""
 import copy
 import math
-import os
 import time
 from dataclasses import dataclass, field
 
@@ -245,7 +244,7 @@ class Context:
         self.next_pad = max((p.pad_id for p in board.pads), default=-1) + 1   # pad ids of via sites
         self._legal = None
         # The pours' skeletons are put in once the traces have been negotiated (``ripup.settle``), not before.
-        self.later = bool(skeletons) and os.environ.get("WE_SKEL_MODE", "late") == "late"
+        self.later = bool(skeletons)
         self.trail: list | None = None  # while recording (``record``): how to take out each commit, in order
         self._setup()
 
@@ -723,10 +722,12 @@ class Context:
         return total
 
     def copper(self) -> dict[int, float]:
-        """``wire_copper`` of every routed connection, its pieces together."""
+        """``wire_copper`` of every routed connection, its pieces together (not the skeletons': the pours')."""
         out: dict[int, float] = {}
         for layer in self.layers:
             for w in layer.state.wire_path:
+                if self.conns[w].skeleton:
+                    continue
                 whole = self.conns[w].parent or w
                 out[whole] = out.get(whole, 0.0) + self.wire_copper(layer, w)
         return out

@@ -509,6 +509,10 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
     # Realisation, with DRC feedback into Phase 3 (13.2).
     ctx.report("geometry")
     lines, violations, wire_net = _realize(ctx)
+    for _ in range(2):  # skeletons beside a violation give way first: often that is all it needs, without repair
+        if not violations or not _crowding(ctx, violations):
+            break
+        lines, violations, wire_net = _realize(ctx)
     ctx.emit_snapshot(force=True, lines=lines)
     disturbed = False  # whether anything has moved since the routing was settled
     for fix in range(drc_rounds):
@@ -606,6 +610,25 @@ def _teardrop_task(shared, task):
     board, wire_net, limits = shared
     on_layer, ends, index = task
     return make_teardrops(board, on_layer, wire_net, ends, index, *limits)
+
+
+def _crowding(ctx: Context, violations) -> bool:
+    """Takes out the pours' skeletons on a gate that a trace in a violation
+    passes (``plan.skeleton``): a skeleton is wider than a trace, and where the
+    room estimated for it is not there in the geometry, the traces beside it
+    are pushed into each other or into a pad. Returns whether any was."""
+    out = set()
+    for v in violations:
+        layer = ctx.layers[v.layer]
+        for w in v.wires:
+            if w in layer.paths:
+                for g in layer.paths[w].gates:
+                    out |= {ctx.conns[x].parent or x for x in layer.state.gate_order[g] if ctx.conns[x].skeleton}
+    for w in sorted(out):
+        ctx.rip(w)
+    if out:
+        ctx.rebuild_barrier()
+    return bool(out)
 
 
 def _penalise(ctx: Context, violations) -> bool:

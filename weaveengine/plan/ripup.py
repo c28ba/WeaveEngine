@@ -2,6 +2,8 @@
 import math
 import os
 
+import numpy as np
+
 from weaveengine.plan.candidates import route_batch
 from weaveengine.plan.context import Context
 from weaveengine.plan.path import find, place
@@ -258,7 +260,16 @@ def make_way(ctx: Context, hold=frozenset()) -> int:
         if ctx.late():
             break
         conn = ctx.conns[w]
-        short = find(ctx, conn, mode="relaxed", congestion=False)
+        # Its way with crossings allowed, through gates wide enough for it with nothing on them (a skeleton is wider
+        # than a trace: a gate a trace fits through can be too narrow for it, whatever is moved).
+        loads = [layer.state.load for layer in ctx.layers]
+        for layer in ctx.layers:
+            layer.state.load = np.zeros_like(layer.state.load)
+        try:
+            short = find(ctx, conn, mode="relaxed", hard_cap=True)
+        finally:
+            for layer, load in zip(ctx.layers, loads):
+                layer.state.load = load
         if short is None:
             continue
         move = {ctx.conns[x].parent or x for x in short.blocking}

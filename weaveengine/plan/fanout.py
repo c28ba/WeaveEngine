@@ -159,7 +159,8 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
                 return False
             if no_via is not None and disc.intersects(no_via):
                 return False
-            if any(math.dist((x, y), v.centre) < 2 * r + (0.0 if v.net_id == pad.net_id else keep) - 1e-9 for v in vias):
+            # (two vias of the net may touch, but their holes keep ``HOLES`` apart: KiCad's hole to hole)
+            if any(math.dist((x, y), v.centre) < max(2 * r + (0.0 if v.net_id == pad.net_id else keep), rules.via_drill + HOLES) - 1e-9 for v in vias):
                 return False
             return all(clear(disc, pad.net_id, i, keep, drilled=True) for i in range(every)) and stub_ok(x, y)
 

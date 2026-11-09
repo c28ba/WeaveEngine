@@ -96,16 +96,20 @@ class TopoState:
                             places[e] = places.get(e, 0) | (1 << (len(self.gate_order[e]) if end else 0))
         return places
 
+    def _one(self, edge_id: int) -> bool:
+        """Whether the wires on a pad edge are one trace leaving its own pad (one wire, or a run of one net),
+        which a pad edge always lets through, however wide."""
+        row = self.gate_order[edge_id]
+        return self.map.edge_kind_list[edge_id] == 2 and (len(row) <= 1 or len({self.net.get(w, -1 - w) for w in row}) == 1)
+
     def overflow(self, edge_id: int) -> int:
         """Whole base-width wires by which the gate is over capacity."""
-        if len(self.gate_order[edge_id]) <= 1 and self.map.edge_kind_list[edge_id] == 2:
-            return 0  # a pad edge always lets one trace leave its own pad, however wide
+        if self._one(edge_id):
+            return 0
         return max(0, math.ceil(self.load[edge_id] - self.cap[edge_id] - 1e-9))
 
     def overflowed_gates(self) -> list[int]:
-        order, kind = self.gate_order, self.map.edge_kind_list
-        return [e for e in np.nonzero(self.load > self.cap + 1e-9)[0].tolist()
-                if not (len(order[e]) <= 1 and kind[e] == 2)]
+        return [e for e in np.nonzero(self.load > self.cap + 1e-9)[0].tolist() if not self._one(e)]
 
     def fits(self, edge_id: int, weight: float) -> bool:
         """Whether one more wire of this weight fits on the edge."""
