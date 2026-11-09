@@ -158,29 +158,31 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: b
         out.append(f"      (net {q(names.get(net, f'N{net}'))}")
         for wire in sorted(by_net.get(net, [])):
             layer = board.layers[result.wire_layer.get(wire, 0)]
-            pts = result.polylines[wire]
-            runs = []  # the wire as paths and arcs, in order
-            here, at = [pts[0]], 0
-            for first, last, centre, radius in (find_arcs(pts) if arcs else []):
-                if radius * factor < MIN_ARC_UNITS:
-                    continue  # too small to hold in whole units: left as segments
-                here += pts[at + 1:first + 1]
-                runs.append(("path", here))
-                runs.append(("arc", arc_pieces(pts, first, last, centre, radius), centre))
-                here, at = [pts[last]], last
-            runs.append(("path", here + pts[at + 1:]))
-            for run in runs:
-                if run[0] == "arc":
-                    cx, cy = run[2]
-                    for a, b in run[1]:
-                        if (n(a[0]), n(a[1])) != (n(b[0]), n(b[1])):
-                            out.append(f"        (wire (qarc {layer} {width} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])} {n(cx)} {n(cy)}))")
-                    continue
-                # Points that coincide after rounding would make zero-length segments.
-                pp = [f"{n(x)} {n(y)}" for x, y in run[1]]
-                pp = [p for i, p in enumerate(pp) if i == 0 or p != pp[i - 1]]
-                if len(pp) >= 2:
-                    out.append(f"        (wire (path {layer} {width} {' '.join(pp)}))")
+            # (a tapered trace is several pieces, each of its own width)
+            for pts, drawn in result.widths.get(wire) or [(result.polylines[wire], board.rules.drawn(net))]:
+                width = n(drawn)
+                runs = []  # the wire as paths and arcs, in order
+                here, at = [pts[0]], 0
+                for first, last, centre, radius in (find_arcs(pts) if arcs else []):
+                    if radius * factor < MIN_ARC_UNITS:
+                        continue  # too small to hold in whole units: left as segments
+                    here += pts[at + 1:first + 1]
+                    runs.append(("path", here))
+                    runs.append(("arc", arc_pieces(pts, first, last, centre, radius), centre))
+                    here, at = [pts[last]], last
+                runs.append(("path", here + pts[at + 1:]))
+                for run in runs:
+                    if run[0] == "arc":
+                        cx, cy = run[2]
+                        for a, b in run[1]:
+                            if (n(a[0]), n(a[1])) != (n(b[0]), n(b[1])):
+                                out.append(f"        (wire (qarc {layer} {width} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])} {n(cx)} {n(cy)}))")
+                        continue
+                    # Points that coincide after rounding would make zero-length segments.
+                    pp = [f"{n(x)} {n(y)}" for x, y in run[1]]
+                    pp = [p for i, p in enumerate(pp) if i == 0 or p != pp[i - 1]]
+                    if len(pp) >= 2:
+                        out.append(f"        (wire (path {layer} {width} {' '.join(pp)}))")
             if teardrops:
                 for poly in result.teardrops.get(wire, []):
                     for w, a, b in teardrop_tracks(poly, board.rules.drawn(net)):

@@ -508,7 +508,7 @@ def test_pic_programmer_board(tmp_path):
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
     wires = [w[1] for n in nets for w in n[2:] if w[0] == "wire"]
-    assert len(wires) == len(result.polylines)
+    assert len(wires) == len(result.polylines) + sum(len(p) - 1 for p in result.widths.values())  # (a tapered trace is several wires)
     assert {w[1] for w in wires} == {"top_layer", "bottom_layer"}
     vcc = next(n for n in nets if n[1] == "VCC")
     assert {w[1][2] for w in vcc[2:] if w[0] == "wire"} == {"8000"}  # 0.8 mm at 0.1 um
@@ -620,7 +620,7 @@ def test_a_time_limit_ends_the_run_in_time_and_writes_the_best_routing(tmp_path,
     result = results[0]
     assert result.stats["routed"] > 0
     wires, vias = read_session(out)
-    assert len(wires) == len(result.polylines) and len(vias) == len(result.vias)
+    assert len(wires) == len(result.polylines) + sum(len(p) - 1 for p in result.widths.values()) and len(vias) == len(result.vias)
 
 
 def test_racing_variants_never_does_worse_than_the_plain_run():
@@ -1296,3 +1296,75 @@ def test_a_via_down_to_a_plane_keeps_out_of_an_area_that_forbids_vias():
     assert result.unrouted == [] and result.stats["fanout"] == 2 and result.stats["plane_left"] == []
     assert not any(v.shape.intersects(area) for v in result.vias)
     assert board.pads[0].shape.distance(Point(beside(result).centre)) < board.rules.via_diameter / 2 + 0.5   # still beside it
+
+
+def _pieces(result):
+    """(net, width, line) of every drawn piece of every trace."""
+    return [(result.wire_net[w], width, LineString(pts)) for w in result.polylines
+            for pts, width in (result.widths.get(w) or [(result.polylines[w], result.board.rules.drawn(result.wire_net[w]))])]
+
+
+def test_a_narrowed_trace_is_tapered_to_the_fine_pitch_pin():
+    board = pins_board(0.2)
+    result = route_board(board)
+    assert result.unrouted == []
+    assert result.widths  # drawn wide away from the pins
+    pins = {p.pad_id: p for p in result.board.pads}
+    for w, pieces in result.widths.items():
+        net = result.wire_net[w]
+        narrow, wide = result.stats["narrowed"][net], board.rules.width(net)
+        assert [round(width, 6) for _, width in pieces if width != narrow] == [wide]
+        assert pieces[0][1] == pytest.approx(narrow) or pieces[-1][1] == pytest.approx(narrow)
+        for (a, _), (b, _) in zip(pieces, pieces[1:]):
+            assert a[-1] == b[0]  # in one piece after another
+        # the narrow stretch is at the pin, and holds the clearance there as a narrow trace does
+        assert min(Point(p.centre).distance(LineString(pts)) for p in pins.values() if p.net_id == net
+                   for pts, width in pieces if width == narrow) < 1e-6
+    # the wide pieces keep the clearance from the pieces of other nets and the pads of other nets
+    # (the narrow ones are as clear as without a taper: the margin given up)
+    pieces = _pieces(result)
+    for net, width, shape in pieces:
+        if width < board.rules.width(net):
+            continue
+        for net2, width2, shape2 in pieces:
+            if net != net2:
+                assert shape.distance(shape2) >= board.rules.clearance + (width + width2) / 2 - 2e-3
+        for p in result.board.pads:
+            if p.net_id != net:
+                assert shape.distance(p.shape) >= board.rules.clearance + width / 2 - 2e-3
+
+
+def test_no_taper_when_switched_off_or_when_the_wide_trace_would_not_fit():
+    assert route_board(pins_board(0.2), options=Options(taper=False)).widths == {}
+    # the same pins in a board with the other pins' traces close by: a wide trace would not clear them
+    board = pins_board(0.2)
+    board.rules.clearance = 0.19 + 0.01
+    result = route_board(board)
+    for w, pieces in result.widths.items():  # whatever was tapered, nothing narrower than the net's drawn width
+        assert all(width >= result.stats["narrowed"][result.wire_net[w]] - 1e-9 for _, width in pieces)
+
+
+def test_a_tapered_trace_is_written_as_pieces_of_their_widths(tmp_path):
+    from weaveengine.io.dsn import Design
+    from weaveengine.io.ses import write_ses
+    board = pins_board(0.2)
+    result = route_board(board)
+    design = Design("demo", board, net_ids={f"N{n}": n for n in board.nets()})
+    out = str(tmp_path / "t.ses")
+    write_ses(design, result, out, teardrops=False, arcs=False)
+    widths = {int(line.split()[3]) for line in open(out).read().splitlines() if line.strip().startswith("(wire (path")}
+    assert widths == {2000, 2500}  # (resolution 10000 per mm by default)
+
+
+def test_taper_is_left_out_where_the_wide_stretch_would_crowd_other_copper():
+    from weaveengine.realize.taper import taper
+    board = pins_board(0.2)
+    full = board.rules
+    board.rules = Rules(0.25, 0.2, margin=0.01, min_width=0.2)
+    board.rules.net_width = {1: 0.2}
+    lines, nets, layers, ends = {0: [(10.0, 5.0), (17.0, 5.0)]}, {0: 1}, {0: 0}, {0: (2, 3)}
+    got = taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2})
+    (narrow, _), (wide, width), = [(p, w) for p, w in got[0]]
+    assert width == pytest.approx(0.25) and narrow[0] == (10.0, 5.0) and narrow[-1] == wide[0] and wide[-1] == (17.0, 5.0)
+    board.pads.append(Pad.circle(9, 15, 5.4, 0.2, 7))   # its edge is 0.2 from the trace: too near for a wide one
+    assert taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2}) == {}

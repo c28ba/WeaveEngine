@@ -59,7 +59,7 @@ To do, in order:
 2. [ ] Pours that stay whole by default: skeletons that cost traces less,
    room for thermal spokes, each zone's clearance and priority (below).
 3. [ ] Room used where there is room.
-4. [ ] Traces tapered to fine-pitch pins.
+4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
 5. [ ] The Margin layer as board edge: a directional rule (below).
 6. [ ] No acute angles where copper of one net meets.
 7. [ ] The 45-degree option (a second way of drawing, off by default).
@@ -101,6 +101,14 @@ To do, in order:
   it enters, narrow it over its last stretch to the pin's width instead of
   routing the whole net narrower (`router.reach`) or running a wide trace
   into a narrow pad.
+  Done as post-processing: `router.reach` still plans a net narrower where its
+  pins need it; then each such trace is redrawn at the net's width except a
+  narrow stretch (the pad's reach plus 1, 2, 4 or 8 trace widths) at the
+  fine-pitch pin, where the wide part clears pads, keepouts, the edge and the
+  other traces as drawn; else it stays narrow all along. It is several wires
+  in the SES (`Result.widths`). Left: the planner does not reserve room for the
+  wide part (it fails the check where traces were planned too close), and the
+  app draws such traces at the narrow width.
 
 ### Routing control
 
