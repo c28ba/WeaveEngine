@@ -169,3 +169,20 @@ def test_the_estimated_fill_is_drawn_per_layer():
     assert len(view.pour_items) == 2 and any("cut off: U1-2" in i.toolTip() for i in view.pour_items)
     view.set_layer_visible(1, False)
     assert not view.pour_items
+
+
+def test_the_warnings_panel_lists_what_is_wrong_with_the_board(tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from tests.test_io import KICAD_STYLE, MARGIN_PCB
+    from weaveengine.app import MainWindow
+    app = QApplication.instance() or QApplication([])
+    (tmp_path / "m.dsn").write_text(KICAD_STYLE.replace("(pcb demo.dsn", "(pcb m.dsn"), encoding="utf-8")
+    (tmp_path / "m.kicad_pcb").write_text(MARGIN_PCB, encoding="utf-8")
+    window = MainWindow(str(tmp_path / "settings.json"))
+    window.interactive = False
+    assert window.open(str(tmp_path / "m.dsn"))
+    assert window.warnings_label.isHidden() is False
+    text = window.warnings_label.text()
+    assert "Warnings (" in text and "2 drawings on the Margin layer" in text
+    window.show_warnings([])
+    assert window.warnings_label.isHidden() and window.warnings_label.text() == "No warnings"

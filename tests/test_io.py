@@ -896,3 +896,20 @@ def test_a_pad_a_locked_trace_leaves_is_not_buried():
     board.obstacles.append(Obstacle(box(5, 4.8, 12, 5.2), 0, frozenset({0})))   # a locked trace of the net, out of the pad
     pairs, buried = decompose(board, layers)
     assert buried == [] and pairs == []
+
+
+MARGIN_PCB = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (gr_line (start 0 0) (end 10 0) (layer "Margin") (width 0.1))
+  (gr_line (start 0 5) (end 10 5) (layer "Margin") (width 0.1))
+)
+"""
+
+
+def test_drawings_on_the_margin_layer_are_a_warning(tmp_path, capsys):
+    (tmp_path / "m.dsn").write_text(KICAD_STYLE.replace("(pcb demo.dsn", "(pcb m.dsn"), encoding="utf-8")
+    (tmp_path / "m.kicad_pcb").write_text(MARGIN_PCB, encoding="utf-8")
+    design = read_dsn(str(tmp_path / "m.dsn"))
+    assert len(design.warnings) == 1 and design.warnings[0].startswith("2 drawings on the Margin layer")
+    main([str(tmp_path / "m.dsn"), "-o", str(tmp_path / "m.ses"), "--max-rounds", "1"])
+    assert "WARNING: 2 drawings on the Margin layer" in capsys.readouterr().out

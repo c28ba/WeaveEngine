@@ -4,6 +4,7 @@ Import a DSN, watch it being routed, export the SES. The window never routes
 itself: a ``session.Job`` does that in another process and this module draws
 what it reports.
 """
+import html
 import io
 import math
 import os
@@ -795,6 +796,12 @@ class MainWindow(QMainWindow):
         self.board_label.setWordWrap(True)
         col.addWidget(self.board_label)
 
+        self.warnings_label = QLabel()
+        self.warnings_label.setWordWrap(True)
+        self.warnings_label.setStyleSheet("background: #4a3b12; color: #f3e3b0; padding: 6px; border-radius: 4px;")
+        self.warnings_label.hide()
+        col.addWidget(self.warnings_label)
+
         self.pass_label = QLabel("")
         self.phase_label = QLabel("")
         self.progress = QProgressBar()
@@ -933,6 +940,17 @@ class MainWindow(QMainWindow):
         self.banner.show()
         self._accel_shown = True
 
+    def show_warnings(self, warnings: list[str]) -> None:
+        """The Warnings section: a count and one line for each warning about the open board; hidden when there are none."""
+        self.warnings = list(warnings)
+        if not warnings:
+            self.warnings_label.setText("No warnings")
+            self.warnings_label.hide()
+            return
+        items = "".join(f"<li>{html.escape(text)}</li>" for text in warnings)
+        self.warnings_label.setText(f"<b>Warnings ({len(warnings)})</b><ul style='margin: 2px 0 0 -18px'>{items}</ul>")
+        self.warnings_label.show()
+
     # -- board ------------------------------------------------------------------
     def open_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open a Specctra DSN", os.path.dirname(self.dsn_path or ""), "Specctra DSN (*.dsn);;All files (*)")
@@ -957,8 +975,11 @@ class MainWindow(QMainWindow):
         self.board_label.setText(f"<b>{os.path.basename(path)}</b><br>{len(board.layers)} layers, {len(board.pads)} pads, "
                                  f"{len(nets)} nets, {connections} connections")
         self.say(f"Opened {path}")
-        for text in undetected(detected_rules(design, path), self.settings):
-            self.say(f"  ⚠ {text}. Set it in Settings, Rules")
+        warnings = [f"{text}. Set it in Settings, Rules" for text in undetected(detected_rules(design, path), self.settings)]
+        warnings += design.warnings
+        for text in warnings:
+            self.say(f"  ⚠ {text}")
+        self.show_warnings(warnings)
         if board.plane_nets:
             self.say(f"  {len(board.plane_nets)} nets have a copper plane and will not be routed: "
                      + ", ".join(sorted(design.net_names[n] for n in board.plane_nets)))

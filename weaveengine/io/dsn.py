@@ -63,6 +63,7 @@ class Design:
     defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
     dropped_wiring: str = ""                                 # what was done with routing already in the file
     kicad: str = ""                                          # what was taken from the KiCad board and project beside the DSN
+    warnings: list[str] = field(default_factory=list)        # things about the board to tell the person (shown as WARNING)
     walled: list[str] = field(default_factory=list)          # layers a keepout covers whole, not routed (a single-sided board)
 
     @property
@@ -399,6 +400,11 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         taken = apply_kicad(design, kicad)
         if ignored:
             taken += (", " if taken else "") + f"{ignored} keepouts that do not forbid traces (pour keepouts, placement areas) left out"
+        if design.board.margin:
+            design.warnings.append(
+                f"{len(design.board.margin)} drawings on the Margin layer: KiCad holds copper to the edge clearance from them, "
+                "but WeaveEngine does not, so DRC may report copper_edge_clearance there. If they are only notes, move them to a "
+                "User layer; if they mark a no-go area, draw a keepout zone over it in KiCad, which WeaveEngine routes around.")
         if taken:
             design.kicad = f"from {os.path.basename(os.path.splitext(path)[0])}.kicad_pcb/.kicad_pro: {taken}"
 
