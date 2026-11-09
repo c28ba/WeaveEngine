@@ -57,7 +57,7 @@ sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
 7. Room used where there is room.
 8. Teardrop notches.
 9. Traces tapered to fine-pitch pins.
-10. KiCad custom rules (`.kicad_dru`).
+10. KiCad custom rules (`.kicad_dru`): the pad and net subset is done (`io/kicad_rules.py`).
 11. No acute angles where copper of one net meets.
 12. The 45-degree option (a second way of drawing, off by default).
 13. A via size per net class.
