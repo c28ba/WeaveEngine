@@ -297,3 +297,26 @@ def test_tapered_traces_are_drawn_at_the_width_of_each_piece():
     view._level_of_detail()
     assert all(item.pen().widthF() > 0 for item, _, _ in view.trace_items)
     app.processEvents()
+
+
+def test_settings_search_keywords_words_and_typos():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import SettingsDialog
+    from weaveengine.settings import Settings
+    app = QApplication.instance() or QApplication([])
+    dialog = SettingsDialog(Settings(), "settings.json")
+
+    def shown(text):
+        dialog.search.setText(text)
+        return {name for name, (form, first, _) in dialog.rows.items() if form.isRowVisible(first)}
+
+    assert "taper_to_pins" in shown("neckdown")
+    assert "teardrops" in shown("tear")
+    assert "teardrops" in shown("teardorp")
+    assert "teardrops" in shown("TEARDROP")
+    both = shown("via size")
+    assert {"via_diameter", "via_drill"} <= both and "clearance" not in both and both < shown("via")
+    assert shown("size via") == both
+    assert shown("") == set(dialog.rows) and shown("   ") == set(dialog.rows)
+    assert shown("zzzzqq") == set()

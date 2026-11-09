@@ -5,7 +5,7 @@ from bench.generators import random_grid
 from tests.conftest import demo_board
 from weaveengine.io.dsn import write_dsn
 from weaveengine.session import Job
-from weaveengine.settings import DESCRIPTIONS, Settings, default_path
+from weaveengine.settings import DESCRIPTIONS, KEYWORDS, Settings, default_path
 
 
 def test_settings_round_trip_and_bad_files(tmp_path):
@@ -26,6 +26,8 @@ def test_settings_round_trip_and_bad_files(tmp_path):
     assert default_path().endswith("settings.json")
     # every setting has a label and a description for the editor
     assert set(DESCRIPTIONS) == set(vars(Settings()))
+    # and keywords for the search
+    assert set(KEYWORDS) == set(DESCRIPTIONS) and all(KEYWORDS.values())
     # numbers with an "automatic" state are stored as 0 and offered as a switch, never as a magic number
     from weaveengine.settings import AUTOMATIC
     assert set(AUTOMATIC) <= set(DESCRIPTIONS)

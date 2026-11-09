@@ -31,7 +31,7 @@ from weaveengine.realize.taper import with_wedges
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
-from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, RULES, Settings, default_path, detected_rules, skip_nets, undetected
+from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, RULES, Settings, matches_search, default_path, detected_rules, skip_nets, undetected
 from weaveengine.viz.svg import export_result
 
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227", "#b06cff", "#22cfcf"]
@@ -667,12 +667,12 @@ class SettingsDialog(QDialog):
         self.resize(min(520, screen.width() - 40), min(640, screen.height() - 80))
 
     def _filter(self, text: str) -> None:
-        """Show only the settings whose label or description contains ``text``; each tab's title gets its match count."""
+        """Show only the settings that fit every word of ``text``; each tab's title gets its match count."""
         text = text.strip().lower()
         counts: dict[str, int] = {}
         for name, (form, first, end) in self.rows.items():
-            label, description, group = DESCRIPTIONS[name]
-            hit = not text or text in label.lower() or text in description.lower()
+            group = DESCRIPTIONS[name][2]
+            hit = not text or matches_search(text, name)
             counts[group] = counts.get(group, 0) + hit
             for row in range(first, end):
                 form.setRowVisible(row, hit)

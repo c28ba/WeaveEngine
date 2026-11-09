@@ -6,6 +6,7 @@ are ignored and missing ones take their defaults.
 """
 import json
 import os
+import re
 import sys
 from fnmatch import fnmatchcase
 from dataclasses import asdict, dataclass, fields
@@ -68,6 +69,84 @@ DESCRIPTIONS = {
     "teardrop_max_width": ("Widest teardrop (mm)", "Across, at the pad", "Teardrops"),
     "teardrop_breathing": ("Teardrop breathing room", "Clearances kept from foreign copper; cramped teardrops are left out", "Teardrops"),
 }
+
+# name -> words and synonyms a designer might type (the search also reads the label, description and name)
+KEYWORDS: dict[str, tuple[str, ...]] = {
+    "workers": ("cpu", "cores", "threads", "parallel", "processes", "multiprocessing", "performance"),
+    "portfolio": ("race", "variants", "parallel", "strategies", "attempts", "best of", "speed"),
+    "seed": ("random", "repeatable", "deterministic", "reproducible", "rng"),
+    "time_limit": ("timeout", "deadline", "duration", "stop", "minutes", "maximum time", "cutoff"),
+    "drc_rounds": ("drc", "repair", "fix", "violations", "errors", "check", "retry", "design rule check"),
+    "use_vias": ("via", "layer change", "through hole", "layers", "plated"),
+    "global_selection": ("phase 1", "global", "candidates", "route choice", "planning"),
+    "regret_order": ("phase 2", "ordering", "priority", "constrained", "sequence", "commit"),
+    "lookahead": ("cost", "airwire", "ratsnest", "crossing", "barrier", "predict"),
+    "demand": ("congestion", "channel", "reserve", "capacity", "scarce", "map"),
+    "ripup": ("rip up", "ripup", "reroute", "negotiate", "congestion", "phase 3", "rip-up"),
+    "refine": ("phase 4", "shorten", "optimise", "optimize", "cleanup", "polish", "tidy", "length"),
+    "candidates": ("k", "alternatives", "options", "routes", "phase 1", "paths"),
+    "reroute_candidates": ("alternatives", "options", "ripup", "rip up", "retry", "paths"),
+    "max_ripup_rounds": ("iterations", "limit", "maximum", "rip up", "phase 3", "loops", "passes"),
+    "heuristic_weight": ("astar", "a star", "search", "speed", "quality", "greedy", "exact", "weighted"),
+    "trace_width": ("track", "track width", "wire", "net class", "netclass", "thickness", "line width", "default"),
+    "clearance": ("spacing", "gap", "isolation", "distance", "copper", "net class", "design rule"),
+    "via_diameter": ("via size", "via pad", "annular ring", "size", "outer", "pad size"),
+    "via_drill": ("via size", "hole", "drill size", "hole size", "bore", "plated"),
+    "edge_clearance": ("board edge", "outline", "border", "keepout", "edge cut", "edge cuts", "margin", "boundary"),
+    "margin": ("slack", "tolerance", "safety", "buffer", "extra", "clearance", "headroom"),
+    "ignore_keepouts": ("keep out", "keepout", "restricted", "forbidden", "zone", "no route", "dsn", "area"),
+    "show_outlines": ("courtyard", "footprint", "body", "silkscreen", "display", "draw", "parts", "components"),
+    "show_names": ("reference", "designator", "refdes", "labels", "text", "display", "parts", "components"),
+    "gpu_drawing": ("opengl", "graphics", "acceleration", "hardware", "render", "performance", "fast", "video card"),
+    "skip_nets": ("ignore", "exclude", "gnd", "ground", "power", "pattern", "wildcard", "glob", "net names", "unrouted"),
+    "untangle": ("detour", "wiggle", "shorten", "straighten", "loop", "long way", "tidy", "clean", "length"),
+    "narrow_to_reach": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "bga", "qfn", "minimum track"),
+    "fanout_to_planes": ("fan out", "fanout", "plane", "ground", "gnd", "power", "pour", "zone", "via", "stitch", "decoupling"),
+    "pour_skeletons": ("zone", "plane", "copper fill", "fill", "connectivity", "split", "cut", "thermal", "spoke", "whole"),
+    "pour_min_width": ("zone", "fill", "minimum thickness", "min width", "sliver", "copper fill", "thin", "narrowest"),
+    "show_pours": ("zone", "plane", "copper fill", "fill", "display", "draw", "ground plane", "polygon"),
+    "show_pour_islands": ("zone", "orphan", "dead copper", "isolated", "unconnected", "fill", "display", "remnant"),
+    "slide_vias": ("move", "straighten", "bend", "shift", "adjust", "via", "optimise", "optimize", "kink"),
+    "taper_to_pins": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "wedge"),
+    "smooth_corners": ("round", "arc", "curve", "bend", "angle", "45", "90", "chamfer", "radius", "fillet", "acute"),
+    "teardrops": ("teardrop", "fillet", "pad entry", "tear drop", "reinforce", "annular ring", "junction", "via"),
+    "teardrops_in_ses": ("teardrop", "session", "export", "output", "freerouting", "save", "import", "fan"),
+    "arcs_in_ses": ("curve", "arc", "qarc", "session", "export", "output", "freerouting", "segments", "round"),
+    "teardrop_max_length": ("teardrop", "fillet", "size", "longest", "extent", "limit", "pad entry"),
+    "teardrop_max_width": ("teardrop", "fillet", "size", "widest", "limit", "pad entry"),
+    "teardrop_breathing": ("teardrop", "fillet", "clearance", "spacing", "room", "space", "cramped", "foreign copper", "pad entry"),
+}
+
+
+def edit_distance_at_most_one(a: str, b: str) -> bool:
+    """True when ``a`` becomes ``b`` by one insert, delete, substitution or swap of neighbours."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    if len(a) == len(b):
+        return a[i + 1:] == b[i + 1:] or (a[i:i + 2] == b[i:i + 2][::-1] and a[i + 2:] == b[i + 2:])
+    short, long = sorted((a, b), key=len)
+    return short[i:] == long[i + 1:]
+
+
+def word_matches(query_word: str, word: str) -> bool:
+    """A word starts with the query word; for 4+ letters one typo is allowed (in the start of the word too)."""
+    if word.startswith(query_word):
+        return True
+    n = len(query_word)
+    return n >= 4 and any(edit_distance_at_most_one(query_word, word[:k]) for k in (n - 1, n, n + 1))
+
+
+def matches_search(query: str, name: str) -> bool:
+    """Whether setting ``name`` fits every word of ``query``, in any order, by label, description, keywords or field name."""
+    label, description, _ = DESCRIPTIONS[name]
+    text = " ".join((label, description, *KEYWORDS[name], name.replace("_", " "))).lower()
+    words = re.findall(r"[^\W_]+", text)
+    return all(any(word_matches(q, w) for w in words) for q in query.lower().split())
 
 
 # Settings stored as a number where 0 means "decide for me": name -> (what the
