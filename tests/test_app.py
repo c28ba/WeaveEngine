@@ -266,6 +266,10 @@ def test_tapered_traces_are_drawn_at_the_width_of_each_piece():
     pieces = [([(5.0, 15.0), (7.0, 15.0)], 0.2), ([(7.0, 15.0), (35.0, 15.0)], 0.25)]
     view.show_routing([(0, 1, [(5.0, 15.0), (7.0, 15.0), (35.0, 15.0)], pieces), (0, 1, [(5.0, 20.0), (35.0, 20.0)])])
     assert [round(w, 3) for _, w, _ in view.trace_items] == [0.2, 0.25, 0.2]   # the plain wire: the net's narrowed width
+    seen = []
+    view.selected.connect(seen.append)
+    picked = view.pick(20.0, 15.0)   # a tapered trace (its wire has four items) can be picked
+    assert picked["kind"] == "trace" and picked["net"] == "1" and picked["outline"] == [[(5.0, 15.0), (7.0, 15.0), (35.0, 15.0)]]
     view.show_routing(*view.last[:5], rough=True)
     assert all(w == 0 for _, w, _ in view.trace_items)
     view.show_routing(*view.last[:5])   # the final picture again: real widths, and pens to match at a zoom that shows them

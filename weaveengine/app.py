@@ -388,7 +388,7 @@ class BoardView(QGraphicsView):
                         "outline": [list(pad.shape.exterior.coords)], "pad": pad}
         wires = self.last[0] if self.last else []
         best = None
-        for index, (layer, net, pts) in enumerate(wires):
+        for index, (layer, net, pts) in enumerate(w[:3] for w in wires):  # (a wire may carry its pieces as a fourth item)
             if not self.visible.get(layer, True):
                 continue
             limit = max(reach, board.rules.width(net) / 2.0)
@@ -402,7 +402,7 @@ class BoardView(QGraphicsView):
                 if d <= limit and (best is None or d < best[0] or (d == best[0] and layer < wires[best[1]][0])):
                     best = (d, index)
         if best is not None:
-            layer, net, pts = wires[best[1]]
+            layer, net, pts = wires[best[1]][:3]
             length = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
             same = [w for w in wires if w[1] == net]
             info = {"kind": "trace", "net": names.get(net, str(net)), "layer": board.layers[layer],
@@ -477,7 +477,7 @@ class BoardView(QGraphicsView):
             self.trace_items.append((item, 0.0 if rough else width, color))
         if changed:
             glow = QPainterPath()
-            for layer, _, pts in changed:
+            for layer, _, pts in (c[:3] for c in changed):
                 if self.visible.get(layer, True) and len(pts) >= 2:
                     glow.moveTo(pts[0][0], -pts[0][1])
                     for x, y in pts[1:]:
