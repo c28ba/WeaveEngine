@@ -104,7 +104,7 @@ def test_hidden_things_cannot_be_selected():
     app.processEvents()
 
 
-def test_no_via_areas_are_drawn_hatched_blue():
+def test_no_via_areas_are_drawn_dotted():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QGraphicsPolygonItem
@@ -116,7 +116,7 @@ def test_no_via_areas_are_drawn_hatched_blue():
     board.no_via = [box(5, 5, 10, 10)]
     view = BoardView()
     view.set_board(board)
-    hatched = [i for i in view.scene().items() if isinstance(i, QGraphicsPolygonItem) and i.brush().style() == Qt.BDiagPattern]
+    hatched = [i for i in view.scene().items() if isinstance(i, QGraphicsPolygonItem) and i.brush().style() == Qt.Dense6Pattern]
     assert len(hatched) == 1
 
 

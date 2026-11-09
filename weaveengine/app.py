@@ -124,13 +124,14 @@ class BoardView(QGraphicsView):
         scene.addPath(outline, QPen(QColor("#7a8a7d"), 0), QBrush(QColor(BOARD))).setZValue(-10)
         for obs in board.obstacles:
             poly = QPolygonF([QPointF(x, -y) for x, y in obs.shape.exterior.coords])
-            pen = QPen(QColor("#ff4d4d"), 0, Qt.DashLine)
-            scene.addPolygon(poly, pen, QBrush(QColor(58, 23, 23, 120))).setZValue(-5)
-        for area in board.no_via:  # areas only vias are kept out of: blue and hatched, apart from the red keepouts
+            # (Keepouts and no-via areas in greys: a colour is a layer's, and magenta marks a cut-off pour.)
+            pen = QPen(QColor("#9aa0a6"), 0, Qt.DashLine)
+            scene.addPolygon(poly, pen, QBrush(QColor(40, 43, 48, 170))).setZValue(-5)
+        for area in board.no_via:  # areas only vias are kept out of: dotted, apart from the dashed keepouts
             for part in getattr(area, "geoms", [area]):
                 poly = QPolygonF([QPointF(x, -y) for x, y in part.exterior.coords])
-                pen = QPen(QColor("#4da6ff"), 0, Qt.DotLine)
-                scene.addPolygon(poly, pen, QBrush(QColor(77, 166, 255, 110), Qt.BDiagPattern)).setZValue(-5)
+                pen = QPen(QColor("#e0e0e0"), 0, Qt.DotLine)
+                scene.addPolygon(poly, pen, QBrush(QColor(224, 224, 224, 120), Qt.Dense6Pattern)).setZValue(-5)
         for pad in board.pads:
             self._add_pad(pad)
         pen = QPen(QColor("#9fb3a5"), 0)
