@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import shapely
 from shapely.geometry import LineString
 
-from weaveengine.plan.fanout import FILL
 
 
 @dataclass
@@ -35,9 +34,10 @@ class Pour:
 
 
 def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict | None = None,
-             clearance: float | None = None, min_width: float = FILL) -> list[Pour]:
+             clearance: float | None = None, min_width: float | None = None) -> list[Pour]:
     """The estimated fill of each pour of ``board`` (its vias among its pads) for the routed
-    ``lines``. ``clearance``: the zones' (default: the board's, less the routing margin)."""
+    ``lines``. ``clearance``: the zones' (default: the board's, less the routing margin). ``min_width``: the
+    narrowest fill (default: each zone's own minimum thickness, ``Board.pour_width``)."""
     rules = board.rules
     base = rules.clearance - rules.margin if clearance is None else clearance
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance) - rules.margin
@@ -73,7 +73,8 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
                 fill = fill.difference(shapely.union_all(held))
         own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline)]
         # (the net's own pads are copper whatever their width)
-        fill = shapely.union_all([fill.buffer(-min_width / 2.0).buffer(min_width / 2.0), *[p.shape.intersection(inside) for p in own]])
+        least = board.pour_width(net, at) if min_width is None else min_width
+        fill = shapely.union_all([fill.buffer(-least / 2.0).buffer(least / 2.0), *[p.shape.intersection(inside) for p in own]])
         parts = sorted(getattr(fill, "geoms", [fill]), key=lambda g: -g.area)
         pour = Pour(net, at, outline)
         has = [[p for p in own if g.intersects(p.shape)] for g in parts]

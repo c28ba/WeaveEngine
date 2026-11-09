@@ -69,6 +69,7 @@ class KicadBoard:
     custom: list = field(default_factory=list)                        # the custom rules (``kicad_rules.Rule``) beside the board
     skipped: list[str] = field(default_factory=list)                  # those of the custom rules not read, each with why
     courtyards: dict = field(default_factory=dict)                    # footprint reference -> its courtyard
+    thickness: list[tuple] = field(default_factory=list)              # (net name, canonical copper layer, outline, min_thickness) of each copper zone
     areas: dict = field(default_factory=dict)                         # name -> outline of a named zone or rule area
 
 
@@ -123,6 +124,21 @@ def read_kicad(dsn_path: str) -> KicadBoard | None:
         elif kind.startswith("gr_"):
             _drawing(item, _place(0.0, 0.0, 0.0), out, kind)
     return out
+
+
+def _thickness(item, out: KicadBoard) -> None:
+    """The least width a copper zone's fill may have (its ``min_thickness``)."""
+    least = _child(item, "min_thickness")
+    if not least or len(least) < 2 or not _is_number(least[1]) or float(least[1]) <= 0:
+        return
+    net = _child(item, "net_name") or _child(item, "net")
+    name = net[1] if net and len(net) > 1 and isinstance(net[1], str) and not _is_number(net[1]) else ""
+    for polygon in _children(item, "polygon"):
+        pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+        if len(pts) >= 3:
+            for layer in _layers(item):
+                if layer.endswith(".Cu"):
+                    out.thickness.append((name, layer, Polygon(pts).buffer(0), float(least[1])))
 
 
 def _zone(item, out: KicadBoard) -> None:
@@ -484,6 +500,7 @@ def _rule_area(item, out: KicadBoard) -> None:
     keepout = _child(item, "keepout")
     if keepout is None:
         _zone(item, out)
+        _thickness(item, out)
         return  # a copper zone, not a rule area
     if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
         return  # it does keep traces out
@@ -681,6 +698,15 @@ def apply(design, kicad: KicadBoard) -> str:
     if unread or kicad.skipped:
         names = sorted(unread) + [n for n in kicad.skipped if n.split(" (")[0] not in unread]
         said.append(f"skipped custom rules {', '.join(names)}")
+    # The least width of each pour's fill is its zone's own (``pours.estimate``).
+    least = {}
+    for k, (net, at, shape) in enumerate(board.pours):
+        for name, layer, outline, thick in kicad.thickness:
+            if on(layer) == at and design.net_ids.get(name) == net and outline.symmetric_difference(shape).area < 0.01 * shape.area:
+                board.pour_min[(net, at)] = max(board.pour_min.get((net, at), 0.0), thick)
+                least[thick] = least.get(thick, 0) + 1
+    if least:
+        said.append("pour minimum width " + " and ".join(f"{t:g} mm" for t in sorted(least)) + " from the zones")
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
         for name, layer, outline, radius, chamfer in kicad.rounded:

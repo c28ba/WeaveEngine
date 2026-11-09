@@ -20,15 +20,17 @@ import shapely.prepared
 from weaveengine.plan.fanout import FILL
 from weaveengine.topo.planar_map import TERMINAL
 
-# How wide a skeleton is drawn: a fill's minimum width and a little more, so that
-# the strip it holds open is not lost to the fill's own rounding (``pours.estimate``).
-SKELETON = 1.4 * FILL
+# How wide a skeleton is drawn, as a multiple of the fill's minimum width: a little more,
+# so that the strip it holds open is not lost to the fill's own rounding (``pours.estimate``).
+SKELETON = 1.4
 
 
-def width(rules) -> float:
-    """The width a skeleton is routed and drawn at: never below the narrowest
-    trace, which the maps were built for (``Rules.base_width``)."""
-    return max(SKELETON, rules.base_width)
+def width(board, net: int) -> float:
+    """The width the skeletons of ``net`` are routed and drawn at: the minimum width of the widest of its pours' fills
+    (its zones' min_thickness, or the setting), never below the narrowest trace, which the maps were built for
+    (``Rules.base_width``)."""
+    least = max((board.pour_width(n, at) for n, at, _ in board.pours if n == net), default=FILL)
+    return max(SKELETON * least, board.rules.base_width)
 
 
 def plan(board, layers) -> list[tuple[int, int, int, int]]:

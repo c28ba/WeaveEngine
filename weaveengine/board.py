@@ -161,6 +161,8 @@ class Board:
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
     skip_nets: set[int] = field(default_factory=set)   # nets left unrouted by the user's choice (a pour, if any, is still fanned out to)
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
+    pour_min: dict = field(default_factory=dict)       # (net, layer index) -> the least width of that pour's fill, from its zone's min_thickness
+    pour_override: float = 0.0                         # mm: the least width of every pour's fill if set (the user's), else the zones' own
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
     components: list[Component] = field(default_factory=list)
@@ -171,6 +173,11 @@ class Board:
 
     def add_keepout(self, vertices: list[tuple[float, float]], layers: frozenset | None = None) -> None:
         self.obstacles.append(Obstacle(Polygon(vertices), layers=layers))
+
+    def pour_width(self, net: int, layer: int) -> float:
+        """The narrowest the fill of the pour of ``net`` on ``layer`` may be: the user's choice, else its zone's
+        minimum thickness, else KiCad's default (0.25 mm)."""
+        return self.pour_override or self.pour_min.get((net, layer), 0.25)
 
     def pad(self, pad_id: int) -> Pad:
         return {p.pad_id: p for p in self.pads}[pad_id]

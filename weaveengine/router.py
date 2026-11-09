@@ -117,7 +117,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         board.rules = copy.copy(board.rules)
         board.rules.net_width = dict(board.rules.net_width)
         nets = {net for net, _, _, _ in skeletons}
-        board.rules.net_width.update({net: skeleton.width(board.rules) for net in nets})
+        board.rules.net_width.update({net: skeleton.width(board, net) for net in nets})
         skeleton.hold(board, layers, nets)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
                   (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events,

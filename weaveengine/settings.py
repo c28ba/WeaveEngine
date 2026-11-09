@@ -53,6 +53,8 @@ DESCRIPTIONS = {
                          "own layer gets a via beside it down to the pour, routed before the other traces", "Pours"),
     "pour_skeletons": ("Keep pours whole", "Route a thin path through each pour joining its pads, which traces go round instead "
                        "of across, so that no trace cuts the pour into pieces. Some boards route fewer connections with it", "Pours"),
+    "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
+                       "pours' skeletons are drawn to. From the board: each zone's own minimum thickness", "Pours"),
     "show_pours": ("Show pours", "Draw the estimated fill of each copper pour after routing", "Pours"),
     "show_pour_islands": ("Show islands", "Draw the islands of a pour: pieces joined to nothing, which KiCad removes", "Pours"),
     "slide_vias": ("Straighten vias", "Move each via to where its traces run through it with less of a bend", "Routing"),
@@ -78,6 +80,7 @@ AUTOMATIC = {
     "via_diameter": ("Use the value in the DSN", Rules.via_diameter),
     "via_drill": ("Use the value in the DSN", Rules.via_drill),
     "edge_clearance": ("From the KiCad project beside the DSN, else the clearance", 0.5),
+    "pour_min_width": ("From the board's zones (the .kicad_pcb), else 0.25 mm", 0.25),
 }
 
 
@@ -111,6 +114,7 @@ class Settings:
     narrow_to_reach: bool = True
     fanout_to_planes: bool = True
     pour_skeletons: bool = False
+    pour_min_width: float = 0.0  # mm; 0 = from the board's zones
     show_pours: bool = True
     show_pour_islands: bool = False
     skip_nets: str = ""  # comma-separated net names or patterns
@@ -192,6 +196,9 @@ class Settings:
         if design.walled:
             from weaveengine.io.dsn import walled_note
             notes.append(walled_note(design.walled))
+        board.pour_override = self.pour_min_width
+        if self.pour_min_width > 0:
+            notes.append(f"pour minimum width {self.pour_min_width:g} mm, set here (the zones' own are not used)")
         if self.edge_clearance > 0:
             rules.edge_clearance = self.edge_clearance
         elif found["edge_clearance"][0] is not None:

@@ -116,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skeleton", action="store_true",
                     help="a skeleton in each pour, which traces go round, so that none cuts the pour into pieces "
                          "(design 11.3; some boards route fewer connections with it)")
+    ap.add_argument("--pour-min-width", type=float, default=0.0, metavar="MM",
+                    help="the narrowest copper a pour's fill may have, in the estimate of the fill and the skeletons "
+                         "(default: each zone's min_thickness from the .kicad_pcb, else 0.25)")
     ap.add_argument("--no-narrowing", action="store_true",
                     help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
     ap.add_argument("--no-ses-teardrops", action="store_true",
@@ -204,6 +207,9 @@ def main(argv: list[str] | None = None) -> int:
         names = design.net_names
         print(f"{len(design.board.plane_nets)} nets have a copper plane and are not routed as traces: "
               + ", ".join(sorted(names[n] for n in design.board.plane_nets)))
+    if args.pour_min_width > 0:
+        design.board.pour_override = args.pour_min_width
+        print(f"pour minimum width {args.pour_min_width:g} mm, set with --pour-min-width (the zones' own are not used)")
     note = skip_nets(design, args.skip_net)
     if note:
         print(note)

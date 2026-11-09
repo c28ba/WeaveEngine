@@ -1,6 +1,8 @@
 """The estimate of a pour's fill (design 11.3): a ring of traces cuts off a pad."""
 import math
 
+import pytest
+
 from shapely.geometry import Point, box
 
 from weaveengine import pours
@@ -83,3 +85,34 @@ def test_fanout_puts_no_via_where_the_plane_has_no_fill():
     ringed = {0: ring(20, 15, 2.5)}
     vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 1})
     assert vias == [] and traces == [] and [p.name for p in left] == ["U1-1"]
+
+
+def test_a_zones_minimum_thickness_sets_the_slivers_its_fill_drops(tmp_path):
+    """The .kicad_pcb zone's min_thickness is read per zone, and a fill is not narrower than it; the setting
+    overrides it, and the skeleton is drawn 1.4 times as wide."""
+    from weaveengine.io.kicad import read_kicad
+    from weaveengine.plan import skeleton
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (zone (net 1) (net_name "GND") (layer "B.Cu") (min_thickness 0.4) (fill yes)
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+  (zone (net 1) (net_name "GND") (layer "F.Cu") (fill yes)
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+)
+"""
+    (tmp_path / "z.kicad_pcb").write_text(pcb, encoding="utf-8")
+    [(name, layer, _, least)] = read_kicad(str(tmp_path / "z.kicad_pcb")).thickness
+    assert (name, layer, least) == ("GND", "B.Cu", 0.4)
+    # A strip of pour 0.3 mm wide between two traces of another net: whole at 0.25, gone at 0.4.
+    board = board_with_pour()
+    lines = {0: [(1, 14.8), (39, 14.8)], 1: [(1, 15.7), (39, 15.7)]}   # (0.2 wide, 0.2 clear either side: leaves 0.3 of fill between)
+    nets, layers = {0: SIG, 1: SIG}, {0: 1, 1: 1}
+    thin = lambda: any(p.shape.contains(Point(30, 15.25)) for p in pours.estimate(board, lines, nets, layers)[0].pieces)
+    assert board.pour_width(GND, 1) == 0.25 and thin()
+    board.pour_min[(GND, 1)] = 0.4
+    assert board.pour_width(GND, 1) == 0.4 and not thin()
+    board.pour_override = 0.25
+    assert board.pour_width(GND, 1) == 0.25 and thin()
+    assert skeleton.width(board, GND) == pytest.approx(0.35)
+    board.pour_override = 0.0
+    assert skeleton.width(board, GND) == pytest.approx(0.56)
