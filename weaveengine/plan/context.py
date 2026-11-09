@@ -202,7 +202,7 @@ class Options:
     teardrop_max_width: float = 2.0    # mm across
     teardrop_breathing: float = 1.5    # clearances a teardrop keeps from foreign copper, else it is left out
     portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
-    skeleton: bool = True           # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``)
+    skeleton: bool = False          # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``; off: it costs connections, design 11.3)
 
 
 class Context:

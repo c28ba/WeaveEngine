@@ -433,7 +433,7 @@ Once the board is routed, each such pad gets a via beside it: the nearest place,
 
 Done after routing, it takes no room a trace needed. Placed first, the vias were in the way: on hackrf-lna915 four signal connections that routed before were left open. Measured: lna915 30 open items in KiCad to 11 (the rest the Margin layer and its four open signals), olimex POE-M2 77 to 66, lumen-mobo 217 to 104, with every signal routed as before.
 
-### 11.3 Pours that stay whole (planned, 1.1)
+### 11.3 Pours that stay whole (built 2026-11, branch `pour-skeleton`; off by default)
 
 **The fault.** A pour is left to KiCad to fill round the traces (section 4), and nothing in the routing keeps it in one piece. Traces of other nets that run across it, or close a ring round part of it, cut it into islands with no pad, or into sections with pads that are no longer joined to the rest of the net. Fan-out (11.2) only joins pads the pour does not reach at all; it does not see a pour the routing has cut.
 
@@ -447,6 +447,24 @@ Done after routing, it takes no room a trace needed. Placed first, the vias were
 - *Several pours of a net on one layer, and zone priorities.* One skeleton per pour; a pour inside another of higher priority takes the outline KiCad fills.
 
 **Measured first.** A fill estimate, the pour's outline less every other net's copper and its clearance, gives the islands and cut-off sections of a routing; shown in the app while routing (`ROADMAP.md`, 1.1), and counted over the sweep boards before and after skeletons, with completion and copper beside them.
+
+**As built (`plan/skeleton.py`, option `skeleton`, `--skeleton`).**
+- Per pour on a routed layer, a spanning tree over the pads of its net inside the outline that a trace reaches there (pads whose copper meets are joined already). Each edge is a `Connection` with `skeleton` set and `layers` its pour's layer, in the same Phase 1 to 4 as the traces.
+- Width: 1.4 times a fill's minimum width (`fanout.FILL`; never below the narrowest trace), set as the net's width in a copy of the rules the routing runs on. So its weight in the load is that width plus the clearance, realisation keeps traces a clearance from it, and the check sees it. The drawn board keeps the real rules (fan-out's stubs).
+- Held inside the outline: every search for a wire of a skeleton's net uses the corridor of the kernel, the gates whose middles are in its net's pours on that layer and the edges of its net's pads; none on another layer (`skeleton.region`, kept up to date as via sites add and change edges). It never takes a via (`path.find`).
+- Negotiated like any wire. What tells routings apart puts traces first: rip-up's best state is fewest open traces and over-full gates, then fewest skeletons open, then copper; the kept routing likewise; a design-rule violation drops the skeleton first. And at settling (`ripup.give_way`) an open trace whose way is barred by skeletons has those taken out and goes in, the skeletons put back where they fit; failing that, every skeleton out, kept only if a trace goes in.
+- Not drawn, not written, not counted as open or as copper (`router._drawn`, `Context.open`).
+- Where it loses: with the option on, a pad the fill estimate puts in a piece cut off from its pour is treated by fan-out (11.2) as one the pour does not reach: a via down to the net's plane on another layer.
+- Not built: thermal relief room at pad ends; the zone's own clearance and minimum width (the board's clearance and KiCad's default 0.25 mm are used); zone priorities.
+
+**Measured** against the base it was branched from, same DSNs. Pour counts from the fill estimate (islands, cut-off pads); KiCad's from its DRC after refill (`isolated_copper`, unconnected).
+
+| Sweep | Routed | KiCad unconnected | KiCad isolated copper | Estimate: islands | Estimate: cut-off pads | Routing time |
+|---|---|---|---|---|---|---|
+| Tier 1 (Mac, 12 boards) | as before on every board | 134 to 121 | 36 to 34 | 239 to 231 | 73 to 31 | 150 to 79 s (the base run was slow; 49 s in the older baseline) |
+| Tier 2 (Windows, 13 boards) | fewer on three: kicad-cm5-minima 156 to 136, kicad-stickhub 97 to 89, kicad-openair 228 to 227 | 512 to 412 | 3 to 5 | 1393 to 1206 | 379 to 57 | 971 to 2120 s |
+
+Also on tier 2: 4 annular-width errors on kicad-tinytapeout (vias), and one more open item on lumen-pi-interface. The pours stay whole as meant, and far fewer items are left open in KiCad, but on the dense multi-layer boards the skeletons take room traces needed (half of cm5-minima's skeleton joins gave way, and still 20 connections more were lost), and the routing takes twice as long. So it is off by default. Before an earlier version made skeletons give way at settling, tier 1 lost a connection each on fomu and lumen-blade13.
 
 ## 11a. Where the copper goes, and undoing detours (`ripup.untangle`, branch `detour-repair`)
 
