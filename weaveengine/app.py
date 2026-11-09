@@ -38,6 +38,10 @@ BACKGROUND = "#121212"
 BOARD = "#1b2a1f"
 
 
+
+WARNING = "background: #4a3b12; color: #f3e3b0; padding: 6px; border-radius: 4px;"  # (a section with something to say)
+QUIET = "background: #2a2f35; color: #b8c0c8; padding: 6px; border-radius: 4px;"    # (one with nothing, or a key)
+
 class BoardView(QGraphicsView):
     """Picture of the board and its traces. Scene units are millimetres.
 
@@ -105,6 +109,7 @@ class BoardView(QGraphicsView):
         self.trace_items, self.detail_items, self._thin = [], [], None
         self.pad_items, self.selection = [], None
         self.pour_items, self.pour_shown = [], None
+        self.show_pour_fill = True  # (the "Pours" switch)
         self.board = board
         self.widths = {}  # net -> width drawn, where the routing narrowed it (``router.reach``)
         self.visible = {i: True for i in range(len(board.layers))}
@@ -522,7 +527,7 @@ class BoardView(QGraphicsView):
         self.pour_items = []
         layers = len(self.board.layers) if self.board is not None else 0
         for pour in pours:
-            if pour.layer >= layers or not self.visible.get(pour.layer, True):
+            if not self.show_pour_fill or pour.layer >= layers or not self.visible.get(pour.layer, True):
                 continue
             color = QColor(LAYER_COLORS[pour.layer % len(LAYER_COLORS)])
             for piece in pour.pieces:
@@ -798,8 +803,8 @@ class MainWindow(QMainWindow):
 
         self.warnings_label = QLabel()
         self.warnings_label.setWordWrap(True)
-        self.warnings_label.setStyleSheet("background: #4a3b12; color: #f3e3b0; padding: 6px; border-radius: 4px;")
-        self.warnings_label.hide()
+        self.warnings_label.setText("No warnings")
+        self.warnings_label.setStyleSheet(QUIET)
         col.addWidget(self.warnings_label)
 
         self.pass_label = QLabel("")
@@ -836,9 +841,19 @@ class MainWindow(QMainWindow):
         self.name_box.setToolTip("Draw every part's reference")
         self.name_box.setChecked(self.settings.show_names)
         self.name_box.toggled.connect(self._toggle_names)
+        self.pour_box = QCheckBox("Pours")
+        self.pour_box.setToolTip("Draw the estimated fill of each copper pour after routing")
+        self.pour_box.setChecked(True)
+        self.pour_box.toggled.connect(self._toggle_pours)
         show.addWidget(self.outline_box)
         show.addWidget(self.name_box)
+        show.addWidget(self.pour_box)
         col.addLayout(show)
+        self.pour_key = QLabel()
+        self.pour_key.setWordWrap(True)
+        self.pour_key.setStyleSheet(QUIET)
+        self.pour_key.hide()
+        col.addWidget(self.pour_key)
         self.view.show_outlines, self.view.show_names = self.settings.show_outlines, self.settings.show_names
 
         self.selection_label = QLabel("Click a trace, a pad or a part to see what it is.\nScroll to zoom, right-drag to pan.")
@@ -902,6 +917,38 @@ class MainWindow(QMainWindow):
         self.view.set_outlines_visible(on)
         self._remember(show_outlines=on)
 
+    def _toggle_pours(self, on: bool) -> None:
+        self.view.show_pour_fill = on
+        self.view.show_pours(self.view.pour_shown or [])
+        self.pour_key.setVisible(on and bool(self.view.pour_shown))
+
+    def show_pour_key(self, pours) -> None:
+        """What the drawn pours mean, and each pour's state: its net and layer, and the pads it does not reach."""
+        if not pours:
+            self.pour_key.hide()
+            return
+        board = self.view.board
+        swatch = lambda color, text: f"<span style='background:{color}; color:{color}'>&nbsp;&nbsp;&nbsp;</span> {text}"
+        lines = ["<b>Pours</b> (estimated fill, as KiCad will pour it)",
+                 swatch("#5a7a9a", "the pour, in its layer's colour"),
+                 swatch("#ff4d4d", "cut off: pads of the net it no longer joins"),
+                 swatch("#ffd24d", "an island: copper joined to nothing (KiCad removes these)")]
+        for pour in pours:
+            name = board.net_names.get(pour.net, pour.net) if board is not None else pour.net
+            layer = board.layers[pour.layer] if board is not None and pour.layer < len(board.layers) else pour.layer
+            reached = sum(len(p.pads) for p in pour.pieces if p.kind in ("main", "via"))
+            cut = [pad for p in pour.pieces if p.kind == "cut" for pad in p.pads]
+            islands = sum(1 for p in pour.pieces if p.kind == "island")
+            text = f"{html.escape(str(name))} on {html.escape(str(layer))}: joins {reached} pads"
+            if cut:
+                shown = ", ".join(cut[:6]) + (f" and {len(cut) - 6} more" if len(cut) > 6 else "")
+                text += f"; <span style='color:#ff4d4d'>{len(cut)} cut off ({html.escape(shown)})</span>"
+            if islands:
+                text += f"; {islands} island{'s' if islands > 1 else ''}"
+            lines.append(text)
+        self.pour_key.setText("<br>".join(lines))
+        self.pour_key.setVisible(self.pour_box.isChecked())
+
     def _toggle_names(self, on: bool) -> None:
         self.view.set_names_visible(on)
         self._remember(show_names=on)
@@ -941,15 +988,15 @@ class MainWindow(QMainWindow):
         self._accel_shown = True
 
     def show_warnings(self, warnings: list[str]) -> None:
-        """The Warnings section: a count and one line for each warning about the open board; hidden when there are none."""
+        """The Warnings section: a count and one line for each warning about the open board, or "No warnings"."""
         self.warnings = list(warnings)
         if not warnings:
             self.warnings_label.setText("No warnings")
-            self.warnings_label.hide()
+            self.warnings_label.setStyleSheet(QUIET)
             return
         items = "".join(f"<li>{html.escape(text)}</li>" for text in warnings)
         self.warnings_label.setText(f"<b>Warnings ({len(warnings)})</b><ul style='margin: 2px 0 0 -18px'>{items}</ul>")
-        self.warnings_label.show()
+        self.warnings_label.setStyleSheet(WARNING)
 
     # -- board ------------------------------------------------------------------
     def open_dialog(self) -> None:
@@ -1032,6 +1079,7 @@ class MainWindow(QMainWindow):
         self.snapshots_seen = 0
         if not improving and self.view.board is not None:
             self.view.show_pours([])  # (the last routing's fill is not this one's)
+            self.show_pour_key([])
         # The time this board took with these settings before, if it is on record: the best estimate there is.
         self.timings = Timings(os.path.join(os.path.dirname(os.path.abspath(self.settings_path)), "timings.json"))
         try:  # (going on from a routing takes another time than routing: it is not on that record)
@@ -1191,7 +1239,9 @@ class MainWindow(QMainWindow):
                                for i, w in enumerate(result.polylines) if w in result.wire_pads}
         self.view.widths = result.stats.get("narrowed", {})
         self.view.show_routing(wires, open_pairs, result.vias, teardrops, result.violations)
-        self.view.show_pours(estimate_pours(result))
+        pours = estimate_pours(result)
+        self.view.show_pours(pours)
+        self.show_pour_key(pours)
         self.stats["routed"].setText(f"{stats['routed']} / {stats['connections']}")
         self.stats["open"].setText(str(stats["connections"] - stats["routed"]))
         self.stats["vias"].setText(str(stats["vias"]))

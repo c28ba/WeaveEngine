@@ -185,4 +185,4 @@ def test_the_warnings_panel_lists_what_is_wrong_with_the_board(tmp_path):
     text = window.warnings_label.text()
     assert "Warnings (" in text and "2 drawings on the Margin layer" in text
     window.show_warnings([])
-    assert window.warnings_label.isHidden() and window.warnings_label.text() == "No warnings"
+    assert not window.warnings_label.isHidden() and window.warnings_label.text() == "No warnings"
