@@ -490,7 +490,7 @@ PIC = os.path.join(os.path.dirname(os.path.dirname(__file__)), "boards", "pic-pr
 def test_pic_programmer_board(tmp_path):
     """A real two-layer KiCad board (KiCad's pic_programmer demo): two net classes."""
     from weaveengine.io.dsn import parse_sexpr, read_dsn
-    from weaveengine.io.ses import write_ses
+    from weaveengine.io.ses import wedge_tracks, write_ses
 
     design = read_dsn(PIC)
     board = design.board
@@ -508,7 +508,7 @@ def test_pic_programmer_board(tmp_path):
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
     wires = [w[1] for n in nets for w in n[2:] if w[0] == "wire"]
-    assert len(wires) == len(result.polylines) + sum(len(p) - 1 for p in result.widths.values())  # (a tapered trace is several wires)
+    assert len(wires) == len(result.polylines) + sum(len(p) - 1 for p in result.widths.values()) + sum(len(wedge_tracks(q)) for ps in result.wedges.values() for q in ps)  # (a tapered trace is several wires)
     assert {w[1] for w in wires} == {"top_layer", "bottom_layer"}
     vcc = next(n for n in nets if n[1] == "VCC")
     assert {w[1][2] for w in vcc[2:] if w[0] == "wire"} == {"8000"}  # 0.8 mm at 0.1 um
@@ -605,6 +605,7 @@ def test_a_time_limit_ends_the_run_in_time_and_writes_the_best_routing(tmp_path,
     import time
     from weaveengine import cli
     from weaveengine.io.check import read_session
+    from weaveengine.io.ses import wedge_tracks
     results, real = [], cli.route_board
 
     def route_board(board, params=None, **how):
@@ -620,7 +621,7 @@ def test_a_time_limit_ends_the_run_in_time_and_writes_the_best_routing(tmp_path,
     result = results[0]
     assert result.stats["routed"] > 0
     wires, vias = read_session(out)
-    assert len(wires) == len(result.polylines) + sum(len(p) - 1 for p in result.widths.values()) and len(vias) == len(result.vias)
+    assert len(wires) == len(result.polylines) + sum(len(p) - 1 for p in result.widths.values()) + sum(len(wedge_tracks(q)) for ps in result.wedges.values() for q in ps) and len(vias) == len(result.vias)
 
 
 def test_racing_variants_never_does_worse_than_the_plain_run():
@@ -1315,11 +1316,19 @@ def test_a_narrowed_trace_is_tapered_to_the_fine_pitch_pin():
         narrow, wide = result.stats["narrowed"][net], board.rules.width(net)
         assert [round(width, 6) for _, width in pieces if width != narrow] == [wide]
         assert pieces[0][1] == pytest.approx(narrow) or pieces[-1][1] == pytest.approx(narrow)
-        for (a, _), (b, _) in zip(pieces, pieces[1:]):
-            assert a[-1] == b[0]  # in one piece after another
+        for (a, _), (b, _) in zip(pieces, pieces[1:]):  # in one piece after another, with a wedge between them (or none: a step)
+            if a[-1] != b[0]:
+                mids = {tuple(round(c, 6) for c in ((q[i][0] + q[j][0]) / 2, (q[i][1] + q[j][1]) / 2)) for q in result.wedges[w]
+                        for i, j in ((0, 3), (1, 2))}
+                assert {tuple(round(c, 6) for c in a[-1]), tuple(round(c, 6) for c in b[0])} <= mids
         # the narrow stretch is at the pin, and holds the clearance there as a narrow trace does
         assert min(Point(p.centre).distance(LineString(pts)) for p in pins.values() if p.net_id == net
                    for pts, width in pieces if width == narrow) < 1e-6
+    for w, polys in result.wedges.items():   # wedges clear the pads of other nets as a trace does
+        for poly in polys:
+            for p in result.board.pads:
+                if p.net_id != result.wire_net[w]:
+                    assert Polygon(poly).distance(p.shape) >= board.rules.clearance - 2e-3
     # the wide pieces keep the clearance from the pieces of other nets and the pads of other nets
     # (the narrow ones are as clear as without a taper: the margin given up)
     pieces = _pieces(result)
@@ -1363,11 +1372,15 @@ def test_taper_is_left_out_where_the_wide_stretch_would_crowd_other_copper():
     board.rules = Rules(0.25, 0.2, margin=0.01, min_width=0.2)
     board.rules.net_width = {1: 0.2}
     lines, nets, layers, ends = {0: [(10.0, 5.0), (17.0, 5.0)]}, {0: 1}, {0: 0}, {0: (2, 3)}
-    got = taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2})
+    got, wedges = taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2})
+    assert wedges  # (open space past the pins: the width narrows evenly)
     (narrow, _), (wide, width), = [(p, w) for p, w in got[0]]
-    assert width == pytest.approx(0.25) and narrow[0] == (10.0, 5.0) and narrow[-1] == wide[0] and wide[-1] == (17.0, 5.0)
+    assert width == pytest.approx(0.25) and narrow[0] == (10.0, 5.0) and wide[-1] == (17.0, 5.0)
+    (poly,) = wedges[0]   # from the narrow stretch's end to the wide one's start: 0.2 across, then 0.25
+    assert math.dist(poly[0], poly[3]) == pytest.approx(0.2) and math.dist(poly[1], poly[2]) == pytest.approx(0.25)
+    assert ((poly[0][0] + poly[3][0]) / 2, 5.0) == pytest.approx(narrow[-1]) and ((poly[1][0] + poly[2][0]) / 2, 5.0) == pytest.approx(wide[0])
     board.pads.append(Pad.circle(9, 15, 5.4, 0.2, 7))   # its edge is 0.2 from the trace: too near for a wide one
-    assert taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2}) == {}
+    assert taper(board, full, lines, nets, layers, ends, {1: 0.2}, {2}) == ({}, {})
 
 
 def test_a_wire_of_a_narrowed_net_with_no_fine_end_goes_back_to_full_width():
@@ -1378,4 +1391,38 @@ def test_a_wire_of_a_narrowed_net_with_no_fine_end_goes_back_to_full_width():
     board.rules.net_width = {1: 0.2}
     lines, nets, layers, ends = {0: [(13.0, 5.0), (17.0, 5.0)]}, {0: 1}, {0: 0}, {0: (2, 3)}
     got = taper(board, full, lines, nets, layers, ends, {1: 0.2}, {4})   # (neither end of it is a fine pin)
-    assert got == {0: [(lines[0], 0.25)]}
+    assert got == ({0: [(lines[0], 0.25)]}, {})
+
+
+def test_the_step_is_kept_where_the_wedge_does_not_fit():
+    from weaveengine.realize.taper import taper
+    board = pins_board(0.2)
+    full = board.rules
+    board.rules = Rules(0.25, 0.2, margin=0.01, min_width=0.2)
+    board.rules.net_width = {1: 0.2}
+    # a zigzag of 0.2 long strokes: no straight run for a wedge (0.25 long)
+    lines = {0: [(10.0, 5.0)] + [(10.5 + 0.2 * k, 5.0 + 0.1 * (-1) ** k) for k in range(40)] + [(19.0, 5.0)]}
+    got, wedges = taper(board, full, lines, {0: 1}, {0: 0}, {0: (2, 3)}, {1: 0.2}, {2})
+    assert [w for _, w in got[0]] == [0.2, 0.25]
+    assert 0 not in wedges
+
+
+def test_a_wedge_is_written_as_a_fan_of_tracks_that_fills_it():
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+    from weaveengine.io.ses import wedge_tracks
+    from weaveengine.realize.taper import wedge_polygon
+    poly = wedge_polygon((0.0, 0.0), (0.75, 0.0), 0.2, 0.5)
+    tracks = wedge_tracks(poly)
+    assert len(tracks) >= 3 and all(w == pytest.approx(0.2) for w, _, _ in tracks)
+    fan = unary_union([LineString([a, b]).buffer(w / 2.0) for w, a, b in tracks])
+    shape = Polygon(poly)
+    assert shape.difference(fan).area < 0.03 * shape.area          # filled
+    assert fan.intersection(box(0, -1, 0.75, 1)).difference(shape.buffer(0.005)).area < 0.05 * shape.area   # and no more than it (its ends are in the traces)
+
+
+def test_wedges_are_drawn_with_the_teardrops():
+    from weaveengine.realize.taper import with_wedges
+    assert with_wedges({1: ["t"]}, {1: ["w"], 2: ["v"]}) == {1: ["t", "w"], 2: ["v"]}
+    result = route_board(pins_board(0.2))
+    assert result.wedges and set(with_wedges(result.teardrops, result.wedges)) >= set(result.wedges)

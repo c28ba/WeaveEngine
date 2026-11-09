@@ -104,7 +104,9 @@ To do, in order:
   Done as post-processing: `router.reach` still plans a net narrower where its
   pins need it; then each such trace is redrawn at the net's width except a
   narrow stretch (the pad's reach plus 1, 2, 4 or 8 trace widths) at the
-  fine-pitch pin, where the wide part clears pads, keepouts, the edge and the
+  fine-pitch pin and an even wedge from there up to the full width (3 times
+  the difference, written as a fan of tracks like a teardrop; a step where no
+  straight run has room for it), where the wide part clears pads, keepouts, the edge and the
   other traces as drawn; else it stays narrow all along. It is several wires
   in the SES (`Result.widths`). Left: the planner does not reserve room for the
   wide part (it fails the check where traces were planned too close), and the

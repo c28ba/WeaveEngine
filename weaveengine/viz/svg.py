@@ -1,5 +1,6 @@
 """SVG rendering of a board, its planar map and realised traces."""
 from weaveengine.board import Board
+from weaveengine.realize.taper import with_wedges
 
 NET_COLORS = ["#4f8dff", "#ff5a4a", "#34c46a", "#ffb02e", "#b06cff", "#22cfcf", "#ff7ac0", "#c8d44a"]
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227"]  # front, back, inner...
@@ -80,4 +81,4 @@ def export_result(result, filename: str, mesh: bool = False, **kwargs) -> None:
     unrouted = [(centre[result.connections[w].src], centre[result.connections[w].dst]) for w in result.unrouted]
     export_svg(result.board, filename, result.polylines, result.wire_net, pmap=result.pmap if mesh else None,
                unrouted=unrouted, violations=result.violations, wire_layer=result.wire_layer,
-               teardrops=result.teardrops, widths=result.widths, **kwargs)
+               teardrops=with_wedges(result.teardrops, result.wedges), widths=result.widths, **kwargs)

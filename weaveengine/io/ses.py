@@ -95,6 +95,22 @@ def teardrop_tracks(poly, track_width: float) -> list[tuple[float, tuple[float, 
     return out if len(out) > 1 else []
 
 
+def wedge_tracks(poly) -> list[tuple[float, tuple[float, float], tuple[float, float]]]:
+    """(width, start, end) of the tracks that fill a wedge (``realize.taper``): a
+    fan from the middle of its narrow end, tracks as wide as that end, spread
+    over the wide end so that the outer ones lie along the sides."""
+    (ax, ay), (bx, by), (cx, cy), (dx, dy) = poly
+    narrow, wide = math.dist(poly[0], poly[3]), math.dist(poly[1], poly[2])
+    p0, p1 = ((ax + dx) / 2.0, (ay + dy) / 2.0), ((bx + cx) / 2.0, (by + cy) / 2.0)
+    nx, ny = (bx - cx) / wide, (by - cy) / wide   # across, at the wide end
+    count = max(1, math.ceil((wide - narrow) / (0.9 * narrow)))
+    out = []
+    for i in range(2 * count + 1):
+        f = (i - count) / count * (wide - narrow) / 2.0
+        out.append((narrow, p0, (p1[0] + nx * f, p1[1] + ny * f)))
+    return out
+
+
 def _to_segment(p, a, b) -> float:
     """Distance from ``p`` to the segment a b."""
     vx, vy = b[0] - a[0], b[1] - a[1]
@@ -183,6 +199,9 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: b
                     pp = [p for i, p in enumerate(pp) if i == 0 or p != pp[i - 1]]
                     if len(pp) >= 2:
                         out.append(f"        (wire (path {layer} {width} {' '.join(pp)}))")
+            for poly in result.wedges.get(wire, []):  # (a tapered trace's wedges: a fan of tracks)
+                for w, a, b in wedge_tracks(poly):
+                    out.append(f"        (wire (path {layer} {n(w)} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])}))")
             if teardrops:
                 for poly in result.teardrops.get(wire, []):
                     for w, a, b in teardrop_tracks(poly, board.rules.drawn(net)):

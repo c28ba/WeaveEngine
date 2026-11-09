@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import shapely
 from shapely.geometry import LineString
 
+from weaveengine.realize.taper import with_wedges
 
 
 @dataclass
@@ -115,7 +116,7 @@ def _join(pours: list[Pour]) -> None:
 
 
 def of_result(result) -> list[Pour]:
-    return estimate(result.board, result.polylines, result.wire_net, result.wire_layer, result.teardrops, widths=result.widths)
+    return estimate(result.board, result.polylines, result.wire_net, result.wire_layer, with_wedges(result.teardrops, result.wedges), widths=result.widths)
 
 
 def note(pour: Pour, board) -> str:

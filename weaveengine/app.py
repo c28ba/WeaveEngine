@@ -27,6 +27,7 @@ from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.ses import write_ses
 from weaveengine.pours import of_result as estimate_pours
+from weaveengine.realize.taper import with_wedges
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
@@ -1288,7 +1289,7 @@ class MainWindow(QMainWindow):
     def _show(self, result) -> None:
         """Draws a result and puts its figures in the panel."""
         stats = result.stats
-        teardrops = [(result.wire_layer[w], poly[:5]) for w, drops in result.teardrops.items() for poly in drops]
+        teardrops = [(result.wire_layer[w], poly[:5]) for w, drops in with_wedges(result.teardrops, result.wedges).items() for poly in drops]
         wires = [(result.wire_layer[w], result.wire_net[w], pts) + ((result.widths[w],) if w in result.widths else ())
                  for w, pts in result.polylines.items()]
         centre = {p.pad_id: p.centre for p in result.board.pads}
