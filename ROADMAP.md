@@ -130,7 +130,13 @@ sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
 - **KiCad custom rules (`.kicad_dru`).** Read the rules that let fine-pitch
   parts be routed at less than the board's clearance.
 - **The Margin layer as board edge**, without burying pads that sit inside
-  it.
+  it. Tried (2026-11, branch `margin-edge`, not merged): Margin drawings as
+  obstacles with room carved round each pad. On the boards with these errors
+  the drawings run within the edge clearance of their own pads, so the
+  carve-outs are where the errors are: a generous one removed none (solo-a,
+  solo-c and hackrf-lna915 unchanged) and still cost Solo about ten
+  connections; a tight one removed some but lost connections. Needs a
+  directional rule: a trace leaves such a pad only away from the drawing.
 
 ## 1.2
 
