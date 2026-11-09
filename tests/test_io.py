@@ -194,7 +194,7 @@ def test_the_command_line_keeps_the_best_routing_so_far(tmp_path, capsys):
     def part(n):
         lines = dict(sorted(full.polylines.items())[:n])
         return dataclasses.replace(full, polylines=lines, stats={"routed": n, "connections": 4, "vias": 0})
-    saver = Checkpoint(design, out, teardrops=False)
+    saver = Checkpoint(design, out, teardrops=False, arcs=False)
     saver((2, 0, 10.0), part(2))
     saver((3, 0, 5.0), part(1))      # more open: worse, whatever its copper
     assert len(read_session(out)[0]) == 2
@@ -282,7 +282,7 @@ def test_session_measured_independently(tmp_path, capsys):
     from weaveengine.io.check import measure, read_session
     dsn, ses = str(tmp_path / "b.dsn"), str(tmp_path / "b.ses")
     write_dsn(channel(6, seed=8), dsn)
-    assert main([dsn, "-o", ses, "--margin", "0", "--no-ses-teardrops"]) == 0
+    assert main([dsn, "-o", ses, "--margin", "0", "--no-ses-teardrops", "--no-ses-arcs"]) == 0
     assert "-> OK" in capsys.readouterr().out
     design = read_dsn(dsn)
     wires, vias = read_session(ses)

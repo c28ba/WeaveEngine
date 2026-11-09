@@ -16,13 +16,15 @@ from weaveengine.board import Board
 
 MIN_TURN = math.radians(12.0)   # corners gentler than this are left alone
 ARC_STEP = math.radians(6.0)    # an arc is drawn as a polyline turning this much per segment
+ARC_OUT = 4e-4                  # mm: the most the corners of a drawn arc stand out from its circle (as in relax.py)
 SHARE = 0.48                    # how much of a run one corner may use (the next corner needs its share)
 TRIES = (1.0, 0.6, 0.35, 0.2, 0.1)
 SLACK = 1e-4                    # mm kept beyond each clearance, so the result is not on the limit
 
 
 def _arc(a, b, c, d: float):
-    """Polyline of the arc tangent to b->a and b->c at distance ``d`` from the corner b."""
+    """Polyline of the arc tangent to b->a and b->c at distance ``d`` from the corner b,
+    and how far its vertices stand out from the true arc (the session may hold the true arc)."""
     u1 = ((a[0] - b[0]), (a[1] - b[1]))
     u2 = ((c[0] - b[0]), (c[1] - b[1]))
     l1, l2 = math.hypot(*u1), math.hypot(*u2)
@@ -35,14 +37,14 @@ def _arc(a, b, c, d: float):
     bx, by = u1[0] + u2[0], u1[1] + u2[1]
     bl = math.hypot(bx, by)
     if bl < 1e-12 or radius < 1e-9:
-        return None
+        return None, 0.0
     centre = (b[0] + bx / bl * d / math.cos(alpha / 2.0), b[1] + by / bl * d / math.cos(alpha / 2.0))
     p1 = (b[0] + u1[0] * d, b[1] + u1[1] * d)
     p2 = (b[0] + u2[0] * d, b[1] + u2[1] * d)
     a1 = math.atan2(p1[1] - centre[1], p1[0] - centre[0])
     a2 = math.atan2(p2[1] - centre[1], p2[0] - centre[0])
     sweep = (a2 - a1 + math.pi) % (2 * math.pi) - math.pi
-    n = max(2, math.ceil(turn / ARC_STEP))
+    n = max(2, math.ceil(turn / min(ARC_STEP, 2.0 * math.acos(radius / (radius + ARC_OUT)))))
     # Vertices on a slightly larger circle, so the chords do not cut inside the true arc.
     out = [p1]
     grow = radius / math.cos(abs(sweep) / n / 2.0)
@@ -50,7 +52,7 @@ def _arc(a, b, c, d: float):
         ang = a1 + sweep * (i + 0.5) / n
         out.append((centre[0] + grow * math.cos(ang), centre[1] + grow * math.sin(ang)))
     out.append(p2)
-    return out
+    return out, grow - radius
 
 
 def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_net: dict[int, int], layer: int = 0,
@@ -70,22 +72,24 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
     rounded = kept = 0
     out: dict[int, list] = {}
 
-    def fits(w: int, net: int, half: float, arc, corner) -> bool:
+    def fits(w: int, net: int, half: float, arc, corner, sag: float) -> bool:
+        # (the session may hold the true arc, up to ``sag`` nearer the inside of the turn than the polyline)
+        slack = SLACK + sag
         line = LineString(arc)
         swept = Polygon([corner] + arc)
-        if line.distance(boundary) < edge + half + SLACK:
+        if line.distance(boundary) < edge + half + slack:
             return False
         if copper_tree is not None:
-            for i in copper_tree.query(line, predicate="dwithin", distance=farthest + half + SLACK).tolist():
-                if (copper[i][1] != net or net < 0) and line.distance(copper[i][0]) < copper[i][2] + half + SLACK:
+            for i in copper_tree.query(line, predicate="dwithin", distance=farthest + half + slack).tolist():
+                if (copper[i][1] != net or net < 0) and line.distance(copper[i][0]) < copper[i][2] + half + slack:
                     return False
             for i in copper_tree.query(swept, predicate="intersects").tolist():
                 if copper[i][1] != net or net < 0:
                     return False  # something foreign sits in the corner: cutting it would pass it on the other side
-        for j in wire_tree.query(line, predicate="dwithin", distance=rules.clearance + half + widest / 2.0 + SLACK).tolist():
+        for j in wire_tree.query(line, predicate="dwithin", distance=rules.clearance + half + widest / 2.0 + slack).tolist():
             other = ids[j]
             if other != w and wire_net[other] != net:
-                if line.distance(lines[j]) < rules.clearance + half + rules.width(wire_net[other]) / 2.0 + SLACK:
+                if line.distance(lines[j]) < rules.clearance + half + rules.width(wire_net[other]) / 2.0 + slack:
                     return False
         for j in wire_tree.query(swept, predicate="intersects").tolist():
             if ids[j] != w and wire_net[ids[j]] != net:
@@ -110,8 +114,8 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
             reach = SHARE * min(math.dist(a, b), math.dist(b, c))
             done = False
             for part in TRIES:
-                arc = _arc(a, b, c, reach * part) if reach * part > 1e-4 else None
-                if arc is not None and fits(w, net, half, arc, b):
+                arc, sag = _arc(a, b, c, reach * part) if reach * part > 1e-4 else (None, 0.0)
+                if arc is not None and fits(w, net, half, arc, b, sag):
                     new.extend(arc)
                     rounded += 1
                     done = True

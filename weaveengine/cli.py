@@ -80,8 +80,8 @@ class Checkpoint:
     that is stopped, crashes or is killed still leaves the best it had found.
     ``write_ses`` writes it whole or not at all."""
 
-    def __init__(self, design, path: str, teardrops: bool, bar=None):
-        self.design, self.path, self.teardrops, self.bar = design, path, teardrops, bar
+    def __init__(self, design, path: str, teardrops: bool, bar=None, arcs: bool = True):
+        self.design, self.path, self.teardrops, self.bar, self.arcs = design, path, teardrops, bar, arcs
         self.best = None  # the key (``router._key``) of the routing written last
 
     def __call__(self, key: tuple, result) -> None:
@@ -90,7 +90,7 @@ class Checkpoint:
         if self.bar is not None and self.bar.live:
             self.bar.stream.write("\r\x1b[K")  # (the bar's line: it is drawn again at the next event)
         try:
-            write_ses(self.design, result, self.path, teardrops=self.teardrops)
+            write_ses(self.design, result, self.path, teardrops=self.teardrops, arcs=self.arcs)
         except OSError as error:  # (the routing goes on: the file is tried again with the next better one, and at the end)
             print(f"could not save the best routing so far to {self.path}: {error}", file=sys.stderr, flush=True)
             return
@@ -118,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-ses-teardrops", action="store_true",
                     help="keep teardrops out of the SES (they are written as short widening traces; "
                          "leave them out to use the CAD tool's own teardrops instead)")
+    ap.add_argument("--no-ses-arcs", action="store_true",
+                    help="write curves in the SES as short straight segments, not arcs (qarc)")
     ap.add_argument("--edge-clearance", type=float, metavar="MM",
                     help="copper to board edge clearance (a DSN does not carry it; default: the trace clearance)")
     ap.add_argument("--kicad-pro", metavar="FILE",
@@ -233,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{time.strftime('%H:%M:%S', time.localtime(deadline))}, then the best so far is finished and written")
     bar = None if args.quiet else ProgressBar(deadline=deadline)
     out = args.output or (args.dsn.rsplit(".", 1)[0] + ".ses")
-    saver = Checkpoint(design, out, not args.no_ses_teardrops, bar)
+    saver = Checkpoint(design, out, not args.no_ses_teardrops, bar, not args.no_ses_arcs)
     try:
         result = route_board(design.board, params, options=options, seed=args.seed,
                              workers=args.workers, events=bar.event if bar else None, deadline=deadline, checkpoint=saver)
@@ -246,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     if bar:
         bar.finish()
     stats = result.stats
-    write_ses(design, result, out, teardrops=not args.no_ses_teardrops)
+    write_ses(design, result, out, teardrops=not args.no_ses_teardrops, arcs=not args.no_ses_arcs)
     per_layer = ", ".join(f"{name}: {count}" for name, count in stats["wires_per_layer"].items())
     print(f"{stats['routed']}/{stats['connections']} connections routed ({per_layer}; {stats['vias']} vias), "
           f"length ratio {stats['length_ratio']:.3f}, {stats['time_total']:.1f}s -> {out}"

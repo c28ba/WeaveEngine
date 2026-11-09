@@ -1193,7 +1193,7 @@ class MainWindow(QMainWindow):
 
     def export_ses(self, path: str) -> bool:
         try:
-            write_ses(self.routed_design, self.result, path, teardrops=self.settings.teardrops_in_ses)
+            write_ses(self.routed_design, self.result, path, teardrops=self.settings.teardrops_in_ses, arcs=self.settings.arcs_in_ses)
             m = measure(self.routed_design, path, *self.want)
         except (OSError, ValueError) as error:
             self.say(f"Could not write {path}: {error}")

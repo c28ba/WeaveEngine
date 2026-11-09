@@ -37,6 +37,17 @@ class Measured:
                 and not self.wrong_width and not self.crossings and not self.vias_in_keepout)
 
 
+def _sampled_arc(x1, y1, x2, y2, cx, cy) -> list[tuple[float, float]]:
+    """The arc of a ``qarc`` (start, end, centre; the shorter way round) as points one degree apart."""
+    r1, r2 = math.hypot(x1 - cx, y1 - cy), math.hypot(x2 - cx, y2 - cy)
+    a1, a2 = math.atan2(y1 - cy, x1 - cx), math.atan2(y2 - cy, x2 - cx)
+    sweep = (a2 - a1 + math.pi) % (2.0 * math.pi) - math.pi
+    n = max(1, math.ceil(abs(sweep) / math.radians(1.0)))
+    pts = [(cx + (r1 + (r2 - r1) * k / n) * math.cos(a1 + sweep * k / n), cy + (r1 + (r2 - r1) * k / n) * math.sin(a1 + sweep * k / n))
+           for k in range(1, n)]
+    return [(x1, y1)] + pts + [(x2, y2)]
+
+
 def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[float, float]]]], list[tuple[str, float, float]]]:
     """(wires, vias) of a SES file in mm: wires are (net, layer, width, points), vias (net, x, y)."""
     root = parse_sexpr(open(path, encoding="utf-8").read())
@@ -47,6 +58,11 @@ def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[floa
     for net in _children(_child(routes, "network_out"), "net"):
         for wire in _children(net, "wire"):
             p = _child(wire, "path")
+            if p is None:
+                p = _child(wire, "qarc")
+                nums = [float(v) * scale for v in p[3:]]
+                wires.append((net[1], p[1], float(p[2]) * scale, _sampled_arc(*nums)))
+                continue
             nums = [float(v) * scale for v in p[3:]]
             wires.append((net[1], p[1], float(p[2]) * scale, list(zip(nums[0::2], nums[1::2]))))
         for via in _children(net, "via"):
