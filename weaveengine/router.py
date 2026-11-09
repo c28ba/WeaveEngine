@@ -15,13 +15,14 @@ from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
 from weaveengine.plan import skeleton
 from weaveengine.plan.fanout import fanout
+from weaveengine.plan.path import find
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
 from weaveengine.pours import estimate as estimate_pours
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
-from weaveengine.realize.taper import taper as make_tapers, with_wedges
+from weaveengine.realize.taper import WEDGE as TAPER_WEDGE, taper as make_tapers, with_wedges
 from weaveengine.realize.teardrop import teardrops as make_teardrops
 from weaveengine.realize.terminals import straighten
 from weaveengine.topo.runs import path_from_steps
@@ -121,6 +122,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         board.rules = copy.copy(board.rules)
         board.rules.net_width = dict(board.rules.net_width)
         nets = {net for net, _, _, _ in skeletons}
+        for net in nets:  # (a net with a skeleton is planned at the skeleton's width, all along)
+            drawn_board.rules.net_full.pop(net, None)
+            drawn_board.rules.fine.pop(net, None)
         board.rules.net_width.update({net: skeleton.width(board, net) for net in nets})
         skeleton.hold(board, layers, nets)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
@@ -214,6 +218,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "via_sites": len(ctx.layers[0].pmap.sites),
         "buried_pads": buried,
         "narrowed": narrowed,  # net -> the width its traces were narrowed to, to reach its pads (``reach``)
+        # Traces of those nets drawn at their own width but near the fine-pitch pads (``realize.taper``), and drawn narrow all along.
+        "tapered": sum(1 for w in routed if wire_net.get(w) in narrowed and w in pieces),
+        "narrow_all_along": sum(1 for w in routed if wire_net.get(w) in narrowed and w not in pieces),
         "fanout": len(planed),  # vias placed to join pads to their net's plane (``plan.fanout``)
         "plane_left": [p.pad_id for p in unplaned],  # pads of a plane net it does not reach, with no room for a via
         "unreachable": unreachable,  # connections of those pads, counted as open
@@ -284,6 +291,8 @@ def reach(board: Board, layers: list[Layer], buried: list[int], workers: int | N
     trial = copy.copy(board)
     trial.rules = copy.copy(rules)
     trial.rules.net_width, trial.rules.net_drawn = dict(rules.net_width), dict(rules.net_drawn)
+    trial.rules.net_full, trial.rules.fine = dict(rules.net_full), dict(rules.fine)
+    pads = {p.pad_id: p for p in board.pads}
     done: dict[int, tuple[float, float | None]] = {}
     built = None
     for step in steps:
@@ -294,6 +303,12 @@ def reach(board: Board, layers: list[Layer], buried: list[int], workers: int | N
             trial.rules.net_width[n] = width
             if drawn is not None:
                 trial.rules.net_drawn[n] = drawn
+            # Planned at its own width but near the pads it is narrowed for: as far as
+            # ``realize.taper`` draws it narrow there (the pad, a stretch and a wedge).
+            wide, narrow = rules.width(n), drawn or width
+            trial.rules.net_full[n] = wide
+            trial.rules.fine[n] = [(*pads[p].centre, _pad_reach(pads[p]) + wide + max(TAPER_WEDGE * (wide - narrow), wide))
+                                   for p in buried if net_of[p] == n]
         built = _layers(trial, workers)
         still = {net_of[p] for p in decompose(trial, built)[1]}
         done.update({n: w for n, w in tried.items() if n not in still})
@@ -306,12 +321,19 @@ def reach(board: Board, layers: list[Layer], buried: list[int], workers: int | N
         for n in left:
             trial.rules.net_width.pop(n, None)
             trial.rules.net_drawn.pop(n, None)
+            trial.rules.net_full.pop(n, None)
+            trial.rules.fine.pop(n, None)
             if n in rules.net_width:
                 trial.rules.net_width[n] = rules.net_width[n]
             if n in rules.net_drawn:
                 trial.rules.net_drawn[n] = rules.net_drawn[n]
         built = _layers(trial, workers)
     return trial, built, {n: trial.rules.drawn(n) for n in done}
+
+
+def _pad_reach(pad: Pad) -> float:
+    """How far a pad reaches from its centre (as ``realize.taper`` measures it)."""
+    return max(math.dist(pad.centre, p) for p in pad.shape.convex_hull.exterior.coords)
 
 
 def _unreachable(board: Board, buried: list[int]) -> int:
@@ -512,6 +534,8 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
     # Phase 3: negotiated rip-up and reroute. (Going on from a routing: as many rounds again, at the most.)
     if opts.ripup:
         negotiate(ctx, ctx.rounds + ctx.params.max_rounds if resumed else None)
+        if not ctx.late() and _narrow_again(ctx):
+            negotiate(ctx, ctx.rounds + ctx.params.max_rounds)
     # Phase 4: topology refinement, what still fits, and vias where a trace would do.
     settle(ctx, vias=True)
 
@@ -573,6 +597,32 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
     ctx.emit_snapshot(force=True, lines=lines)
     ctx.report("finished", complete=not ctx.open and not violations)
     return lines, violations, wire_net
+
+
+def _narrow_again(ctx: Context) -> bool:
+    """A net narrowed to reach fine-pitch pads is planned at its own width away
+    from them (``reach``). Where that leaves a connection open, the nets planned
+    so that are its own or in its way are planned narrow all along again, as
+    they were before (``Context.demote``), and every open connection may be
+    tried again. Returns whether any was."""
+    wide = {n for layer in ctx.layers for n, z in layer.state.zone.items() if z[0] is not None}
+    if not wide or not ctx.open:
+        return False
+    nets = set()
+    for w in sorted(ctx.open):
+        conn = ctx.conns[w]
+        if conn.net_id in wide:
+            nets.add(conn.net_id)
+            continue
+        r = find(ctx, conn, mode="relaxed")
+        if r is not None:
+            nets |= {ctx.conns[x].net_id for x in r.blocking if x in ctx.conns} & wide
+    if not nets:
+        return False
+    ctx.demote(nets)
+    for w in ctx.open:
+        ctx.conns[w].fails, ctx.conns[w].dead = 0, False
+    return True
 
 
 def _realize(ctx: Context):

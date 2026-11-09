@@ -75,9 +75,13 @@ def compare(base_path: str, new_path: str) -> bool:
             if x is not None and y is not None:
                 total[key][0] += x
                 total[key][1] += y
+        # Traces of nets narrowed to reach fine-pitch pads: tapered / narrow all along (older runs have none).
+        taper = f"tapered/narrow {a.get('tapered')}/{a.get('narrow')} -> {b.get('tapered')}/{b.get('narrow')}  " if "tapered" in a or "tapered" in b else ""
         print(f"{bid:26s} routed {a.get('routed')}/{a.get('connections')} -> {b.get('routed')}/{b.get('connections')}  "
               f"drc {na} -> {nb} {kinds or ''}  islands {ia} -> {ib}  mask/thermal {ma} -> {mb}  open {ua} -> {ub}  "
-              f"{'' if ca is None and cb is None else f'cut off {ca} -> {cb}  '}{ta:.0f} -> {tb:.0f} s{slow}" + (f"  WORSE: {', '.join(why)}" if why else ""))
+              f"{'' if ca is None and cb is None else f'cut off {ca} -> {cb}  '}"
+              f"{taper}"
+              f"{ta:.0f} -> {tb:.0f} s{slow}" + (f"  WORSE: {', '.join(why)}" if why else ""))
     d, i, m, o, c, t = total["drc"], total["islands"], total["apart"], total["open"], total["cut"], total["time"]
     print(f"TOTAL drc {d[0]} -> {d[1]}, islands {i[0]} -> {i[1]}, mask/thermal {m[0]} -> {m[1]}, open {o[0]} -> {o[1]}, "
           f"cut off {c[0]} -> {c[1]} (where both have it), "

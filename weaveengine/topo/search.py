@@ -210,7 +210,7 @@ def route(pmap: PlanarMap, state: TopoState, src_pad: int | None, dst_pad: int, 
                     pmap.tri_e, pmap.tri_v, pmap.edge_v, pmap.edge_t,
                     tb.tr, tb.length, tb.n, pmap.edge_kind, pmap.edge_owner, pmap.edge_mid,
                     state.count, state.corner, state.load, state.cap, state.hist, pen, pen is not no_pen, cor, mode == "corridor" or held is not None,
-                    relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, weight, tb.ride,
+                    relaxed, params.pres_fac if congestion else 0.0, congestion, params.cross_penalty, hard_cap, *state.search_weight(net, weight), tb.ride,
                     tb.own, own_ptr, own_edge, own_cost, own_node,
                     tx, ty, radius, params.h_weight, *far, bound, tb.g, tb.parent, tb.parent_tr, tb.touched,
                     tb.heap_f, tb.heap_g, tb.heap_n, best, best_node)

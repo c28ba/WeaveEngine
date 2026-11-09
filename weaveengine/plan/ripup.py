@@ -63,7 +63,7 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
             state = layer.state
             on = state.gate_order[e]
             skel = [w for w in on if ctx.conns[w].skeleton]
-            if skel and state.load[e] - sum(state.weight[w] for w in skel) <= state.cap[e] + 1e-9:
+            if skel and state.load[e] - sum(state.at(w, e) for w in skel) <= state.cap[e] + 1e-9:
                 rip.update(skel)
             else:
                 rip.update(on)
@@ -203,7 +203,7 @@ def give_way(ctx: Context, hold=frozenset()) -> int:
         for r in short.routes:
             state = ctx.layers[r.layer].state
             for g in r.gates:
-                if not state.fits(g, conn.weight):
+                if not state.fits(g, conn.weight, conn.net_id):
                     move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
         move = {x for x in move if ctx.conns[x].skeleton} - set(hold)  # (the traces in the way stay where they are)
         if not move:
@@ -276,7 +276,7 @@ def make_way(ctx: Context, hold=frozenset()) -> int:
         for r in short.routes:
             state = ctx.layers[r.layer].state
             for g in r.gates:
-                if not state.fits(g, conn.weight):
+                if not state.fits(g, conn.weight, conn.net_id):
                     move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
         move -= set(hold)
         if not move or len(move) > MOST_MOVED:
@@ -365,7 +365,7 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
             for r in short.routes:  # and what fills the gates of the short way that have no room for it
                 state = ctx.layers[r.layer].state
                 for g in r.gates:
-                    if not state.fits(g, conn.weight):
+                    if not state.fits(g, conn.weight, conn.net_id):
                         move |= {ctx.conns[x].parent or x for x in state.gate_order[g]}
             move.discard(w)
             if not move or len(move) > MOST_MOVED or move & hold or (w, frozenset(move)) in failed:

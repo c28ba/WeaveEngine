@@ -17,6 +17,7 @@ class Candidate:
     layer: int
     score: float = 0.0
     route_weight: float = 1.0  # gate load of the connection
+    net: int = -1              # its net (near a fine-pitch pad of a narrowed net, its load there is less)
 
 
 def generate(ctx: Context, conn: Connection, k: int | None = None, first: dict | None = None) -> list[Candidate]:
@@ -38,7 +39,7 @@ def generate(ctx: Context, conn: Connection, k: int | None = None, first: dict |
         pmap = ctx.layers[li].pmap
         for r in routes:
             r.layer = li
-            cand = Candidate(r, path_from_steps(pmap, r.steps), li, route_weight=conn.weight)
+            cand = Candidate(r, path_from_steps(pmap, r.steps), li, route_weight=conn.weight, net=conn.net_id)
             cand.score = score(ctx, conn, cand)
             cands.append(cand)
     cands.sort(key=lambda c: c.score)
@@ -125,7 +126,7 @@ def demand_overflow(ctx: Context, layer: Layer, conn: Connection, path: GatePath
     share = conn.weight / max(1, len(conn.layers))
     total = 0.0
     for g in path.gates:
-        over = load[g] + demand[g] - (share if g in own else 0.0) + conn.weight - cap[g]
+        over = load[g] + demand[g] - (share if g in own else 0.0) + layer.state.weight_on(conn.net_id, conn.weight, g) - cap[g]
         if over > 1e-9:
             total += over
     return total
@@ -145,7 +146,7 @@ def severed(ctx: Context, layer: Layer, conn: Connection, path: GatePath) -> set
     pmap, state = layer.pmap, layer.state
     welds: list[tuple[int, int, object]] = [(pmap.pad_obs[conn.src], pmap.pad_obs[conn.dst], path)]
     for g in path.gates:
-        if pmap.edge_kind_list[g] == GATE and not state.full(g) and state.full(g, conn.weight):
+        if pmap.edge_kind_list[g] == GATE and not state.full(g) and state.full(g, state.weight_on(conn.net_id, conn.weight, g)):
             u, v = pmap.edge_v_list[g]
             welds.append((pmap.v_obs_list[u], pmap.v_obs_list[v], g))
     cut: set[int] = set()

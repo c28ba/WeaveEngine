@@ -52,14 +52,22 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     wire_net = {w: pad_net.get(a, -1) for w, (a, _) in ends.items()}
 
     # Half of each wire's width beyond the base width the map was inflated for.
-    half = {w: board.rules.extra(net) for w, net in wire_net.items()}
+    # A net narrowed to reach fine-pitch pads is that narrow only on the gates
+    # near them (``TopoState.zone``): elsewhere it keeps the room of its own width.
+    rules, zone = board.rules, state.zone
+    half = {w: rules.extra(net) for w, net in wire_net.items()}
+    full = {w: (rules.full(net) - rules.base_width) / 2.0 for w, net in wire_net.items() if net in zone}
 
-    def spacing(w1: int, w2: int) -> float:
-        """Centreline distance two neighbouring wires must keep. Wires of one
-        net owe each other nothing: side by side they merge into one trace."""
+    def half_at(w: int, e: int) -> float:
+        z = zone.get(wire_net[w]) if full else None
+        return half[w] if z is None or z[0] is None or e in z[0] else full[w]
+
+    def spacing(w1: int, w2: int, e: int) -> float:
+        """Centreline distance two neighbouring wires must keep on gate e. Wires
+        of one net owe each other nothing: side by side they merge into one trace."""
         if wire_net[w1] == wire_net[w2] and wire_net[w1] >= 0:
             return 0.0
-        return d + half[w1] + half[w2]
+        return d + half_at(w1, e) + half_at(w2, e)
 
     # Corners of each wire's own two pads. A wire owes its own pad no clearance,
     # so it is not held away from them (that would bend it right after the pad).
@@ -79,12 +87,12 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
         if (e, vertex) not in kept:
             row = order[e] if vertex == edge_v[e][0] else order[e][::-1]
             via, net = via_keep.get(vertex, (0.0, -1))
-            total, out = 0.0 if vertex in own[row[0]] else half[row[0]], []
+            total, out = 0.0 if vertex in own[row[0]] else half_at(row[0], e), []
             for i, w in enumerate(row):
                 if i:
-                    total += spacing(row[i - 1], w)
+                    total += spacing(row[i - 1], w, e)
                 if via and wire_net[w] != net and vertex not in own[w]:
-                    total = max(total, via + half[w])
+                    total = max(total, via + half_at(w, e))
                 out.append(total)
             kept[e, vertex] = out if row is order[e] else out[::-1]
         return kept[e, vertex]
@@ -158,7 +166,7 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
         leaves its pad at ``vertex``: a spacing for every wire in between."""
         row = order[e][:k + 1] if vertex == edge_v[e][0] else order[e][:k - 1 if k else None:-1]
         row = row[row.index(other):] if other in row else [other] + row
-        return sum(spacing(a, b) for a, b in zip(row, row[1:]))
+        return sum(spacing(a, b, e) for a, b in zip(row, row[1:]))
 
     def guarded(w: int, discs: list[tuple], near: dict) -> list[tuple] | None:
         """``discs`` with one more for every point near them where a foreign
@@ -316,7 +324,7 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
             if (s < 1e-6 or s > lens[e] - 1e-6) and len(result[w]) > 3:
                 pressed.append((w, first, point(e, s)))
     if pressed:
-        _merge_pressed_ends(result, pressed, pmap, wire_net, half, board)
+        _merge_pressed_ends(result, pressed, pmap, wire_net, {**half, **full}, board)
     return result
 
 

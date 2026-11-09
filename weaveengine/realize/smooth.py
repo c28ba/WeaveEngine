@@ -66,7 +66,7 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
     copper += [(o.shape, o.net_id, rules.apart(o.clearance)) for o in board.obstacles_on(layer)]
     copper_tree = shapely.STRtree([c[0] for c in copper]) if copper else None
     farthest = max((c[2] for c in copper), default=rules.clearance)
-    widest = max([rules.trace_width, *rules.net_width.values()])
+    widest = max([rules.trace_width, *rules.net_width.values(), *rules.net_full.values()])
     edge = rules.outline_inset - rules.base_width / 2.0
     boundary = board.outline.boundary  # the edge and its cutouts
     rounded = kept = 0
@@ -89,7 +89,7 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
         for j in wire_tree.query(line, predicate="dwithin", distance=rules.clearance + half + widest / 2.0 + slack).tolist():
             other = ids[j]
             if other != w and wire_net[other] != net:
-                if line.distance(lines[j]) < rules.clearance + half + rules.width(wire_net[other]) / 2.0 + slack:
+                if line.distance(lines[j]) < rules.clearance + half + rules.width_at(wire_net[other], *corner) / 2.0 + slack:
                     return False
         for j in wire_tree.query(swept, predicate="intersects").tolist():
             if ids[j] != w and wire_net[ids[j]] != net:
@@ -98,7 +98,6 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
 
     for w, pts in polylines.items():
         net = wire_net[w]
-        half = rules.width(net) / 2.0
         if len(pts) < 3:
             out[w] = pts
             continue
@@ -112,6 +111,7 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
                 new.append(b)
                 continue
             reach = SHARE * min(math.dist(a, b), math.dist(b, c))
+            half = rules.width_at(net, *b) / 2.0  # (a net narrowed to reach fine-pitch pads keeps the room of its own width away from them)
             done = False
             for part in TRIES:
                 arc, sag = _arc(a, b, c, reach * part) if reach * part > 1e-4 else (None, 0.0)
