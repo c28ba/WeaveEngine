@@ -553,7 +553,7 @@ class BoardView(QGraphicsView):
                 self.pour_items.append(item)
                 if piece.kind == "cut":
                     # Each pad of the net the pour does not reach: outlined in the cut-off colour, thick, whatever the zoom.
-                    pen = QPen(QColor(CUT_OFF_COLOR), 3)
+                    pen = QPen(QColor(CUT_OFF_COLOR), 5)
                     pen.setCosmetic(True)
                     for pad in self.board.pads:
                         if pad.pad_id in piece.pad_ids and not pad.is_via:
