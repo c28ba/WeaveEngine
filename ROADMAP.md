@@ -113,7 +113,12 @@ sweep (`bench/sweep`, quick boards first) shows nothing worse than before.
   gates like any other wire. Wires never cross, so no trace can cut it, and
   KiCad's fill covers it. Where a dense board has no room for it, its pad is
   joined by a via to the net's plane on another layer, as now, and named.
-  Design 11.3.
+  Design 11.3. Built on the branch `pour-skeleton` (option `skeleton`,
+  `--skeleton`, off by default): cut-off pads 379 to 57 on tier 2 and 412
+  open items instead of 512 in KiCad, but 29 connections fewer routed on
+  three dense boards and twice the time. Still to do: skeletons that cost
+  traces less (thinner where room is short, or priced below a trace in
+  negotiation), then measure again.
 - **Pours shown while routing.** Draw each zone (its net, layer and outline)
   on the board view, and, as the routing grows, an estimate of the copper
   KiCad will fill there, with islands and cut-off sections marked, so a

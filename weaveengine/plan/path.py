@@ -197,6 +197,8 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
     if max_vias is None:
         max_vias = params.max_vias if ctx.vias else 0
     changes = params.max_vias if len(ctx.layers) > 1 else 0  # of layer: at a new via, or at copper the net has on both
+    if conn.skeleton:  # a pour's skeleton stays on its layer (``plan.skeleton``)
+        max_vias = changes = 0
     goal = ctx.pad_centre(conn.dst)
     penalty = penalty or {}
     search = dict(weight=conn.weight, net=conn.net_id, reach=True, target=goal, through=through, **how)

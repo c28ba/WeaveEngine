@@ -113,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
     ap.add_argument("--no-fanout", action="store_true",
                     help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
+    ap.add_argument("--skeleton", action="store_true",
+                    help="a skeleton in each pour, which traces go round, so that none cuts the pour into pieces "
+                         "(design 11.3; some boards route fewer connections with it)")
     ap.add_argument("--no-narrowing", action="store_true",
                     help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
     ap.add_argument("--no-ses-teardrops", action="store_true",
@@ -224,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     rules.edge_clearance = want_edge + args.margin
     rules.margin = args.margin
     options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
-                      fanout=not args.no_fanout)
+                      fanout=not args.no_fanout, skeleton=args.skeleton)
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
     overrides = {}
     if args.max_rounds is not None:
@@ -260,6 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     for wire in result.unrouted:
         conn = result.connections[wire]
         print(f"  unrouted: net {names.get(conn.net_id, conn.net_id)}: {pads[conn.src].name} -> {pads[conn.dst].name}")
+    if stats["skeletons"] > stats["skeletons_routed"]:
+        print(f"  pours: {stats['skeletons'] - stats['skeletons_routed']} of {stats['skeletons']} joins of pads through their pour "
+              "gave way to traces")
     if stats["fanout"]:
         print(f"  {stats['fanout']} vias placed to join pads to their net's plane")
     if stats["plane_left"]:

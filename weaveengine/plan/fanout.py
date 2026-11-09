@@ -31,19 +31,23 @@ HOLES = 0.25       # mm a via keeps from a through-hole pad or fixed via of its 
 FILL = 0.25        # mm: a pour's fill is not narrower than this (KiCad's default zone minimum width)
 
 
-def covered(board: Board, pad: Pad) -> bool:
-    """Whether a plane of the pad's net reaches the pad on a layer it has copper on."""
+def covered(board: Board, pad: Pad, cut=frozenset()) -> bool:
+    """Whether a plane of the pad's net reaches the pad on a layer it has copper on
+    (not one where it is in a piece ``cut`` off from the rest: (pad, layer) pairs)."""
     centre = Point(pad.centre)
-    return any(net == pad.net_id and pad.on(layer) and shape.contains(centre) for net, layer, shape in board.pours)
+    return any(net == pad.net_id and pad.on(layer) and (pad.pad_id, layer) not in cut and shape.contains(centre)
+               for net, layer, shape in board.pours)
 
 
-def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=()) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
+def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), cut=frozenset()) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
     """For the routed ``board`` (its vias among its pads), its traces and other
     copper ``shapes`` (shape, net, layer: teardrops): the vias to add, the
     traces to add as (net, layer, points), and the pads that were left with no
-    place for one."""
+    place for one. ``cut``: (pad, layer) of the pads a pour reaches only in a
+    piece cut off from the rest of it (``pours.estimate``): joined as if that
+    pour did not reach them, by a via to a plane of the net on another layer."""
     rules = board.rules
-    lonely = _lonely(board)
+    lonely = _lonely(board, cut)
     if not lonely:
         return [], [], []
     r = rules.via_diameter / 2.0
@@ -162,7 +166,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
         # A plane of its net on its own layer that stops short of it: a short trace into the plane, no via.
         into = None
         for at, shape, _ in pours.get(pad.net_id, ()):
-            if at == layer and pad.shape.distance(shape) <= REACH:
+            if at == layer and (pad.pad_id, at) not in cut and pad.shape.distance(shape) <= REACH:
                 inner = shape.buffer(-(half + GAP))
                 if not inner.is_empty:
                     q = shapely.ops.nearest_points(inner, Point(start))[0]
@@ -191,7 +195,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     return vias, traces, left
 
 
-def _lonely(board: Board) -> list[Pad]:
+def _lonely(board: Board, cut=frozenset()) -> list[Pad]:
     """The pads of plane nets no plane reaches, by itself or through copper of
     its net it touches: other pads (an exposed pad's own holes, say) and fixed
     wiring (a locked trace to a locked via in the plane). Not other copper the
@@ -209,7 +213,7 @@ def _lonely(board: Board) -> list[Pad]:
     for net in sorted(by_net):
         pads = by_net[net]
         # (shape, layers, whether a plane reaches it) of each pad of the net, then of each piece of its fixed copper
-        items = [(p.shape, p.layers, covered(board, p)) for p in pads]
+        items = [(p.shape, p.layers, covered(board, p, cut)) for p in pads]
         items += [(o.shape, o.layers, any(n == net and o.on(at) and shape.intersects(o.shape) for n, at, shape in board.pours))
                   for o in fixed.get(net, ())]
         tree = shapely.STRtree([shape for shape, _, _ in items])

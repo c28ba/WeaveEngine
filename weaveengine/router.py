@@ -13,10 +13,12 @@ from weaveengine.board import Board, Pad
 from weaveengine.plan import candidates as cand_mod
 from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
+from weaveengine.plan import skeleton
 from weaveengine.plan.fanout import fanout
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
+from weaveengine.pours import estimate as estimate_pours
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.teardrop import teardrops as make_teardrops
@@ -108,11 +110,21 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         if narrowed:
             pairs, buried = decompose(board, layers)
     run_params = copy.copy(params) if params else CostParams.for_map(layers[0].pmap)
+    drawn_board = board  # (with the rules the traces are drawn and checked with: the skeletons' widths are the routing's only)
+    skeletons = skeleton.plan(board, layers) if options.skeleton and board.pours else []
+    if skeletons:
+        board = copy.copy(board)
+        board.rules = copy.copy(board.rules)
+        board.rules.net_width = dict(board.rules.net_width)
+        nets = {net for net, _, _, _ in skeletons}
+        board.rules.net_width.update({net: skeleton.width(board.rules) for net in nets})
+        skeleton.hold(board, layers, nets)
     ctx = Context(board, layers, pairs, run_params, options, seed, workers,
-                  (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events)
+                  (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events,
+                  skeletons)
     ctx.deadline = deadline
     # (As built: before any via is put into them. With the areas no via may touch, which are not in them.)
-    maps = [_print(layer.pmap) for layer in layers] + [area.wkt for area in board.no_via]
+    maps = [_print(layer.pmap) for layer in layers] + [area.wkt for area in board.no_via] + (["skeletons"] if skeletons else [])
     if resume is not None:
         if resume["maps"] != maps:
             raise ValueError("the board or its rules have changed since that routing was made: it cannot be gone on from (route it from nothing: Restart)")
@@ -126,11 +138,12 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
             lines, violations, wire_net = dict(resume["lines"]), list(resume["violations"]), dict(resume["wire_net"])
     routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
+    work.rules = drawn_board.rules
     lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations)
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
         ctx.emit_snapshot(force=True, lines=lines)
-        events({"type": "pass", "pass": 1, "open": len(ctx.unrouted), "connections": len(pairs),
+        events({"type": "pass", "pass": 1, "open": len(ctx.open), "connections": len(pairs),
                 "vias": sum(1 for p in work.pads if p.is_via)})
     t_route = time.perf_counter()
 
@@ -153,7 +166,10 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     planed, unplaned = [], []
     if options.fanout and work.pours:  # vias down to the planes, among everything routed (``plan.fanout``)
         shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drops.items() if w in wire_layer for poly in polys]
-        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes)
+        # With skeletons: a pad its pour reaches only in a piece cut off from the rest is joined as one the pour does not reach.
+        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, drops) for piece in pour.pieces
+               if piece.kind == "cut" for p in piece.pad_ids} if skeletons else set()
+        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut)
         work.pads = work.pads + planed
         vias = vias + planed
         w = max(list(ctx.conns) + list(lines), default=-1) + 1
@@ -171,7 +187,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     # allows, outside the board, inside a keepout) leaves its connections open too.
     unreachable = _unreachable(board, buried)
     total = len(pairs) + unreachable
-    done = len(pairs) - len(ctx.unrouted)
+    done = len(pairs) - len(ctx.open)
     stats = {
         "connections": total,
         "routed": done,
@@ -191,6 +207,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "fanout": len(planed),  # vias placed to join pads to their net's plane (``plan.fanout``)
         "plane_left": [p.pad_id for p in unplaned],  # pads of a plane net it does not reach, with no room for a via
         "unreachable": unreachable,  # connections of those pads, counted as open
+        "skeletons": len(skeletons),  # connections of the pours' skeletons (``plan.skeleton``)
+        "skeletons_routed": len(skeletons) - ctx.skeletons_open(),
         "wires_per_layer": {l.name: sum(1 for li in wire_layer.values() if li == l.index) for l in ctx.layers},
         "time_route": t_route - t0,
         "time_total": t_end - t0,
@@ -198,17 +216,19 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
-    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.unrouted), vias, drops, stats, kept=routing)
+    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, kept=routing)
 
 
 def _drawn(ctx: Context, work: Board, lines: dict, violations: list) -> tuple[dict, list, dict, list[Pad]]:
     """What of a routing is drawn: the traces less those that join nothing
     new (``_redundant``) and pieces of no length, the violations left among
     them, each trace's layer, and the vias a trace ends on. ``work``: the
-    board with the vias as pads (``Context.board_with_vias``)."""
+    board with the vias as pads (``Context.board_with_vias``). The pours'
+    skeletons are not drawn: they are the fill's (``plan.skeleton``)."""
+    lines = {w: line for w, line in lines.items() if not ctx.conns[w].skeleton}
     loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
     lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
-    violations = [v for v in violations if not loops.intersection(v.wires)]
+    violations = [v for v in violations if not loops.intersection(v.wires) and not any(w in ctx.conns and ctx.conns[w].skeleton for w in v.wires)]
     wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
     used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
     vias = [p for p in work.pads if p.is_via and p.pad_id in used]
@@ -221,9 +241,9 @@ def _draft(ctx: Context, lines: dict, violations: list, wire_net: dict) -> Resul
     (those come after the race). For ``route_board``'s ``checkpoint``."""
     work = ctx.board_with_vias()
     lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations)
-    total = sum(1 for c in ctx.conns.values() if c.parent is None)
+    total = sum(1 for c in ctx.conns.values() if c.parent is None and not c.skeleton)
     return Result(ctx.board, [], {}, lines, {w: wire_net[w] for w in lines if w in wire_net}, wire_layer, violations,
-                  sorted(ctx.unrouted), vias, stats={"connections": total, "routed": total - len(ctx.unrouted), "vias": len(vias)})
+                  sorted(ctx.open), vias, stats={"connections": total, "routed": total - len(ctx.open), "vias": len(vias)})
 
 
 def _layers(board: Board, workers: int | None) -> list[Layer]:
@@ -351,9 +371,11 @@ def _print(pmap: PlanarMap) -> str:
 
 
 def _key(ctx: Context, lines: dict, violations: list) -> tuple:
-    """How good a routing is, least best: connections open, violations, copper (a shared trunk once)."""
-    copper = sum(copper_length([line for w, line in lines.items() if ctx.conns[w].layer == layer.index]) for layer in ctx.layers)
-    return (len(ctx.unrouted), len(violations), round(copper, 3))
+    """How good a routing is, least best: connections open, violations, the pours' skeletons
+    open, copper (a shared trunk once; the skeletons' is not copper)."""
+    copper = sum(copper_length([line for w, line in lines.items() if ctx.conns[w].layer == layer.index and not ctx.conns[w].skeleton])
+                 for layer in ctx.layers)
+    return (len(ctx.open), len(violations), ctx.skeletons_open(), round(copper, 3))
 
 
 def _keep(ctx: Context, lines: dict, violations: list, wire_net: dict, maps: list | None = None) -> dict:
@@ -501,7 +523,7 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
         dropped: set[int] = set()
         for v in violations:
             if not dropped.intersection(v.wires):
-                dropped.add(max(v.wires))
+                dropped.add(max(v.wires, key=lambda w: (w in ctx.conns and ctx.conns[w].skeleton, w)))  # (a pour's skeleton gives way first)
         for w in dropped:
             if w in ctx.conns:  # not a piece of a connection ripped up a moment ago
                 ctx.rip(w)
@@ -526,7 +548,7 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
         ctx.report("straightening vias")
         lines, violations, wire_net = slide(ctx, lines, violations, wire_net, _realize)
     ctx.emit_snapshot(force=True, lines=lines)
-    ctx.report("finished", complete=not ctx.unrouted and not violations)
+    ctx.report("finished", complete=not ctx.open and not violations)
     return lines, violations, wire_net
 
 
