@@ -117,3 +117,33 @@ def test_no_via_areas_are_drawn_hatched_blue():
     view.set_board(board)
     hatched = [i for i in view.scene().items() if isinstance(i, QGraphicsPolygonItem) and i.brush().style() == Qt.BDiagPattern]
     assert len(hatched) == 1
+
+
+def test_skip_nets_setting_is_a_text_field_and_skips_by_glob(tmp_path):
+    from tests.conftest import demo_board
+    from weaveengine.io.dsn import read_dsn, write_dsn
+    from weaveengine.settings import Settings, skip_nets
+    dsn = str(tmp_path / "board.dsn")
+    write_dsn(demo_board(), dsn)
+    design = read_dsn(dsn)
+    name = sorted(design.net_names.values())[0]
+    before = len(design.board.nets())
+    s = Settings(skip_nets=f" {name[:-1]}* , nothing ")
+    assert "left unrouted by choice" in skip_nets(design, s.skip_nets.split(","))
+    assert len(design.board.nets()) < before
+    assert skip_nets(design, ["", " "]) == "" and not design.board.skip_nets
+    path = str(tmp_path / "s.json")
+    s.save(path)
+    assert Settings.load(path).skip_nets == s.skip_nets
+
+
+def test_cli_skip_net_leaves_the_net_out(tmp_path):
+    from tests.conftest import demo_board
+    from weaveengine.io.dsn import read_dsn, write_dsn
+    dsn = str(tmp_path / "board.dsn")
+    write_dsn(demo_board(), dsn)
+    name = sorted(read_dsn(dsn).net_names.values())[0]
+    done = subprocess.run([sys.executable, "-m", "weaveengine.cli", dsn, "--quiet", "--skip-net", name[:-1] + "*"],
+                          cwd=ROOT, capture_output=True, text=True, timeout=240)
+    assert "left unrouted by choice" in done.stdout and name in done.stdout, done.stdout + done.stderr
+    assert f"unrouted: net {name}" not in done.stdout

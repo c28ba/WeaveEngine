@@ -156,6 +156,7 @@ class Board:
                                                        # through them, so their copper, keepouts and pours are kept, with the
                                                        # layer indices after the routed layers'
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
+    skip_nets: set[int] = field(default_factory=set)   # nets left unrouted by the user's choice (a pour, if any, is still fanned out to)
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
@@ -183,4 +184,4 @@ class Board:
         for p in self.pads:
             if p.net_id >= 0:
                 nets.setdefault(p.net_id, []).append(p.pad_id)
-        return {n: pads for n, pads in nets.items() if len(pads) >= 2 and n not in self.plane_nets}
+        return {n: pads for n, pads in nets.items() if len(pads) >= 2 and n not in self.plane_nets and n not in self.skip_nets}

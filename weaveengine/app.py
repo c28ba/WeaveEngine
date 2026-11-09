@@ -17,7 +17,7 @@ from shapely.geometry import Point
 from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QFrame, QGraphicsScene, QGraphicsView, QGridLayout,
-                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
+                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from weaveengine import HOME, __version__, accel, safe_output
@@ -28,7 +28,7 @@ from weaveengine.io.ses import write_ses
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
-from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, RULES, Settings, default_path, detected_rules, undetected
+from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, RULES, Settings, default_path, detected_rules, skip_nets, undetected
 from weaveengine.viz.svg import export_result
 
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227", "#b06cff", "#22cfcf"]
@@ -554,6 +554,10 @@ class SettingsDialog(QDialog):
                 box.setToolTip(description)
                 form.addRow(box)
                 self.readers[name], self.writers[name] = box.isChecked, box.setChecked
+            elif isinstance(value, str):
+                edit = QLineEdit()
+                form.addRow(label, edit)
+                self.readers[name], self.writers[name] = edit.text, edit.setText
             elif name in AUTOMATIC:
                 self._automatic_row(form, name, label, description, isinstance(value, int))
             else:
@@ -912,6 +916,7 @@ class MainWindow(QMainWindow):
         self.stop()
         self.dsn_path, self.design, self.result, self.routed_design = path, design, None, None
         board = design.board
+        skipped = skip_nets(design, self.settings.skip_nets.split(","))
         self.view.set_board(board)
         nets = board.nets()
         connections = sum(len(p) - 1 for p in nets.values())
@@ -923,6 +928,8 @@ class MainWindow(QMainWindow):
         if board.plane_nets:
             self.say(f"  {len(board.plane_nets)} nets have a copper plane and will not be routed: "
                      + ", ".join(sorted(design.net_names[n] for n in board.plane_nets)))
+        if skipped:
+            self.say("  " + skipped)
         while self.layer_box.count():
             self.layer_box.takeAt(0).widget().deleteLater()
         for i, name in enumerate(board.layers):

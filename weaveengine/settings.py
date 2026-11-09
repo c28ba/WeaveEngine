@@ -7,6 +7,7 @@ are ignored and missing ones take their defaults.
 import json
 import os
 import sys
+from fnmatch import fnmatchcase
 from dataclasses import asdict, dataclass, fields
 
 from weaveengine.board import Rules
@@ -43,6 +44,8 @@ DESCRIPTIONS = {
     "show_names": ("Component names", "Draw every part's reference", "View"),
     "gpu_drawing": ("Draw with the graphics card", "Much faster on large boards. If this machine cannot do it, or it once failed, "
                     "the ordinary drawing is used instead", "View"),
+    "skip_nets": ("Nets not to route", "Names separated by commas; * and ? match any text (GND*, say). Treated as a net with a "
+                  "pour already: not routed, and not counted as open", "Routing"),
     "untangle": ("Undo long detours", "Move the traces that force a connection the long way round, where that leaves less copper", "Routing"),
     "narrow_to_reach": ("Narrow traces to reach fine-pitch pins", "Where a net's pads cannot be reached at its class's width, route it "
                         "narrower, down to the board's minimum track width (from the KiCad project)", "Routing"),
@@ -102,6 +105,7 @@ class Settings:
     untangle: bool = True
     narrow_to_reach: bool = True
     fanout_to_planes: bool = True
+    skip_nets: str = ""  # comma-separated net names or patterns
     smooth_corners: bool = True
     show_outlines: bool = True
     show_names: bool = True
@@ -187,12 +191,27 @@ class Settings:
             names = design.net_names
             notes.append(f"{len(board.plane_nets)} nets have a copper plane and are not routed: "
                          + ", ".join(sorted(names[n] for n in board.plane_nets)))
+        note = skip_nets(design, self.skip_nets.split(","))
+        if note:
+            notes.append(note)
         want_clearance = rules.clearance
         want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
         rules.clearance = want_clearance + self.margin
         rules.edge_clearance = want_edge + self.margin
         rules.margin = self.margin
         return want_clearance, want_edge, notes
+
+
+def skip_nets(design, patterns) -> str:
+    """Marks the nets whose names match any of ``patterns`` (globs) as not to be routed.
+    Returns the line to tell the user, or "" if none matched."""
+    patterns = [p.strip() for p in patterns if p.strip()]
+    hit = {n for n, name in design.net_names.items() if any(fnmatchcase(name, p) for p in patterns)}
+    design.board.skip_nets = hit
+    if not hit:
+        return ""
+    return (f"{len(hit)} nets are left unrouted by choice and not counted as open: "
+            + ", ".join(sorted(design.net_names[n] for n in hit)))
 
 
 RULES = ("trace_width", "clearance", "via_diameter", "via_drill", "edge_clearance")  # the rules settings can override
