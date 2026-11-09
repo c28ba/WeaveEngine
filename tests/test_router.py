@@ -756,6 +756,22 @@ def test_a_teardrop_fill_met_from_a_long_pads_side_ends_on_the_pad():
     assert all(pad.distance(Point(b)) < width / 4.0 for _, _, b in tracks)
 
 
+def test_a_teardrop_fill_leaves_no_notch_at_a_rounded_pad_corner():
+    """Where the fan meets a rounded corner of the pad, the round end of its outer
+    line stops short of the corner and left a notch; the outer lines now go on to
+    the teardrop's corner on the pad."""
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+    from weaveengine.io.ses import teardrop_tracks
+    from weaveengine.realize.teardrop import _polygonal
+    pad = box(-0.75, -0.3, 0.75, 0.3).buffer(-0.15).buffer(0.15, quad_segs=8)
+    width, tip = 0.4, (0.0, 1.05)
+    poly = _polygonal((0.0, 0.0), list(pad.exterior.coords)[:-1], tip, width / 2.0, 2.0)
+    copper = unary_union([LineString([a, b]).buffer(w / 2.0) for w, a, b in teardrop_tracks(poly, width)]
+                         + [pad, LineString([tip, (0.0, 3.0)]).buffer(width / 2.0)])
+    assert Polygon(poly[:5]).difference(copper).area < 1e-9
+
+
 def test_kernel_self_check_never_crashes_and_falls_back(monkeypatch):
     """A numba that loads but does not work must give a clear warning and a working router."""
     from weaveengine import accel
