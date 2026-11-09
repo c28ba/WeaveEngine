@@ -19,13 +19,16 @@ def negotiate(ctx: Context, max_rounds: int | None = None) -> None:
     The best solution seen (fewest violations, then shortest) is kept."""
     params = ctx.params
     max_rounds = params.max_rounds if max_rounds is None else max_rounds
-    best_key, best_snap, stall = None, None, 0
+    best_key, best_snap, stall, traces = None, None, 0, None
     first_violations = max(1, ctx.violations())
 
     for _ in range(max_rounds + 1):
         key = (ctx.violations(), ctx.skeletons_open(), ctx.estimated_length())
         if best_key is None or key < best_key:
-            best_key, best_snap, stall = key, ctx.snapshot(), 0
+            best_key, best_snap = key, ctx.snapshot()
+        # (Only the traces count towards going on: rip-up runs as long as it betters them, not the skeletons.)
+        if traces is None or (key[0], key[2]) < traces:
+            traces, stall = (key[0], key[2]), 0
         else:
             stall += 1
         over = [(layer, e) for layer in ctx.layers for e in layer.state.overflowed_gates()]
@@ -139,6 +142,16 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
     connection through vias is then planned again, the others being in their
     final places. The connections in ``hold`` are left exactly as they are."""
     legalise(ctx)
+    # The pours' skeletons that are out (all of them, the first time: they wait till the traces are negotiated):
+    # in where they fit, and where traces can move for them.
+    ctx.later = False
+    out = sorted((c for c in ctx.conns.values() if c.skeleton and c.parent is None and not c.routed and c.wire_id not in hold),
+                 key=lambda c: (c.air_len, c.wire_id))
+    for c in out:
+        c.dead = False
+        place(ctx, c, find(ctx, c, hard_cap=True), hard_cap=True)
+    if out:
+        ctx.rebuild_barrier()
     give_way(ctx, hold)
     make_way(ctx, hold)
     if ctx.late():  # past the time limit: only what makes the routing legal, and what fits as it stands
@@ -159,6 +172,8 @@ def settle(ctx: Context, hold=frozenset(), vias: bool = False) -> None:
             if not replan(ctx, hold=hold):
                 break
             refine(ctx, hold=hold)
+            fill(ctx, hold)
+        if give_way(ctx, hold):  # (what refinement left open, a skeleton in its way)
             fill(ctx, hold)
 
 

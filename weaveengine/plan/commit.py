@@ -2,7 +2,7 @@
 import math
 
 from weaveengine import parallel
-from weaveengine.plan.candidates import _LAST, Candidate, best_route, replay
+from weaveengine.plan.candidates import Candidate, best_route, replay
 from weaveengine.plan.context import Context
 from weaveengine.plan.path import Path, place
 from weaveengine.topo.search import Route, route
@@ -11,7 +11,7 @@ from weaveengine.topo.search import Route, route
 def commit_all(ctx: Context, cands: dict[int, list[Candidate]], selection: dict[int, int]) -> list[int]:
     """Commits every unrouted connection it can. Returns the wire ids that failed."""
     params = ctx.params
-    pending = set(ctx.unrouted)
+    pending = {w for w in ctx.unrouted if not (ctx.later and ctx.conns[w].skeleton)}  # (skeletons put in later: not now)
     users: dict[tuple[int, int], set[int]] = {}  # (layer, gate) -> connections whose candidates use it
     for w in pending:
         for c in cands.get(w, []):
@@ -24,8 +24,6 @@ def commit_all(ctx: Context, cands: dict[int, list[Candidate]], selection: dict[
         return c.score + params.pres_fac * over
 
     def regret(w: int) -> float:
-        if ctx.conns[w].skeleton and _LAST:
-            return -math.inf
         if not ctx.options.regret_order:
             return -ctx.conns[w].air_len  # shortest first
         costs = sorted(current_cost(c) for c in cands.get(w, []))

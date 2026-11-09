@@ -1,6 +1,7 @@
 """Shared routing context: layers, connections, demand map, airwire index, barrier (Phase 0)."""
 import copy
 import math
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -243,6 +244,8 @@ class Context:
         self.next_wire = len(self.conns) + 1             # ids of the pieces of connections through vias; never reused
         self.next_pad = max((p.pad_id for p in board.pads), default=-1) + 1   # pad ids of via sites
         self._legal = None
+        # The pours' skeletons are put in once the traces have been negotiated (``ripup.settle``), not before.
+        self.later = bool(skeletons) and os.environ.get("WE_SKEL_MODE", "late") == "late"
         self.trail: list | None = None  # while recording (``record``): how to take out each commit, in order
         self._setup()
 
@@ -306,6 +309,8 @@ class Context:
     def _setup(self) -> None:
         """Phase 0: airwire paths and the demand map (9.2)."""
         for c in self.conns.values():
+            if c.skeleton and self.later:
+                continue  # (skeletons put in later: nothing of theirs is seen before)
             for li in c.layers:
                 layer = self.layers[li]
                 pmap = layer.pmap
@@ -728,4 +733,5 @@ class Context:
 
     def estimated_length(self) -> float:
         """The copper of the routing as it stands, through the middles of the gates; a trunk wires of one net share is counted once."""
-        return sum(self.wire_copper(layer, w, first=True) for layer in self.layers for w in layer.state.wire_path)
+        return sum(self.wire_copper(layer, w, first=True) for layer in self.layers for w in layer.state.wire_path
+                   if not self.conns[w].skeleton)  # (a skeleton is not copper: the pour's)

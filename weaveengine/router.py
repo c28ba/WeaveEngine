@@ -494,6 +494,9 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             selection = select(ctx, cands)
         # Phase 2: commit in regret order.
         commit_all(ctx, cands, selection)
+        if ctx.later:  # (the skeletons wait till the traces are settled: ``ripup.settle``)
+            for conn in ctx.conns.values():
+                conn.dead = conn.dead or conn.skeleton
     else:
         for conn in ctx.conns.values():  # what could not be done then may be possible now: try everything again
             conn.fails, conn.dead = 0, False
@@ -515,6 +518,12 @@ def _route_once(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bo
             break
         ctx.report("design-rule repair", fix, drc_rounds)
         disturbed = True
+        if opts.refine and not ctx.late():  # the skeletons wait out the repair: settling puts them back (``ripup.settle``)
+            for conn in [c for c in ctx.conns.values() if c.skeleton and c.parent is None]:
+                if conn.routed:
+                    ctx.rip(conn.wire_id)
+                conn.dead = True
+            ctx.rebuild_barrier()
         if opts.ripup and not ctx.late():
             negotiate(ctx, max_rounds=ctx.rounds + 5)
         legalise(ctx)
@@ -562,7 +571,8 @@ def _realize(ctx: Context):
         for w in changed:
             layer.paths[w] = path_from_steps(layer.pmap, layer.state.wire_path[w])
         lines.update(l)
-        violations += v
+        # (a pour's skeleton is not copper: what comes too near it is not a violation, the fill there is only narrower)
+        violations += [x for x in v if not any(w in ctx.conns and ctx.conns[w].skeleton for w in x.wires)]
         wire_net.update(n)
     return lines, violations, wire_net
 
