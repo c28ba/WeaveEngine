@@ -12,6 +12,7 @@ from weaveengine.io.ses import write_ses
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
 from weaveengine.router import route_board
+from weaveengine.settings import skip_nets
 from weaveengine.topo import planar_map
 from weaveengine.topo.costs import CostParams
 from weaveengine.viz.svg import export_result
@@ -138,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--time-limit", type=float, metavar="MINUTES",
                     help="stop bettering the routing after this many minutes from the start, and write the best found so far "
                          "(its geometry and check take a little longer still; default: no limit)")
+    ap.add_argument("--skip-net", action="append", metavar="NAME", default=[],
+                    help="a net not to route, as one with a pour is (repeatable; * and ? match any text: GND*)")
     ap.add_argument("--quiet", action="store_true", help="no progress bar")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
@@ -193,6 +196,9 @@ def main(argv: list[str] | None = None) -> int:
         names = design.net_names
         print(f"{len(design.board.plane_nets)} nets have a copper plane and are not routed as traces: "
               + ", ".join(sorted(names[n] for n in design.board.plane_nets)))
+    note = skip_nets(design, args.skip_net)
+    if note:
+        print(note)
     layer_cost = {}
     for item in args.layer_cost or ():
         name, _, factor = item.rpartition(":")
