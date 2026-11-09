@@ -52,6 +52,7 @@ DESCRIPTIONS = {
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
     "teardrops": ("Teardrops", "Add teardrops where traces meet pads and vias", "Teardrops"),
     "teardrops_in_ses": ("Write teardrops to the SES", "As fans of ordinary traces (SES has no filled shapes)", "Teardrops"),
+    "arcs_in_ses": ("Write arcs to the SES", "Curves as arcs (qarc) instead of many short segments", "Routing"),
     "teardrop_max_length": ("Longest teardrop (mm)", "Beyond the pad edge", "Teardrops"),
     "teardrop_max_width": ("Widest teardrop (mm)", "Across, at the pad", "Teardrops"),
     "teardrop_breathing": ("Teardrop breathing room", "Clearances kept from foreign copper; cramped teardrops are left out", "Teardrops"),
@@ -108,6 +109,7 @@ class Settings:
     gpu_drawing: bool = False
     teardrops: bool = True
     teardrops_in_ses: bool = True
+    arcs_in_ses: bool = True
     teardrop_max_length: float = 1.0
     teardrop_max_width: float = 2.0
     teardrop_breathing: float = 1.5

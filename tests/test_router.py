@@ -503,7 +503,7 @@ def test_pic_programmer_board(tmp_path):
     assert min(result.stats["wires_per_layer"].values()) > 10  # both layers are used
 
     out = str(tmp_path / "pic.ses")
-    write_ses(design, result, out, teardrops=False)
+    write_ses(design, result, out, teardrops=False, arcs=False)
     session = parse_sexpr(open(out, encoding="utf-8").read())
     routes = next(c for c in session if isinstance(c, list) and c[0] == "routes")
     nets = [c for c in next(c for c in routes if isinstance(c, list) and c[0] == "network_out") if isinstance(c, list)]
@@ -613,7 +613,7 @@ def test_a_time_limit_ends_the_run_in_time_and_writes_the_best_routing(tmp_path,
     monkeypatch.setattr(cli, "route_board", route_board)
     out = str(tmp_path / "lily.ses")
     start = time.time()
-    cli.main([LILY, "-o", out, "--time-limit", "0.05", "--workers", "2", "--portfolio", "2", "--quiet", "--no-ses-teardrops"])
+    cli.main([LILY, "-o", out, "--time-limit", "0.05", "--workers", "2", "--portfolio", "2", "--quiet", "--no-ses-teardrops", "--no-ses-arcs"])
     assert time.time() - start < 3.0 + ALLOWANCE
     text = capsys.readouterr().out
     assert "saved the best routing so far" in text and "the time limit was reached" in text and "-> OK" in text
@@ -734,8 +734,8 @@ def test_teardrops_are_written_to_the_session_as_traces(tmp_path):
             # together they fill it
             assert unary_union(copper + [pad.shape, track]).area > 0.999 * unary_union([tear, pad.shape, track]).area
             count += len(tracks)
-    write_ses(design, result, with_drops)
-    write_ses(design, result, without, teardrops=False)
+    write_ses(design, result, with_drops, arcs=False)
+    write_ses(design, result, without, teardrops=False, arcs=False)
     assert len(read_session(without)[0]) == 4
     assert len(read_session(with_drops)[0]) == 4 + count
     assert measure(design, with_drops).ok  # the fill keeps every clearance too
