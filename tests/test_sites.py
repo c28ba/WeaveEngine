@@ -570,3 +570,27 @@ def test_a_moved_via_realises_clean(via_at, to):
         gap = min(LineString(lines[w]).distance(copper) for w in lines if wire_net[w] != 1)
         assert gap >= rules.clearance + rules.trace_width / 2.0 - 1e-3
 
+
+
+def test_a_map_takes_up_a_log_that_went_back_before_its_own_end():
+    """A raced variant may rewind past where it was copied and go another way; the parent follows its log (22)."""
+    board = grid_board(6, 10.0, seed=3)
+    theirs, mine = planar_map.build(board), planar_map.build(board)
+    state = busy_state(theirs, PAIRS)
+    free = [t for t in roomy_triangles(theirs, 30, seed=4) if sites.room(theirs, t, sites.incentre(theirs, t)) > 0.3]
+    for t in free[:3]:
+        sites.create(theirs, state, t, sites.incentre(theirs, t))
+    base = len(sites.log(theirs))
+    sites.replay(mine, sites.log(theirs))                       # the parent, copied here
+    assert base > 1
+    # The variant goes back past the copy point, and on with other sites.
+    sites.rewind(theirs, base - 1)
+    state.resize()
+    sites.clear_free(theirs, state)
+    for t in free[3:6]:
+        if t < theirs.num_triangles and sites.room(theirs, t, sites.incentre(theirs, t)) > 0.3:
+            sites.create(theirs, state, t, sites.incentre(theirs, t))
+    assert len(sites.log(theirs)) > base - 1
+    sites.sync(mine, sites.log(theirs))
+    assert fingerprint(mine) == fingerprint(theirs) and map_errors(mine) == []
+    assert [e["kind"] for e in sites.log(mine)] == [e["kind"] for e in sites.log(theirs)]

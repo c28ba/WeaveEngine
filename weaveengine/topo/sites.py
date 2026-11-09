@@ -465,6 +465,31 @@ def replay(pmap: PlanarMap, entries: list) -> None:
             _delete_map(pmap, pmap.sites[entry["site"].pad])
 
 
+def _what(entry: dict) -> tuple:
+    """What a log entry did, to tell whether two logs did the same."""
+    kind = entry["kind"]
+    if kind == "site":
+        return kind, entry["t"], entry["point"], entry["pad"]
+    if kind == "flip":
+        return kind, entry["e"]
+    if kind == "move":
+        return kind, entry["pad"], entry["to"]
+    return kind, entry["site"].pad
+
+
+def sync(pmap: PlanarMap, entries: list) -> None:
+    """Makes this map's log ``entries``, the log of another copy. That copy
+    may have gone back before the point where this one was copied from and
+    taken another way, so what the two have in common is kept, the rest of
+    this map's is rewound and the rest of the other's is done (``replay``)."""
+    mine = log(pmap)
+    same = 0
+    while same < min(len(mine), len(entries)) and _what(mine[same]) == _what(entries[same]):
+        same += 1
+    rewind(pmap, same)
+    replay(pmap, entries[same:])
+
+
 def _centroid(xy, tri) -> tuple[float, float]:
     return (sum(xy[v][0] for v in tri) / 3.0, sum(xy[v][1] for v in tri) / 3.0)
 
