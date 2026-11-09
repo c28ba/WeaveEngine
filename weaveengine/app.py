@@ -4,6 +4,7 @@ Import a DSN, watch it being routed, export the SES. The window never routes
 itself: a ``session.Job`` does that in another process and this module draws
 what it reports.
 """
+import html
 import io
 import math
 import os
