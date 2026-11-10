@@ -67,6 +67,10 @@ To do, in order:
 6. [ ] No acute angles where copper of one net meets.
 7. [ ] The 45-degree option (a second way of drawing, off by default).
 8. [ ] A via size per net class.
+9. [ ] Most curves still exported as segments, not arcs (below).
+10. [ ] Curves that are not arcs: check how many, and whether a Bézier or
+   spline output would help (below).
+11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
 
 ### Trace shape
 
@@ -88,6 +92,23 @@ To do, in order:
   arc is written in pieces; pieces of at most 90 degrees, since the Specctra
   format means a quarter arc and other tools may hold to it. Far fewer tracks
   per connection, and ones KiCad's drag tools handle as a curve.
+  Left (user report, 2026-11-10): it works, but most of what looks like an
+  arc in the app still comes out as short segments. A guess, not checked: a
+  round pad is held as a polygon, so a trace wrapped round it follows that
+  polygon's corners and the arc fit does not see one circle. Count, on a few
+  boards, the curved runs written as `qarc` and those that are not, and see
+  why the fit misses them (pad polygons, tolerance, or runs too short).
+- **Curves that are not arcs.** Some curves may not be circular at all (a
+  taut trace bending between two obstacles of different size, a smoothed
+  corner), so no arc fits them. Measure how much of the drawn curve that is;
+  if it is a lot, look at whether Specctra sessions or KiCad take a Bézier or
+  spline track (KiCad's tracks are only lines and arcs, as far as known; check
+  KiCad 10), or else fit those runs with a few arcs each.
+- **Teardrops as polygons.** Teardrops and taper wedges are written as fans
+  of tracks. Check whether the session format and KiCad's import take a
+  filled polygon for them (a Specctra `wire` with a polygon shape, or KiCad's
+  own teardrop zones), which would be one clean shape to edit instead of many
+  tracks.
 - **A 45-degree output option.** Traces drawn as straight runs at multiples of
   45 degrees, as many boards are expected to look, instead of taut curves:
   the same topology, realised on octilinear paths, with the clearances checked
