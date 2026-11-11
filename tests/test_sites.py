@@ -594,3 +594,20 @@ def test_a_map_takes_up_a_log_that_went_back_before_its_own_end():
     sites.sync(mine, sites.log(theirs))
     assert fingerprint(mine) == fingerprint(theirs) and map_errors(mine) == []
     assert [e["kind"] for e in sites.log(mine)] == [e["kind"] for e in sites.log(theirs)]
+
+
+@pytest.mark.parametrize("off", [-0.06, -0.03, 0.03, 0.06])
+def test_a_trace_does_not_go_round_a_sleeping_site(off):
+    """ROADMAP 1.1, traces pulled fully taut: a site left asleep where a via was
+    taken out (``sites.delete`` can refuse) is no copper. A trace with no wire
+    of another net across it does not bend round it (13.1)."""
+    board = Board.rectangle(12.0, 10.0, Rules(), layers=["F.Cu"])
+    board.pads += [Pad.circle(0, 4, 5, 0.3, 1), Pad.circle(1, 8, 5, 0.3, 1)]
+    pmap = planar_map.build(board, 0)
+    state = TopoState(pmap)
+    state.insert(1, route(pmap, state, 0, 1, hard_cap=True).steps)
+    at = (6.0, 5.0 + off)
+    site = sites.create(pmap, state, int(locate(pmap, np.array([at]))[0]), at, pad=1000)
+    assert not site.active and any(1 in state.gate_order[e] for e in site.spokes)  # the wire passes it
+    lines, violations, _ = realize(state, board)
+    assert violations == [] and len(lines[1]) == 2  # pad centre to pad centre, straight

@@ -1426,3 +1426,26 @@ def test_wedges_are_drawn_with_the_teardrops():
     assert with_wedges({1: ["t"]}, {1: ["w"], 2: ["v"]}) == {1: ["t", "w"], 2: ["v"]}
     result = route_board(pins_board(0.2))
     assert result.wedges and set(with_wedges(result.teardrops, result.wedges)) >= set(result.wedges)
+
+
+def test_traces_are_pulled_again_without_the_wires_not_drawn():
+    """ROADMAP 1.1, traces pulled fully taut: a wire that will not be drawn
+    (``router._redundant``) holds no trace away from it (``router._taut``), and
+    the routing's state is left as it was."""
+    from weaveengine import router
+    from weaveengine.plan.context import Context
+    from weaveengine.realize.relax import polyline_length
+    from weaveengine.topo.costs import CostParams
+    board = demo_board()
+    layers = [Layer(i, name, planar_map.build(board, i)) for i, name in enumerate(board.layers)]
+    pairs, _ = decompose(board, layers)
+    ctx = Context(board, layers, pairs, CostParams.for_map(layers[0].pmap), Options(portfolio=1, slide=False), 0, 1, None, None)
+    lines, violations, _ = router._route_once(ctx, 4, True)
+    before = [layer.state.snapshot()[:3] for layer in ctx.layers]
+    shorter = 0
+    for x in lines:
+        new, found = router._taut(ctx, lines, violations, {x})
+        assert len(found) <= len(violations) and new[x] == lines[x]
+        assert [layer.state.snapshot()[:3] for layer in ctx.layers] == before
+        shorter += sum(polyline_length(new[w]) < polyline_length(lines[w]) - 1e-3 for w in lines if w != x)
+    assert shorter
