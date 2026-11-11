@@ -217,6 +217,20 @@ To do, in order:
   weigh them (length, vias, the room each takes from other traces, how sure
   the fill is to reach it), keeping the cheaper; today a starved pad gets a
   via or a short trace by a fixed rule. After the "Fix first" pour bugs.
+  The ways to weigh, cheapest first:
+  1. the pad's thermal relief changed (solid connection, or spokes turned,
+     added or widened): no copper moves, but it departs from the zone's
+     rules, so off by default, a setting and a command-line flag to allow it
+     (written back to the `.kicad_pcb` as a per-pad override);
+  2. a via in the pad, or a stitching via beside it;
+  3. a trace, or a small filled shape or higher-priority zone of the net,
+     bridging to the pour;
+  4. the traces in the way moved (as `make_way`), or one taken to the other
+     layer with a pair of vias so the fill passes over it.
+  A narrower clearance or minimum width for that pad is the same kind of rule
+  change as 1: off by default, behind its own setting and flag. Pin swaps,
+  net ties and moved parts change the design, so they are only suggested in
+  the Warnings section, never done.
 
 ### Rules
 
