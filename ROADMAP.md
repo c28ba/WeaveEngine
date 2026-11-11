@@ -166,7 +166,8 @@ To do, in order:
   Left: tier 2 (and tier 3) not swept yet; that is the next step before merging.
   The selection and demand estimates (`select`, demand map) still count the full
   weight near fine pads. Circles apply on every layer, not just the pad's own.
-  The app still draws such traces at the narrow width.
+  The app, the SVG and the pour estimate draw each piece of a tapered trace at
+  its own width, the wedges as drawn; a trace left narrow all along is drawn narrow.
 
 ### Routing control
 

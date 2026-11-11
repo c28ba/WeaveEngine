@@ -178,12 +178,14 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
                                      {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}, narrowed, fine)
     planed, unplaned = [], []
     if options.fanout and work.pours:  # vias down to the planes, among everything routed (``plan.fanout``)
-        shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drops.items() if w in wire_layer for poly in polys]
+        # (the traces as drawn: tapered ones in their pieces, with their wedges)
+        drawn = with_wedges(drops, wedges)
+        shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drawn.items() if w in wire_layer for poly in polys]
         # A pad its pour reaches only in a piece cut off from the rest (or by spokes that reach no fill) is joined as one
         # the pour does not reach.
-        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, with_wedges(drops, wedges), widths=pieces)
+        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, drawn, widths=pieces)
                for piece in pour.pieces if piece.kind == "cut" for p in piece.pad_ids}
-        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut, drops)
+        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut, drawn, pieces)
         work.pads = work.pads + planed
         vias = vias + planed
         w = max(list(ctx.conns) + list(lines), default=-1) + 1
