@@ -275,6 +275,22 @@ Wanted:
 - undo and redo;
 - the same rule checks as a full routing, live, before export.
 
+### Traces spread for the most space
+
+A routing goal that gives each trace as much room as it can have, instead of
+the shortest length: a setting (and a command-line flag) choosing between
+shortest traces (now) and most space. With most space, the traces through
+each gate are spaced evenly across its width, and between gates each trace
+runs down the middle of the room it has (the largest clearance to its
+neighbours on both sides), longer where that buys space. The topology can
+also be chosen for it: a trace may take a wider gate over a shorter, narrower
+one. Wider gaps are easier to make, cross-talk less and are easier to inspect
+and edit by hand.
+
+Builds on 1.1's "Room used where there is room" (spreading traces where a
+gap holds fewer than it could, otherwise still taut); this goes further, to
+the most even spacing everywhere, at the cost of length.
+
 ## Later
 
 - **A KiCad plugin.** Route from inside KiCad's PCB editor: one button that
