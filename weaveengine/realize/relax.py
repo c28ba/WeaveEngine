@@ -72,29 +72,47 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     hole = {v: site for site in pmap.sites.values() for v in site.verts}
     kept: dict[tuple[int, int], list[float]] = {}
 
-    # A sleeping site is no copper: it is a point that wires pass, left in the
-    # map where a via was taken out and the site could not be (``sites.delete``).
-    # It keeps wires of different nets that pass it on its two sides apart: a
-    # wire passing it crosses a fan of its spokes, and two wires on one side
-    # share a spoke, nested on it. A wire with no wire of another net across
-    # the site from it does not go round it at all, so it is not held away
-    # from nothing (nor makes a U-turn round nothing).
-    passing: dict[int, dict[int, set[int]]] = {}  # sleeping site -> wire -> the spokes it crosses
-    if any(not site.active for site in pmap.sites.values()):
+    # Sites that are no copper to a wire passing them: a sleeping site (a point
+    # left in the map where a via was taken out and the site could not be,
+    # ``sites.delete``), and a via of the wire's own net that it does not end
+    # on. A wire is not held away from such a site (nor makes a U-turn round
+    # it) unless something there is copper to it: a wire of another net nearer
+    # the site on a spoke they share, that does go round it; or, for a sleeping
+    # site, a wire of another net across it (no spoke in common), from which
+    # the site keeps it half a pitch. (A wire passing a site crosses a fan of
+    # its spokes; wires on one side of it share a spoke, nested on it.)
+    free: set[tuple[int, int]] = set()  # (site, wire) that does not go round it
+    crossing: dict[int, dict[int, set[int]]] = {}  # site -> wire -> the spokes it crosses
+    if pmap.sites:
         for w, steps in state.wire_path.items():
             for e, _, _, _ in steps[1:]:
-                if kind[e] != TERMINAL:
-                    for q in edge_v[e]:
-                        site = hole.get(q)
-                        if site is not None and not site.active:
-                            passing.setdefault(site.pad, {}).setdefault(w, set()).add(e)
+                for q in edge_v[e]:
+                    site = hole.get(q)
+                    if site is not None:
+                        crossing.setdefault(site.pad, {}).setdefault(w, set()).add(e)
+    for pad, by in crossing.items():
+        site = pmap.sites[pad]
+        ending = {w for w, spokes in by.items() if any(e in site.hole for e in spokes)}
 
-    def nothing(w: int, site) -> bool:
-        """Whether wire w passes the sleeping ``site`` with no wire of another
-        net across it."""
-        by = passing.get(site.pad, {})
-        mine = by.get(w, set())
-        return not any(not (spokes & mine) and (wire_net[x] != wire_net[w] or wire_net[w] < 0) for x, spokes in by.items())
+        def foreign(x: int, w: int) -> bool:
+            return wire_net[x] != wire_net[w] or wire_net[w] < 0
+
+        if site.active:
+            maybe = {w for w in by if w not in ending and wire_net[w] == site.net}
+        else:
+            maybe = {w for w, mine in by.items() if not any(not (spokes & mine) and foreign(x, w) for x, spokes in by.items())}
+        inner = {}  # wire -> the wires nearer the site than it on a spoke they share
+        for w in maybe:
+            inner[w] = set()
+            for e in by[w]:
+                row = order[e] if edge_v[e][0] in site.verts else order[e][::-1]
+                inner[w].update(x for x in row[:row.index(w)] if foreign(x, w))
+        while True:
+            held = {w for w in maybe if inner[w] - maybe}
+            if not held:
+                break
+            maybe -= held
+        free.update((pad, w) for w in maybe)
 
     def keep(e: int, vertex: int) -> list[float]:
         """Distance each wire of gate e must keep from ``vertex``, one of the
@@ -164,7 +182,7 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
                 vertex, r = now[side], keep(e, now[side])[k]
                 if vertex == was[side]:
                     continue
-                if vertex in hole and not hole[vertex].active and nothing(w, hole[vertex]):
+                if vertex in hole and (hole[vertex].pad, w) in free:
                     at[side] = None  # (what the wire's triangles sweep at it is credited to no disc)
                     continue
                 round_via = r > 0.0 and vertex in hole
@@ -292,9 +310,9 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     for w, steps in state.wire_path.items():
         had = memo.get(w)
         if had is None or stamp[had[1]].max() > had[0][0] or changed[had[1]].max() > had[0][1]:
-            # (Its gates, and the gates round the sleeping sites it passes: a wire
-            # coming to the far side of one changes whether it goes round it.)
-            gates = [step[0] for step in steps] + [e for pad, by in passing.items() if w in by
+            # (Its gates, and the gates round the sites it passes: a wire coming
+            # to one changes whether it goes round it.)
+            gates = [step[0] for step in steps] + [e for pad, by in crossing.items() if w in by
                                                     for e in (*pmap.sites[pad].spokes, *pmap.sites[pad].hole)]
             had = memo[w] = ((state.epoch, pmap.changes), np.array(gates, dtype=np.int64),
                              [(*disc, i) for i, disc in enumerate(sleeve(w))], {})

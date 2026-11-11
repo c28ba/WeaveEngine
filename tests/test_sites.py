@@ -596,11 +596,14 @@ def test_a_map_takes_up_a_log_that_went_back_before_its_own_end():
     assert [e["kind"] for e in sites.log(mine)] == [e["kind"] for e in sites.log(theirs)]
 
 
+@pytest.mark.parametrize("net", [None, 1, 2])
 @pytest.mark.parametrize("off", [-0.06, -0.03, 0.03, 0.06])
-def test_a_trace_does_not_go_round_a_sleeping_site(off):
+def test_a_trace_goes_round_a_via_site_only_where_it_is_copper(off, net):
     """ROADMAP 1.1, traces pulled fully taut: a site left asleep where a via was
-    taken out (``sites.delete`` can refuse) is no copper. A trace with no wire
-    of another net across it does not bend round it (13.1)."""
+    taken out (``sites.delete`` can refuse) is no copper, nor is a via of the
+    trace's own net that it does not end on. A trace with no wire of another
+    net across such a site does not bend round it (13.1). A via of another net
+    it does go round."""
     board = Board.rectangle(12.0, 10.0, Rules(), layers=["F.Cu"])
     board.pads += [Pad.circle(0, 4, 5, 0.3, 1), Pad.circle(1, 8, 5, 0.3, 1)]
     pmap = planar_map.build(board, 0)
@@ -608,6 +611,14 @@ def test_a_trace_does_not_go_round_a_sleeping_site(off):
     state.insert(1, route(pmap, state, 0, 1, hard_cap=True).steps)
     at = (6.0, 5.0 + off)
     site = sites.create(pmap, state, int(locate(pmap, np.array([at]))[0]), at, pad=1000)
-    assert not site.active and any(1 in state.gate_order[e] for e in site.spokes)  # the wire passes it
-    lines, violations, _ = realize(state, board)
-    assert violations == [] and len(lines[1]) == 2  # pad centre to pad centre, straight
+    if net is not None:
+        sites.set_net(pmap, state, site, net, sites.keep_off(board.rules))
+    assert any(1 in state.gate_order[e] for e in site.spokes)  # the wire passes it
+    with_via = copy.copy(board)
+    with_via.pads = board.pads + sites.via_pads(pmap, board.rules)
+    lines, violations, _ = realize(state, with_via)
+    assert violations == []
+    if net == 2:
+        assert LineString(lines[1]).distance(Point(at)) >= sites.keep_off(board.rules) - 0.01
+    else:
+        assert len(lines[1]) == 2  # pad centre to pad centre, straight
