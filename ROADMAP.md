@@ -81,9 +81,10 @@ To do, in order:
 6. [ ] No acute angles where copper of one net meets.
 7. [ ] The 45-degree option (a second way of drawing, off by default).
 8. [ ] A via size per net class.
-9. [ ] Most curves still exported as segments, not arcs (below).
-10. [ ] Curves that are not arcs: check how many, and whether a Bézier or
-   spline output would help (below).
+9. [x] Most curves still exported as segments, not arcs (branch
+   `export-shape`; below).
+10. [x] Curves that are not arcs: few; no Bézier or spline track exists in
+   KiCad or the session format (below).
 11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
    (below).
@@ -108,18 +109,53 @@ To do, in order:
   arc is written in pieces; pieces of at most 90 degrees, since the Specctra
   format means a quarter arc and other tools may hold to it. Far fewer tracks
   per connection, and ones KiCad's drag tools handle as a curve.
-  Left (user report, 2026-11-10): it works, but most of what looks like an
-  arc in the app still comes out as short segments. A guess, not checked: a
-  round pad is held as a polygon, so a trace wrapped round it follows that
-  polygon's corners and the arc fit does not see one circle. Count, on a few
-  boards, the curved runs written as `qarc` and those that are not, and see
-  why the fit misses them (pad polygons, tolerance, or runs too short).
-- **Curves that are not arcs.** Some curves may not be circular at all (a
-  taut trace bending between two obstacles of different size, a smoothed
-  corner), so no arc fits them. Measure how much of the drawn curve that is;
-  if it is a lot, look at whether Specctra sessions or KiCad take a Bézier or
-  spline track (KiCad's tracks are only lines and arcs, as far as known; check
-  KiCad 10), or else fit those runs with a few arcs each.
+  Whole wraps (user report, 2026-11-10: most of what looks like an arc in
+  the app still came out as short segments). Measured and fixed on branch
+  `export-shape`. The guess was right: a round pad is held as a 16-gon
+  (inflated with mitred corners), so a trace wrapped round it goes round each
+  corner on a disc of its own, with straight runs along the sides between.
+  The fit only found the arc of each single disc, so a wrap came out as a
+  short arc per corner and a segment per side; a trace hugging the polygon
+  itself (no disc) came out as segments only. Oval pads (THT DIP pins) are
+  the same at their ends. Measured as the share of the traces' turning (at
+  vertices under 30 degrees, and along arcs) written as `qarc`, tier-1 boards,
+  main -> branch: pic-programmer 34 % -> 90 %, sweep-mini 50 % -> 82 %, sonde
+  50 % -> 95 %, ringlight 71 % -> 71 %, ftp 47 % -> 88 %, ecc83 83 % -> 84 %.
+  KiCad tracks + arcs after import (teardrop fans included): pic-programmer
+  1174 + 52 -> 982 + 92, sweep-mini 1753 + 147 -> 1535 + 186, sonde 578 + 40
+  -> 413 + 48; KiCad DRC and unconnected counts unchanged on all six.
+  How (`io/arcs.py` `fit_arcs`, `io/clearance.py`): a run is whole turns of
+  the polyline in a row (single-disc arcs and corners), turning one way; it
+  is fitted round the centre of a round pad, a via or an oval's end found
+  near it (`clearance.round_parts` finds an oval's ends and a rounded
+  corner's centre in a pad polygon), else round a fitted centre if it is a
+  circle to 10 microns. The arc is the largest circle every edge of the run
+  keeps out of, so it lies inside the run, at the run's own least distance
+  from the pad's true circle; it joins the trace by tangents, or by the line
+  tangent to two circles where two runs meet (a trace passing between two
+  pads). Each arc is checked against the copper of other nets as written so
+  far (pads as their true circles and ovals, traces, teardrops, wedges,
+  keepouts, the edge): it may come no nearer than the rule (with the margin)
+  or, if the drawn traces were nearer, than they were. The fit runs twice, so
+  an outer trace of a stack can follow the inner one in, then every trace is
+  checked whole and falls back to its single-disc arcs if it fails. The
+  independent check (`io/check.py`) now also measures ovals by their true
+  round ends, as KiCad does.
+  What is left as segments: single sharp corners at rectangular pads (the
+  router bevels their corners; the true clearance contour is an arc round
+  the corner, not fitted yet), wraps the clearance check turns down (mostly
+  where a neighbour in a stack keeps its polygon corners), and traces along
+  a polygonal board edge (ringlight's round outline: the arc fits to 6
+  microns but its neighbours stop it).
+- **Curves that are not arcs** (measured on `export-shape`). After the
+  whole-wrap fit, 5 to 18 % of the turning is still written as segments
+  (ringlight 29 %, its edge-following traces), and nearly all of it is
+  circular in fact (above): the router only draws arcs of discs and fillets,
+  so there is no real share of non-circular curve to fit with several arcs.
+  Bézier or spline output is not possible anyway: KiCad 10's tracks are
+  lines (`PCB_TRACK`) and arcs (`PCB_ARC`) only (Bézier exists for graphic
+  shapes, not tracks), and a Specctra wire is a `path`, `qarc`, `polygon`,
+  `rect` or `circle`.
 - **Teardrops as polygons.** Teardrops and taper wedges are written as fans
   of tracks. Check whether the session format and KiCad's import take a
   filled polygon for them (a Specctra `wire` with a polygon shape, or KiCad's

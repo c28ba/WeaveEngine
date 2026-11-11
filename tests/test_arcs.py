@@ -77,3 +77,70 @@ def test_the_session_holds_arcs_unless_turned_off(tmp_path):
         assert (x1, y1) != (x2, y2)
         chord = math.hypot(x2 - x1, y2 - y1)
         assert chord <= 2.0 * math.hypot(x1 - cx, y1 - cy) * math.sin(math.pi / 4) + 2  # at most a quarter turn
+
+
+def _wrap(radius=1.0, corners=(3, 4, 5, 6), disc=0.0):
+    """A trace round a round pad held as the router holds it: the pad's 16-gon,
+    inflated, with the trace going round each of its corners on a disc of
+    radius ``disc`` (as ``relax`` draws it) and along its sides between."""
+    from weaveengine.board import circle_polygon
+    ring = list(circle_polygon(0.0, 0.0, radius).exterior.coords)[:-1]
+    ring = sorted(ring, key=lambda p: math.atan2(p[1], p[0]))
+    pts = []
+    for k in corners:
+        x, y = ring[k]
+        if disc == 0.0:
+            pts.append((x, y))
+            continue
+        a = math.atan2(y, x)
+        for t in (-11.25, -5.625, 0.0, 5.625, 11.25):  # (a rough disc arc: what matters is that it bulges out)
+            b = a + math.radians(t)
+            pts.append((x + disc * math.cos(b), y + disc * math.sin(b)))
+    first, last = pts[0], pts[-1]
+    # straight in and out along the tangents of the first and last sides
+    a0 = math.atan2(first[1], first[0]) - math.radians(11.25)
+    a1 = math.atan2(last[1], last[0]) + math.radians(11.25)
+    start = (first[0] + 3 * math.sin(a0), first[1] - 3 * math.cos(a0))
+    end = (last[0] - 3 * math.sin(a1), last[1] + 3 * math.cos(a1))
+    return [start] + pts + [end]
+
+
+def test_a_trace_round_a_polygon_pad_is_one_arc_round_its_centre():
+    from weaveengine.io.arcs import fit_arcs
+    for disc in (0.0, 0.3):
+        pts = _wrap(disc=disc)
+        runs = fit_arcs(pts, near=lambda p, d: [(0.0, 0.0)] if math.dist(p, (0.0, 0.0)) <= d else [])
+        arcs = [r for r in runs if r[0] == "arc"]
+        assert len(arcs) == 1, runs
+        _, pieces, centre = arcs[0]
+        assert centre == (0.0, 0.0)
+        radius = math.dist(pieces[0][0], centre)
+        # the arc keeps the run's own least distance from the centre: never nearer the pad
+        nearest = min(math.dist(p, centre) for p in pts[1:-1])
+        assert radius <= nearest + 1e-9 and radius >= nearest - 0.03 * radius
+        assert all(math.isclose(math.dist(b, centre), radius, abs_tol=1e-9) for _, b in pieces)
+        assert runs[0][1][0] == pts[0] and runs[-1][1][-1] == pts[-1]  # the ends are kept
+
+
+def test_a_fitted_arc_is_turned_down_when_it_would_come_too_near():
+    from weaveengine.io.arcs import fit_arcs
+    pts = _wrap(disc=0.3)
+    runs = fit_arcs(pts, accept=lambda *_: False, near=lambda p, d: [(0.0, 0.0)])
+    # only the arcs of single discs (here none are true arcs), never one round the pad
+    assert all(r[2] != (0.0, 0.0) for r in runs if r[0] == "arc")
+
+
+def test_an_oval_pad_is_measured_by_its_true_round_ends():
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    from weaveengine.board import Pad, circle_polygon
+    from weaveengine.io.clearance import pad_copper, round_parts
+    a, b, half = (0.0, 0.0), (2.0, 0.0), 0.8
+    shape = unary_union([LineString([a, b]).buffer(half, cap_style="flat", join_style="bevel"),
+                         circle_polygon(*a, half), circle_polygon(*b, half)])  # as io.dsn holds an oval
+    ends = round_parts(shape)
+    assert sorted((round(c[0], 6), round(c[1], 6), round(r, 6)) for c, r in ends) == [(0.0, 0.0, 0.8), (2.0, 0.0, 0.8)]
+    line, extent = pad_copper(Pad(0, 1, shape))
+    assert line.geom_type == "LineString" and math.isclose(extent, half)
+    rect = Pad.rect(1, 0.0, 0.0, 2.0, 1.0)
+    assert pad_copper(rect) == (rect.shape, 0.0)
