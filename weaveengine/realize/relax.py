@@ -80,6 +80,45 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     hole = {v: site for site in pmap.sites.values() for v in site.verts}
     kept: dict[tuple[int, int], list[float]] = {}
 
+    # A sleeping site is no copper: a point left in the map where a via was
+    # taken out and the site could not be (``sites.delete``). A wire is not
+    # held away from one (nor makes a U-turn round it) unless something there
+    # is copper to it: a wire of another net nearer the site on a spoke they
+    # share, that does go round it; or a wire of another net across it (no
+    # spoke in common), from which the site keeps it half a pitch. (A wire
+    # passing a site crosses a fan of its spokes; wires on one side of it share
+    # a spoke, nested on it. A via of the wire's own net that it does not end
+    # on is no copper to it either, but traces drawn over such vias cost the
+    # pours room on lumen-blade13 and fomu: left as it is, ROADMAP back burner.)
+    free: set[tuple[int, int]] = set()  # (site, wire) that does not go round it
+    crossing: dict[int, dict[int, set[int]]] = {}  # site -> wire -> the spokes it crosses
+    if any(not site.active for site in pmap.sites.values()):
+        for w, steps in state.wire_path.items():
+            for e, _, _, _ in steps[1:]:
+                for q in edge_v[e]:
+                    site = hole.get(q)
+                    if site is not None and not site.active:
+                        crossing.setdefault(site.pad, {}).setdefault(w, set()).add(e)
+    for pad, by in crossing.items():
+        site = pmap.sites[pad]
+
+        def foreign(x: int, w: int) -> bool:
+            return wire_net[x] != wire_net[w] or wire_net[w] < 0
+
+        maybe = {w for w, mine in by.items() if not any(not (spokes & mine) and foreign(x, w) for x, spokes in by.items())}
+        inner = {}  # wire -> the wires nearer the site than it on a spoke they share
+        for w in maybe:
+            inner[w] = set()
+            for e in by[w]:
+                row = order[e] if edge_v[e][0] in site.verts else order[e][::-1]
+                inner[w].update(x for x in row[:row.index(w)] if foreign(x, w))
+        while True:
+            held = {w for w in maybe if inner[w] - maybe}
+            if not held:
+                break
+            maybe -= held
+        free.update((pad, w) for w in maybe)
+
     def keep(e: int, vertex: int) -> list[float]:
         """Distance each wire of gate e must keep from ``vertex``, one of the
         gate's ends: a spacing for every wire in between, on top of what the
@@ -147,6 +186,9 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
             for side in (0, 1):
                 vertex, r = now[side], keep(e, now[side])[k]
                 if vertex == was[side]:
+                    continue
+                if vertex in hole and (hole[vertex].pad, w) in free:
+                    at[side] = None  # (what the wire's triangles sweep at it is credited to no disc)
                     continue
                 round_via = r > 0.0 and vertex in hole
                 if round_via and hole.get(was[side]) is hole[vertex] and at[side] is not None and out[at[side]][8]:
@@ -273,7 +315,11 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     for w, steps in state.wire_path.items():
         had = memo.get(w)
         if had is None or stamp[had[1]].max() > had[0][0] or changed[had[1]].max() > had[0][1]:
-            had = memo[w] = ((state.epoch, pmap.changes), np.fromiter((step[0] for step in steps), dtype=np.int64, count=len(steps)),
+            # (Its gates, and the gates round the sites it passes: a wire coming
+            # to one changes whether it goes round it.)
+            gates = [step[0] for step in steps] + [e for pad, by in crossing.items() if w in by
+                                                    for e in (*pmap.sites[pad].spokes, *pmap.sites[pad].hole)]
+            had = memo[w] = ((state.epoch, pmap.changes), np.array(gates, dtype=np.int64),
                              [(*disc, i) for i, disc in enumerate(sleeve(w))], {})
         fresh[w] = had
         sleeves[w] = discs = list(had[2])

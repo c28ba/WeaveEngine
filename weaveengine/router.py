@@ -146,8 +146,10 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
             lines, violations, wire_net = dict(resume["lines"]), list(resume["violations"]), dict(resume["wire_net"])
     routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
+    loops = _redundant(ctx, {w: line for w, line in lines.items() if not ctx.conns[w].skeleton}, {p.pad_id for p in work.pads if p.is_via})
+    lines, violations = _taut(ctx, lines, violations, loops)
     work.rules = drawn_board.rules
-    lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations)
+    lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations, loops)
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
         ctx.emit_snapshot(force=True, lines=lines)
@@ -242,20 +244,50 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing)
 
 
-def _drawn(ctx: Context, work: Board, lines: dict, violations: list) -> tuple[dict, list, dict, list[Pad]]:
+def _drawn(ctx: Context, work: Board, lines: dict, violations: list, loops: set[int] | None = None) -> tuple[dict, list, dict, list[Pad]]:
     """What of a routing is drawn: the traces less those that join nothing
-    new (``_redundant``) and pieces of no length, the violations left among
-    them, each trace's layer, and the vias a trace ends on. ``work``: the
-    board with the vias as pads (``Context.board_with_vias``). The pours'
-    skeletons are not drawn: they are the fill's (``plan.skeleton``)."""
+    new (``_redundant``, unless given as ``loops``) and pieces of no length,
+    the violations left among them, each trace's layer, and the vias a trace
+    ends on. ``work``: the board with the vias as pads
+    (``Context.board_with_vias``). The pours' skeletons are not drawn: they
+    are the fill's (``plan.skeleton``)."""
     lines = {w: line for w, line in lines.items() if not ctx.conns[w].skeleton}
-    loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
+    if loops is None:
+        loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
     lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
     violations = [v for v in violations if not loops.intersection(v.wires) and not any(w in ctx.conns and ctx.conns[w].skeleton for w in v.wires)]
     wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
     used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
     vias = [p for p in work.pads if p.is_via and p.pad_id in used]
     return lines, violations, wire_layer, vias
+
+
+def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple[dict, list]:
+    """The traces pulled once more without the wires that will not be drawn
+    (``loops``, from ``_redundant``): a trace is held away from a wire only if
+    that wire is copper on the board (13.1). A layer keeps the new traces only
+    if the check finds no more on it than before; the state is left as it was."""
+    if not loops:
+        return lines, violations
+    board = ctx.board_with_vias()
+    lines, violations = dict(lines), list(violations)
+    skeleton = lambda v: any(w in ctx.conns and ctx.conns[w].skeleton for w in v.wires)
+    for layer in ctx.layers:
+        state = layer.state
+        gone = [w for w in loops if w in state.wire_path]
+        if not gone:
+            continue
+        snap = state.snapshot()
+        for w in gone:
+            state.remove(w)
+        new, found, _ = realize(state, board)
+        state.restore(snap)
+        found = [v for v in found if not skeleton(v)]
+        before = [v for v in violations if v.layer == layer.index and not loops.intersection(v.wires) and not skeleton(v)]
+        if len(found) <= len(before):
+            lines.update(new)
+            violations = [v for v in violations if v.layer != layer.index or skeleton(v)] + found
+    return lines, violations
 
 
 def _draft(ctx: Context, lines: dict, violations: list, wire_net: dict) -> Result:
