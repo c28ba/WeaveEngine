@@ -56,6 +56,16 @@ Done:
 - [x] A Warnings section in the app, with a warning for Margin-layer drawings.
 - [x] Settings: a Pours tab and a search box.
 
+Fix first (bugs in features just added, seen on a user's board, 2026-11-10;
+probably partly one cause; before any new feature):
+- [ ] Skeleton and KiCad's fill disagree where two pads' copper overlaps.
+- [ ] KiCad's DRC finds many more unconnected items than our estimate; all
+  the ones we do not account for are on the GND or 5V pours.
+- [ ] KiCad's DRC finds a great many disconnected pour pieces (islands).
+- [ ] The pour clearance and tolerance we use differ greatly from KiCad's.
+
+Details under Pours and planes, "Pour estimate against KiCad".
+
 To do, in order:
 1. [ ] Traces pulled fully taut. Likely cause: via sites left unused stay in
    the map as holes that traces keep passing round (design 13.1). Check it on a
@@ -174,6 +184,29 @@ To do, in order:
   - (done on `pours-default`: thermal-relief spokes, zone clearance and
     priority in the estimate; lumen-ringlight's pads were those its zone
     does not join at all, now given a trace into the fill.)
+
+- **Pour estimate against KiCad.** Found on a user's board (not public,
+  not in `boards/`): routed, then filled and checked in KiCad, four
+  disagreements, likely related and all in features just added, so to be
+  fixed before more features:
+  - where two pads' copper overlaps (or touches), the skeleton does not
+    match the fill KiCad makes there: check how overlapping pads are merged
+    in the pour estimate and the skeleton;
+  - KiCad's DRC reports many more unconnected items than the estimate; every
+    one the estimate misses is on the GND or 5V pour, so the estimate thinks
+    pads joined that KiCad's fill leaves cut off;
+  - KiCad's DRC reports a great many disconnected pour pieces. Find whether
+    they come from our traces cutting the pour or are KiCad's own, and look
+    at a way to keep pour out of places it does not need to be (zone keepouts
+    written with the session, a smaller zone, or the islands removed with
+    KiCad's "remove islands" setting read and honoured);
+  - the distance and tolerance the estimate uses for the pour (zone
+    clearance, minimum width, thermal gap, fill tolerance) seem quite
+    different from KiCad's: compare each value read from the `.kicad_pcb`
+    against what KiCad applies, including `.kicad_dru` rules and net class
+    clearances, which may override the zone's own.
+  Make the board a regression check (local only, from its owner), and add a
+  sweep metric comparing the estimate's unconnected count with KiCad's.
 
 ### Rules
 
