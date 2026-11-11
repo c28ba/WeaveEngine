@@ -244,9 +244,8 @@ new example (a board and where on it); then it moves up to be fixed.
     over the zone's 0.125, both measured on KiCad's fill), the thermal gap
     (0.3), and the least width (0.125). A custom rule asking 0.3 mm from the
     zone to surface pads is skipped by the estimate, and KiCad 10's fill does
-    not apply it either (measured 0.15). Net classes' clearances are taken as
-    the largest of them for every pour (`Rules.clearance`): on a board whose
-    classes differ, the gap is too large by the difference (not changed).
+    not apply it either (measured 0.15). Net classes' clearances were taken as
+    the largest of them for every pour (`Rules.clearance`); see the follow-ups.
   Measured on the Mac against main (99d465d), `--jobs 4`: tier 1 routes the
   same, KiCad open 104 to 104, DRC 9 to 9, isolated copper the same, cut-off
   pads 53 to 47; tier 2 (fresh main baseline) routes the same on all 16,
@@ -261,6 +260,33 @@ new example (a board and where on it); then it moves up to be fixed.
   on the front and 28 against 28 on the back. The CLI says what the estimate
   expects KiCad to find unconnected, and the sweep compares it and the
   islands with KiCad's on every board ("estimate off by").
+  Follow-ups (same branch), measured against the numbers above:
+  - *Net-class clearance per pour.* The fill keeps, from each other net, the
+    larger of the two nets' class clearances (and the zone's, and a pad's own
+    local or rule clearance), never more than the board's
+    (`Board.net_clearance`, `default_clearance`, read from the DSN's classes;
+    `pours.estimate`). Test: `test_a_pour_keeps_the_clearance_of_its_nets_classes_from_each_net`.
+  - *Island removal "below area limit"* (`island_removal_mode` 2 with
+    `island_area_min`) was already read and applied (islands of less than that
+    area removed); checked, nothing to change.
+  - *Estimate too high on kicad-cm5-minima (+17) and sweep-bling-mx (+23).*
+    Cause: the "open" count added the pads fan-out found no room for a via
+    beside (`plane_left`), but a pad with no room is often joined all the same
+    through another pad of its piece (a through pad) that did get a via, and
+    the count was made before that; and a pad drawn in pieces (U1-23,
+    U1-23@1 ... @4) was counted once per piece, KiCad once. Now the router
+    drops from `plane_left` the pads the final estimate finds joined, and the
+    CLI counts a pad drawn in pieces once. bling-mx: 26 to 4 (KiCad 3).
+  - Measured, Mac, `--jobs 4`, against the runs above: tier 1 routes the same,
+    KiCad open 104 to 104, DRC 9 to 9; the estimate's open items off by 52 to
+    38 over its 12 boards, islands off by 208 to 40 (sweep-half-swept open +12
+    to 0). Tier 2: all 16 route the same, KiCad open 352 to 352, DRC 275 to 275;
+    the estimate's open items off by 74 to 40 (cm5-minima +17 to +4,
+    bling-mx +23 to +1), islands off by 5. What is left is mostly
+    kicad-interf-u (+15) and fomu (+23): not looked into. Note that
+    `bench/sweep/run.py` runs the router in each board's work directory, so
+    `PYTHONPATH` must be an absolute path to the checkout.
+
   Left: the sweep's prep strips tracks but keeps KiCad's teardrop zones on
   them, and KiCad writes each in the DSN as a plane of its net
   (kicad-complex-hierarchy: 165 of them); a user who deletes the tracks
