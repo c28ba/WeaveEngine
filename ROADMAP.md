@@ -68,11 +68,6 @@ probably partly one cause; before any new feature):
   traces' edge clearance used for the fill).
   (Branch `pour-kicad`; what was found is under Pours and planes, "Pour
   estimate against KiCad".)
-- [ ] (Minor) At a three-way junction on a via, only two of the three
-  traces get a teardrop to the via. Likely the teardrop pass handles a via
-  as a two-ended pass-through, or one teardrop's room check rejects the
-  third against the other two; check `realize` teardrops with a test.
-
 Details under Pours and planes, "Pour estimate against KiCad".
 
 To do, in order:
@@ -92,6 +87,17 @@ To do, in order:
 11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
    (below).
+
+
+Back burner: bugs seen once that could not be found again. Each waits for a
+new example (a board and where on it); then it moves up to be fixed.
+- [ ] At a three-way junction on a via, only two of the three traces got a
+  teardrop to the via (seen 2026-11-10). Not reproduced: each trace end gets
+  its own teardrop, one never blocks another of its net, and every 3-way via
+  junction on lily58-pro, coldfire and a user's board had all its teardrops.
+  Known causes of a missing via teardrop, all deliberate: a trace wider than
+  0.9 of the via's radius, a trace too short, and fan-out stubs (added after
+  the teardrop pass, so they never get one).
 
 ### Trace shape
 
