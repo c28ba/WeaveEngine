@@ -81,6 +81,8 @@ To do, in order:
 10. [ ] Curves that are not arcs: check how many, and whether a Bézier or
    spline output would help (below).
 11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
+12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
+   (below).
 
 ### Trace shape
 
@@ -207,6 +209,14 @@ To do, in order:
     clearances, which may override the zone's own.
   Make the board a regression check (local only, from its owner), and add a
   sweep metric comparing the estimate's unconnected count with KiCad's.
+
+- **Pour pieces and pins joined by the cheaper way.** Where a pour piece is
+  far from the rest of its net, or a pin needs to reach a pour, there are
+  two ways to join it: stitching vias to the net's pour or plane on another
+  layer, or a trace from the pin (or the piece) to the pour. Try both and
+  weigh them (length, vias, the room each takes from other traces, how sure
+  the fill is to reach it), keeping the cheaper; today a starved pad gets a
+  via or a short trace by a fixed rule. After the "Fix first" pour bugs.
 
 ### Rules
 
