@@ -90,7 +90,7 @@ jobs:
     env:
       # The fingerprint of the PPA's signing key, for keyserver.ubuntu.com;
       # empty: the key is taken through add-apt-repository (Launchpad's API).
-      PPA_FPR: ""
+      PPA_FPR: "FDA854F61C4D0D9572BB95E5245D5502FAD7A805"  # (from Launchpad: the kicad-10.0-releases signing key)
     steps:
       - uses: actions/checkout@v5
       - uses: actions/cache@v5
