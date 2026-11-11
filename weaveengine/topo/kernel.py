@@ -174,7 +174,7 @@ THROUGH = 2  # ``parent_tr`` of a node that goes on from a pad of the net the wi
 def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_e, tri_v, edge_v, edge_t,
           tr, tlen, tn, kind, owner, mid,
           count, corner, load, cap, hist, penalty, use_penalty, corridor, use_corridor,
-          relaxed, pres, use_hist, cross_pen, hard_cap, weight, ride, own, own_ptr, own_edge, own_cost, own_node,
+          relaxed, pres, use_hist, cross_pen, hard_cap, weight, narrow, zone, use_zone, ride, own, own_ptr, own_edge, own_cost, own_node,
           tx, ty, rad, hw, far, fx0, fy0, fcell, bound,
           g, parent, parent_tr, touched, heap_f, heap_g, heap_n, best, best_node):
     """The one search (design section 8). Cheapest way to ``dst_pad``.
@@ -197,6 +197,9 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
     no load on the gate, and from one such place to the next it adds next to
     no length.
 
+    ``weight`` is the load the wire puts on a gate; ``narrow`` on the gates
+    marked in ``zone`` (near a fine-pitch pad of its net), if ``use_zone``.
+
     ``own[e]`` is 1 + k on the edges of pad k of the net being routed, other
     than those the wire starts and ends on (11). Such a pad is the net's
     copper: the wire may run into it and go on from any of its edges
@@ -211,7 +214,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
             n = count[e]
             first, last, root, c = 0, n, -1, start_cost[si]
             node0 = (2 * e) * SLOTS
-            over = load[e] + weight - cap[e] if n > 0 else 0.0   # one wire always fits its own pad edge
+            over = load[e] + (narrow if use_zone and zone[e] != 0 else weight) - cap[e] if n > 0 else 0.0   # one wire always fits its own pad edge
         else:
             sj = (si - starts.shape[0]) // 3
             t = seed_tri[sj]
@@ -229,7 +232,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
             root = -2 - sj
             c = seed_cost[sj] + np.hypot(mid[e, 0] - seed_x[sj], mid[e, 1] - seed_y[sj])
             node0 = (2 * e + side) * SLOTS
-            over = load[e] + weight - cap[e]
+            over = load[e] + (narrow if use_zone and zone[e] != 0 else weight) - cap[e]
         if n >= SLOTS - 1 or (use_corridor and corridor[e] == 0):
             continue
         if use_penalty:
@@ -288,7 +291,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
                 if use_penalty:
                     c += penalty[b]
                 h = estimate(mid[b, 0], mid[b, 1], tx, ty, rad, hw, far, fx0, fy0, fcell)
-                n_touched, size = enter((2 * b) * SLOTS, 0, nb, c, load[b] + weight - cap[b] if nb > 0 else 0.0, b, node, THROUGH,
+                n_touched, size = enter((2 * b) * SLOTS, 0, nb, c, load[b] + (narrow if use_zone and zone[b] != 0 else weight) - cap[b] if nb > 0 else 0.0, b, node, THROUGH,
                                         pres, hard_cap, use_hist, hist, ride, h,
                                         g, parent, parent_tr, touched, n_touched, heap_f, heap_g, heap_n, size)
                 if size < 0:
@@ -325,7 +328,7 @@ def astar(starts, start_cost, seed_tri, seed_cost, seed_x, seed_y, dst_pad, tri_
                 c += tlen[he, j] * (RIDE if here else 1.0)
             else:
                 c += tlen[he, j]
-                over = load[b] + weight - cap[b]
+                over = load[b] + (narrow if use_zone and zone[b] != 0 else weight) - cap[b]
                 if over > 1e-9 and (nb > 0 or nxt >= 0):
                     if hard_cap:
                         continue

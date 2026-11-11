@@ -37,7 +37,7 @@ def exit_windows(board: Board, layer: int, pmap) -> tuple[dict[int, tuple[float,
         cx, cy = pad.centre
         for f in fractions:
             stubs.append(((cx, cy), (ux + f * (vx - ux), uy + f * (vy - uy))))
-        need.append(rules.clearance + rules.width(pad.net_id) / 2.0)
+        need.append(rules.clearance + rules.width_at(pad.net_id, cx, cy) / 2.0)  # (narrowed only near a fine-pitch pad)
     lines = shapely.linestrings(np.array(stubs))
     legal = np.ones(len(lines), dtype=bool)
     reach = np.repeat(need, SAMPLES)

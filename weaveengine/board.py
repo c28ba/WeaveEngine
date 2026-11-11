@@ -26,6 +26,10 @@ class Rules:
     margin: float = 0.0                  # safety margin, already in ``clearance``; added to every clearance an item asks for itself
     min_width: float = 0.0               # narrowest trace the board's rules allow (0: not known); see ``router.reach``
     net_drawn: dict[int, float] = field(default_factory=dict)  # width written for a net routed narrower than drawn (``router.reach``)
+    # A net narrowed to reach fine-pitch pads is planned at its own width but near those pads (``router.reach``):
+    # net -> that width, and net -> (x, y, radius) round each of its fine-pitch pads, within which it is narrow.
+    net_full: dict[int, float] = field(default_factory=dict)
+    fine: dict[int, list] = field(default_factory=dict)
 
     def width(self, net_id: int) -> float:
         return self.net_width.get(net_id, self.trace_width)
@@ -34,6 +38,18 @@ class Rules:
         """The width a net's traces are written with: its ``width``, unless it
         was routed with some of its margin given up (``router.reach``)."""
         return self.net_drawn.get(net_id, self.width(net_id))
+
+    def full(self, net_id: int) -> float:
+        """The width a net is planned at away from its fine-pitch pads: its own, if it was narrowed to reach them."""
+        return self.net_full.get(net_id, self.width(net_id))
+
+    def width_at(self, net_id: int, x: float, y: float) -> float:
+        """The width a net is planned at at (x, y): ``width`` near its fine-pitch pads, else ``full``."""
+        if net_id not in self.net_full:
+            return self.width(net_id)
+        if any(math.hypot(x - cx, y - cy) <= r for cx, cy, r in self.fine.get(net_id, ())):
+            return self.width(net_id)
+        return self.net_full[net_id]
 
     @property
     def base_width(self) -> float:

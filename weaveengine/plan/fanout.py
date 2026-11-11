@@ -42,13 +42,15 @@ def covered(board: Board, pad: Pad, cut=frozenset()) -> bool:
                and joined(pad, board.zone(net, layer)) != "none" for net, layer, shape in board.pours)
 
 
-def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), cut=frozenset(), teardrops=None) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
+def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), cut=frozenset(), teardrops=None,
+           widths: dict | None = None) -> tuple[list[Pad], list[tuple[int, int, list]], list[Pad]]:
     """For the routed ``board`` (its vias among its pads), its traces and other
     copper ``shapes`` (shape, net, layer: teardrops; and the same as ``teardrops``, wire -> polygons, for the fill): the vias to add, the
     traces to add as (net, layer, points), and the pads that were left with no
     place for one. ``cut``: (pad, layer) of the pads a pour reaches only in a
     piece cut off from the rest of it (``pours.estimate``): joined as if that
-    pour did not reach them, by a via to a plane of the net on another layer."""
+    pour did not reach them, by a via to a plane of the net on another layer.
+    ``widths``: wire -> [(points, width)] for traces drawn in pieces (``realize.taper``)."""
     rules = board.rules
     lonely = _lonely(board, cut)
     if not lonely:
@@ -75,7 +77,9 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     for w, line in lines.items():
         if len(line) >= 2 and w in wire_layer:
             net = wire_net[w]
-            things[wire_layer[w]].append((LineString(line).buffer(rules.drawn(net) / 2.0, quad_segs=4), net, rules.clearance))
+            for piece, width in (widths or {}).get(w) or [(line, rules.drawn(net))]:
+                if len(piece) >= 2:
+                    things[wire_layer[w]].append((LineString(piece).buffer(width / 2.0, quad_segs=4), net, rules.clearance))
     for shape, net, layer in shapes:
         things[layer].append((shape, net, rules.clearance))
     through = {p.shape for p in board.pads if not p.is_via and (p.layers is None or len(p.layers) == nlayers > 1)}
@@ -89,7 +93,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
     pours: dict[int, list] = {}
     wanted = {p.net_id for p in lonely}
     from weaveengine import pours as estimates  # (it reads FILL from here)
-    for pour in estimates.estimate(board, lines, wire_net, wire_layer, teardrops):
+    for pour in estimates.estimate(board, lines, wire_net, wire_layer, teardrops, widths=widths):
         if pour.net in wanted:
             reach = [piece.shape for piece in pour.pieces if piece.kind in ("main", "via")]
             if not reach:  # (a plane with no pad of its net on it, only vias to join: any of its fill will do)

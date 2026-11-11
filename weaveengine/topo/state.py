@@ -34,6 +34,15 @@ class TopoState:
         self.count = np.zeros(planar_map.num_edges, dtype=np.int32)
         self.corner = np.zeros((planar_map.num_triangles, 3), dtype=np.int32)
         self.hist = np.zeros(planar_map.num_edges)
+        # A net narrowed to reach fine-pitch pads is planned at its own width but
+        # near them (``router.reach``): there its wires weigh less. Net -> (those
+        # gates, or None: every gate, the net planned narrow all along; the
+        # weight there). ``near``: the gates near the pads, and ``circles``
+        # round them, for the gates of via sites made later.
+        self.zone: dict[int, tuple[set | None, float]] = {}
+        self.near: dict[int, set] = {}
+        self.circles: dict[int, list] = {}
+        self._mask = None  # (net, size, the zone as a mask), for the search kernel
         self.epoch = 0  # counts the times a wire has come or gone: what was worked out from the wires holds while it stands
         self.stamp = np.zeros(planar_map.num_edges, dtype=np.int64)  # per gate: ``epoch`` when a wire last came or went there
 
@@ -51,9 +60,59 @@ class TopoState:
             self.hist = np.concatenate([self.hist, np.zeros(edges)])
             self.count = np.concatenate([self.count, np.zeros(edges, dtype=np.int32)])
             self.stamp = np.concatenate([self.stamp, np.zeros(edges, dtype=np.int64)])
+            for net, circles in self.circles.items():
+                self.near[net].update(_near(m, circles, first))
         if tris > 0:
             self.corner_cnt += [[0, 0, 0] for _ in range(tris)]
             self.corner = np.concatenate([self.corner, np.zeros((tris, 3), dtype=np.int32)])
+
+    def narrow_near(self, net: int, circles: list, weight: float) -> None:
+        """Wires of ``net`` weigh ``weight`` on the gates that come within a circle
+        (x, y, radius) of ``circles``, and their own weight elsewhere. Before any is in."""
+        self.circles[net] = list(circles)
+        self.near[net] = _near(self.map, circles)
+        self.zone[net] = (self.near[net], weight)
+
+    def everywhere(self, net: int, narrow: bool) -> None:
+        """Plans ``net`` narrow on every gate (or only near its fine-pitch pads
+        again). The loads are not worked out again: no wire of the net may be in,
+        or the loads must be those of a snapshot taken with it so."""
+        if net in self.zone:
+            self.zone[net] = (None if narrow else self.near[net], self.zone[net][1])
+            self._mask = None
+
+    def at(self, wire_id: int, edge_id: int) -> float:
+        """The load a wire puts on a gate (its weight, or less near a fine-pitch pad of its net)."""
+        z = self.zone.get(self.net.get(wire_id, -1))
+        if z is not None and (z[0] is None or edge_id in z[0]):
+            return z[1]
+        return self.weight[wire_id]
+
+    def weight_on(self, net: int, weight: float, edge_id: int) -> float:
+        """The load a wire of ``net`` and ``weight`` would put on a gate."""
+        z = self.zone.get(net)
+        if z is not None and (z[0] is None or edge_id in z[0]):
+            return z[1]
+        return weight
+
+    def narrow_at(self, net: int, edge_id: int) -> bool:
+        """Whether a wire of ``net`` is planned narrower than its weight on this gate."""
+        z = self.zone.get(net)
+        return z is not None and (z[0] is None or edge_id in z[0])
+
+    def search_weight(self, net: int, weight: float):
+        """(weight, weight near the net's fine-pitch pads, mask of those gates, whether there are any), for the kernel."""
+        z = self.zone.get(net)
+        if z is None:
+            return weight, weight, _NO_MASK, False
+        if z[0] is None:
+            return z[1], z[1], _NO_MASK, False
+        n = self.map.num_edges
+        if self._mask is None or self._mask[:2] != (net, n):
+            mask = np.zeros(n, dtype=np.uint8)
+            mask[list(z[0])] = 1
+            self._mask = (net, n, mask)
+        return weight, z[1], self._mask[2], True
 
     def usage(self, edge_id: int) -> int:
         return len(self.gate_order[edge_id])
@@ -68,7 +127,7 @@ class TopoState:
             net = self.net.get(w, -1)
             if net < 0 or net != last:
                 runs.append(0.0)
-            runs[-1] = max(runs[-1], self.weight[w])
+            runs[-1] = max(runs[-1], self.at(w, edge_id))
             last = net
         vias = self.map.__dict__.get("_site_of_vertex")
         if vias and runs:
@@ -111,11 +170,11 @@ class TopoState:
     def overflowed_gates(self) -> list[int]:
         return [e for e in np.nonzero(self.load > self.cap + 1e-9)[0].tolist() if not self._one(e)]
 
-    def fits(self, edge_id: int, weight: float) -> bool:
-        """Whether one more wire of this weight fits on the edge."""
+    def fits(self, edge_id: int, weight: float, net: int = -1) -> bool:
+        """Whether one more wire of this weight (and net) fits on the edge."""
         if not self.gate_order[edge_id] and self.map.edge_kind_list[edge_id] == 2:
             return True
-        return self.load[edge_id] + weight <= self.cap[edge_id] + 1e-9
+        return self.load[edge_id] + self.weight_on(net, weight, edge_id) <= self.cap[edge_id] + 1e-9
 
     def full(self, edge_id: int, extra: float = 0.0) -> bool:
         """No further base-width wire fits (after adding ``extra`` load)."""
@@ -150,7 +209,7 @@ class TopoState:
                     or (vias and (edge_v[edge_id][0] in vias or edge_v[edge_id][1] in vias))):
                 self.load[edge_id] = self.tally(edge_id)
             else:
-                self.load[edge_id] += weight
+                self.load[edge_id] += self.at(wire_id, edge_id)
             self.count[edge_id] += 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] += 1
@@ -160,7 +219,7 @@ class TopoState:
     def remove(self, wire_id: int) -> None:
         self.epoch += 1
         self.by_net.get(self.net.get(wire_id, -1), set()).discard(wire_id)
-        nets, mine, weight = self.net, self.net.get(wire_id, -1), self.weight[wire_id]
+        nets, mine = self.net, self.net.get(wire_id, -1)
         vias, edge_v = self.map.__dict__.get("_site_of_vertex") or (), self.map.edge_v_list
         for edge_id, tri_id, corner_k, _ in self.wire_path.pop(wire_id):
             row = self.gate_order[edge_id]
@@ -177,12 +236,15 @@ class TopoState:
                   or (vias and (edge_v[edge_id][0] in vias or edge_v[edge_id][1] in vias))):
                 self.load[edge_id] = self.tally(edge_id)
             else:
-                self.load[edge_id] -= weight
+                self.load[edge_id] -= self.at(wire_id, edge_id)
             self.count[edge_id] -= 1
             if tri_id >= 0:
                 self.corner_cnt[tri_id][corner_k] -= 1
                 self.corner[tri_id, corner_k] -= 1
         del self.weight[wire_id]
+
+    def __getstate__(self):
+        return {**self.__dict__, "_mask": None}
 
     def snapshot(self):
         # The nets go too: a snapshot is also restored in another process (a raced
@@ -233,3 +295,22 @@ class TopoState:
         if corner_v == self.map.edge_v_list[edge_id][0]:
             return order[:count]
         return order[::-1][:count]
+
+
+_NO_MASK = np.zeros(1, dtype=np.uint8)
+
+
+def _near(pmap: PlanarMap, circles: list, first: int = 0) -> set[int]:
+    """The edges from ``first`` on that come within a circle (x, y, radius) of ``circles``."""
+    if not circles or pmap.num_edges <= first:
+        return set()
+    ev = np.array(pmap.edge_v_list[first:], dtype=np.int64)
+    xy = np.array(pmap.vxy, dtype=np.float64)
+    a, b = xy[ev[:, 0]], xy[ev[:, 1]]
+    d = b - a
+    n2 = np.maximum((d * d).sum(axis=1), 1e-18)
+    hit = np.zeros(len(ev), dtype=bool)
+    for x, y, r in circles:
+        t = np.clip(((x - a[:, 0]) * d[:, 0] + (y - a[:, 1]) * d[:, 1]) / n2, 0.0, 1.0)
+        hit |= np.hypot(a[:, 0] + t * d[:, 0] - x, a[:, 1] + t * d[:, 1] - y) <= r
+    return set((np.nonzero(hit)[0] + first).tolist())

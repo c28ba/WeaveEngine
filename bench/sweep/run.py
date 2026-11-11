@@ -215,6 +215,10 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
         rec["est_open"] = int(m[1])
     m = re.search(r"pours: (\d+) of (\d+) joins", text)
     rec["skeleton_open"] = int(m[1]) if m else 0
+    # Traces of nets narrowed to reach fine-pitch pads (``realize.taper``): tapered, and narrow all along.
+    m = re.search(r"of their traces: (\d+) tapered, (\d+) narrow all along", text)
+    if m:
+        rec.update(tapered=int(m[1]), narrow=int(m[2]))
     if code == "timeout":  # (it may have left the best routing it had in board.ses: that is not this board's result)
         rec.update(stage="route", error=f"no result within {args.limit} s")
         return rec

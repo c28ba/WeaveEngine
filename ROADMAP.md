@@ -160,9 +160,26 @@ new example (a board and where on it); then it moves up to be fixed.
   the difference, written as a fan of tracks like a teardrop; a step where no
   straight run has room for it), where the wide part clears pads, keepouts, the edge and the
   other traces as drawn; else it stays narrow all along. It is several wires
-  in the SES (`Result.widths`). Left: the planner does not reserve room for the
-  wide part (it fails the check where traces were planned too close), and the
-  app draws such traces at the narrow width.
+  in the SES (`Result.widths`).
+  Planned wide (branch `wide-plan`): such a net is now planned at its own width
+  except near its fine-pitch pads, so the room for the wide part is kept.
+  `Rules.net_full`/`fine` give the full width and a circle round each fine pad
+  (its reach + one trace width + the wedge, as `taper` measures it). Each
+  `TopoState.zone` holds, per net, the gates in those circles, where its wires
+  weigh the narrow weight (`TopoState.at`). insert/remove/tally/fits, the
+  search kernel (`narrow`, `zone` mask), relax (`half_at` per gate), the exits
+  (`Rules.width_at`) and smoothing all use it. DRC still checks the narrow drawn
+  width, which is what is drawn where the taper does not fit. If a connection is
+  left open after rip-up, the nets planned wide that it belongs to or that block
+  it are planned narrow all along again (`Context.demote`, kept in snapshots),
+  and rip-up runs once more. Tier 1 against main: nothing worse;
+  narrowed-net traces went from 7 tapered / 4 narrow all along to 11 / 0. The
+  counts are in the CLI output, the sweep records (`tapered`, `narrow`) and compare.py.
+  Left: tier 2 (and tier 3) not swept yet; that is the next step before merging.
+  The selection and demand estimates (`select`, demand map) still count the full
+  weight near fine pads. Circles apply on every layer, not just the pad's own.
+  The app, the SVG and the pour estimate draw each piece of a tapered trace at
+  its own width, the wedges as drawn; a trace left narrow all along is drawn narrow.
 
 ### Routing control
 

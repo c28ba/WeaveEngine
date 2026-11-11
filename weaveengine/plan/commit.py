@@ -20,7 +20,7 @@ def commit_all(ctx: Context, cands: dict[int, list[Candidate]], selection: dict[
 
     def current_cost(c: Candidate) -> float:
         state = ctx.layers[c.layer].state
-        over = sum(1 for g in c.path.gates if state.load[g] + c.route_weight - state.cap[g] > 1e-9)
+        over = sum(1 for g in c.path.gates if state.load[g] + state.weight_on(c.net, c.route_weight, g) - state.cap[g] > 1e-9)
         return c.score + params.pres_fac * over
 
     def regret(w: int) -> float:

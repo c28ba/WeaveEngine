@@ -88,6 +88,22 @@ def test_fanout_puts_no_via_where_the_plane_has_no_fill():
     assert vias == [] and traces == [] and [p.name for p in left] == ["U1-1"]
 
 
+def test_fanout_keeps_clear_of_a_tapered_trace_as_drawn():
+    """A ring of another net's trace round a pad on the front leaves room for a via inside it at its
+    narrow width, and none where the trace is drawn wider in pieces (``realize.taper``)."""
+    from weaveengine.plan.fanout import fanout
+    board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu", "B.Cu"])
+    board.net_names = {GND: "GND", SIG: "SIG"}
+    board.pads += [Pad.circle(0, 20, 15, 0.5, GND, "U1-1", frozenset({0})), Pad.circle(1, 5, 5, 0.6, GND, "J1-1", BACK)]
+    board.plane_nets.add(GND)
+    board.pours.append((GND, 1, box(1, 1, 39, 29)))
+    ringed = {0: ring(20, 15, 1.6)}
+    vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 0})
+    assert len(vias) == 1 and not left
+    vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 0}, widths={0: [(ringed[0], 0.8)]})
+    assert vias == [] and [p.name for p in left] == ["U1-1"]
+
+
 def test_a_zones_minimum_thickness_sets_the_slivers_its_fill_drops(tmp_path):
     """The .kicad_pcb zone's min_thickness is read per zone, and a fill is not narrower than it; the setting
     overrides it, and the skeleton is routed a little wider (``skeleton.SLACK``)."""

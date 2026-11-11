@@ -39,7 +39,7 @@ def hop(state: TopoState, wire: int, at_start: bool, vertex: int) -> bool:
     if not at_start:
         steps = reversed_steps(steps)
     pad = pmap.edge_owner_list[steps[0][0]]
-    weight = state.weight[wire]
+    weight, net = state.weight[wire], state.net.get(wire, -1)
 
     # Leading gates round the corner: i of them, then the wire turns away in T.
     i = 0
@@ -70,7 +70,7 @@ def hop(state: TopoState, wire: int, at_start: bool, vertex: int) -> bool:
             return False
         x = nxt[0]
         if kind[x] == TERMINAL:
-            if pmap.edge_owner_list[x] != pad or not state.fits(x, weight):
+            if pmap.edge_owner_list[x] != pad or not state.fits(x, weight, net):
                 return False
             new_edge = x
             break
@@ -78,7 +78,7 @@ def hop(state: TopoState, wire: int, at_start: bool, vertex: int) -> bool:
         beyond = tb if ta == here else ta
         if kind[x] != 0 or beyond < 0 or len(fan) > 32 or any(x == st[0] for st in steps):
             return False
-        if len(order[x]) >= 15 or not state.fits(x, weight):
+        if len(order[x]) >= 15 or not state.fits(x, weight, net):
             return False  # no room on this gate
         fan.append((x, beyond))
         here, came = beyond, x

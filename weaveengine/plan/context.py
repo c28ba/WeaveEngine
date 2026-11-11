@@ -231,12 +231,19 @@ class Context:
         for i, (net_id, a, b) in enumerate(pairs, 1):
             self.conns[i] = Connection(
                 i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
-                weight=1.0 + 2.0 * rules.extra(net_id) / rules.pitch,
+                weight=1.0 + (rules.full(net_id) - rules.base_width) / rules.pitch,
                 layers=tuple(l.index for l in layers if a in l.pmap.pad_edges and b in l.pmap.pad_edges))
         # The pours' skeletons (``plan.skeleton``), (net, pad, pad, layer): connections like the others, on their layer only.
         for i, (net_id, a, b, at) in enumerate(skeletons, len(self.conns) + 1):
             self.conns[i] = Connection(i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
                                        weight=1.0 + 2.0 * rules.extra(net_id) / rules.pitch, layers=(at,), skeleton=True)
+        # A net narrowed to reach fine-pitch pads (``router.reach``) is planned at its own
+        # width, but near those pads, at the width it was narrowed to (``TopoState.zone``).
+        for net, circles in rules.fine.items():
+            if net in rules.net_full:
+                for layer in layers:
+                    layer.state.narrow_near(net, circles, 1.0 + 2.0 * rules.extra(net) / rules.pitch)
+        self.demoted: set[int] = set()  # of those, the nets planned narrow all along again (``demote``)
         nets = [c.net_id for c in self.conns.values()]
         self.pairs = {net for net in nets if nets.count(net) == 1}   # nets of two pads: a trace of theirs has no copper of its net to share
         self.unrouted: set[int] = set(self.conns)
@@ -585,7 +592,7 @@ class Context:
                 "vias": {s.pad: (s.net, s.keep) for s in self.layers[0].pmap.sites.values() if s.active},
                 "pieces": {w: (c.pieces, c.sites, [(self.conns[p].src, self.conns[p].dst) for p in c.pieces])
                            for w, c in self.conns.items() if c.pieces},
-                "next": (self.next_wire, self.next_pad)}
+                "next": (self.next_wire, self.next_pad), "demoted": set(self.demoted)}
 
     def restore(self, snap, logs: list | None = None) -> None:
         """Restore every layer and recompute everything derived from the states.
@@ -600,6 +607,8 @@ class Context:
             layer.pmap.__dict__.pop("_moved_wires", None)
             sites.journal(layer.state).clear()
             layer.state.restore(s)
+            for net in layer.state.zone:
+                layer.state.everywhere(net, net in snap.get("demoted", ()))
             layer.state.cap, layer.state.hist = (x.copy() for x in snap["caps"][i])
             layer.state.resize()   # the map's tables may have grown since the snapshot (they never shrink)
             sites.clear_free(layer.pmap, layer.state)
@@ -611,6 +620,7 @@ class Context:
             layer.air_index = {g: set() for g in layer.air_index}
         self.conns = {w: c for w, c in self.conns.items() if c.parent is None}
         self.next_wire, self.next_pad = snap["next"]
+        self.demoted = set(snap.get("demoted", ()))
         for c in list(self.conns.values()):
             c.pieces, c.sites, ends = snap["pieces"].get(c.wire_id, ((), (), []))
             for w, (src, dst) in zip(c.pieces, ends):
@@ -623,6 +633,24 @@ class Context:
             if c.parent is None and not c.routed:
                 self._waiting(c, True)
         self.rebuild_barrier()
+
+    def demote(self, nets: set[int]) -> None:
+        """Plans these nets narrow all along again, as they were before they were
+        planned at their own width (``router.reach``): their wires are taken out
+        and put back as they were, at the narrow weight."""
+        nets = {n for n in nets if n not in self.demoted and any(n in l.state.zone for l in self.layers)}
+        for layer in self.layers:
+            state = layer.state
+            out = []
+            for w in sorted(w for n in nets for w in state.by_net.get(n, ())):
+                out.append((w, [(e, t, k, state.gate_order[e].index(w)) for e, t, k, _ in state.wire_path[w]],
+                            state.weight[w], state.net[w]))
+                state.remove(w)
+            for net in nets:
+                state.everywhere(net, True)
+            for w, steps, weight, net in reversed(out):
+                state.insert(w, steps, weight, net)
+        self.demoted |= nets
 
     def late(self) -> bool:
         """Whether the time limit is up (``deadline``). From then on rip-up stops,

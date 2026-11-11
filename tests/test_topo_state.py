@@ -93,3 +93,31 @@ def test_a_wire_between_two_of_one_net_splits_their_run():
     assert state.load[e] == state.tally(e) == 3.0      # now three
     state.remove(3)
     assert state.load[e] == state.tally(e) == 1.0
+
+
+def test_a_wire_weighs_less_near_the_fine_pitch_pads_of_its_net(grid):
+    """A net narrowed to reach fine-pitch pads is planned at its own weight but
+    near them (``TopoState.zone``): the load it puts on each gate follows, in and
+    out, and the search sees the same."""
+    _, pmap = grid
+    state = TopoState(pmap)
+    x, y = pmap.pad_centre[0]
+    state.narrow_near(7, [(x, y, 12.0)], 1.0)
+    near = state.near[7]
+    assert near and len(near) < pmap.num_edges
+    r = route(pmap, state, 0, 24, weight=2.0, net=7)
+    state.insert(1, r.steps, 2.0, 7)
+    for g in r.gates:
+        assert state.load[g] == pytest.approx(1.0 if g in near else 2.0)
+        assert state.tally(g) == pytest.approx(state.load[g])
+    assert any(g in near for g in r.gates) and any(g not in near for g in r.gates)
+    gate = next(g for g in r.gates if g in near and pmap.edge_kind_list[g] == 0)
+    assert state.fits(gate, 2.0, 7) == (state.load[gate] + 1.0 <= state.cap[gate] + 1e-9)
+    state.remove(1)
+    assert not state.load.any()
+    # Planned narrow all along: the same everywhere.
+    state.everywhere(7, True)
+    state.insert(1, r.steps, 2.0, 7)
+    assert all(state.load[g] == pytest.approx(1.0) for g in r.gates)
+    state.remove(1)
+    assert not state.load.any()

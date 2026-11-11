@@ -328,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {plane_left_note(stats['plane_left'], result.board)}")
     if stats["narrowed"]:
         print(f"  {narrowed_note(stats['narrowed'], names)}")
+        print(f"  of their traces: {stats['tapered']} tapered, {stats['narrow_all_along']} narrow all along")
     if stats["buried_pads"]:
         print(f"  {unreachable_note(stats['buried_pads'], result.board)}")
     found = estimate_pours(result)

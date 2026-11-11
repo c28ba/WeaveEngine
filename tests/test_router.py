@@ -1426,3 +1426,16 @@ def test_wedges_are_drawn_with_the_teardrops():
     assert with_wedges({1: ["t"]}, {1: ["w"], 2: ["v"]}) == {1: ["t", "w"], 2: ["v"]}
     result = route_board(pins_board(0.2))
     assert result.wedges and set(with_wedges(result.teardrops, result.wedges)) >= set(result.wedges)
+
+
+def test_a_narrowed_net_is_planned_at_its_own_width_but_near_its_fine_pitch_pins():
+    """The room for the net's own width is kept while routing (``TopoState.zone``):
+    every trace of it is drawn wide away from the pins."""
+    result = route_board(pins_board(0.2))
+    rules = result.board.rules
+    assert result.unrouted == [] and set(rules.net_full) == set(result.stats["narrowed"])
+    for net, circles in rules.fine.items():   # one circle per fine-pitch pin, the pin in it
+        assert [p.pad_id for p in result.board.pads if p.net_id == net and rules.width_at(net, *p.centre) < rules.full(net)]
+    for state in (layer.state for layer in result.layers):
+        assert set(state.zone) == set(rules.net_full)
+    assert result.stats["tapered"] > 0 and result.stats["narrow_all_along"] == 0
