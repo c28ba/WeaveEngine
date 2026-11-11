@@ -72,35 +72,32 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     hole = {v: site for site in pmap.sites.values() for v in site.verts}
     kept: dict[tuple[int, int], list[float]] = {}
 
-    # Sites that are no copper to a wire passing them: a sleeping site (a point
-    # left in the map where a via was taken out and the site could not be,
-    # ``sites.delete``), and a via of the wire's own net that it does not end
-    # on. A wire is not held away from such a site (nor makes a U-turn round
-    # it) unless something there is copper to it: a wire of another net nearer
-    # the site on a spoke they share, that does go round it; or, for a sleeping
-    # site, a wire of another net across it (no spoke in common), from which
-    # the site keeps it half a pitch. (A wire passing a site crosses a fan of
-    # its spokes; wires on one side of it share a spoke, nested on it.)
+    # A sleeping site is no copper: a point left in the map where a via was
+    # taken out and the site could not be (``sites.delete``). A wire is not
+    # held away from one (nor makes a U-turn round it) unless something there
+    # is copper to it: a wire of another net nearer the site on a spoke they
+    # share, that does go round it; or a wire of another net across it (no
+    # spoke in common), from which the site keeps it half a pitch. (A wire
+    # passing a site crosses a fan of its spokes; wires on one side of it share
+    # a spoke, nested on it. A via of the wire's own net that it does not end
+    # on is no copper to it either, but traces drawn over such vias cost the
+    # pours room on lumen-blade13 and fomu: left as it is, ROADMAP back burner.)
     free: set[tuple[int, int]] = set()  # (site, wire) that does not go round it
     crossing: dict[int, dict[int, set[int]]] = {}  # site -> wire -> the spokes it crosses
-    if pmap.sites:
+    if any(not site.active for site in pmap.sites.values()):
         for w, steps in state.wire_path.items():
             for e, _, _, _ in steps[1:]:
                 for q in edge_v[e]:
                     site = hole.get(q)
-                    if site is not None:
+                    if site is not None and not site.active:
                         crossing.setdefault(site.pad, {}).setdefault(w, set()).add(e)
     for pad, by in crossing.items():
         site = pmap.sites[pad]
-        ending = {w for w, spokes in by.items() if any(e in site.hole for e in spokes)}
 
         def foreign(x: int, w: int) -> bool:
             return wire_net[x] != wire_net[w] or wire_net[w] < 0
 
-        if site.active:
-            maybe = {w for w in by if w not in ending and wire_net[w] == site.net}
-        else:
-            maybe = {w for w, mine in by.items() if not any(not (spokes & mine) and foreign(x, w) for x, spokes in by.items())}
+        maybe = {w for w, mine in by.items() if not any(not (spokes & mine) and foreign(x, w) for x, spokes in by.items())}
         inner = {}  # wire -> the wires nearer the site than it on a spoke they share
         for w in maybe:
             inner[w] = set()

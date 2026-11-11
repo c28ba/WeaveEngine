@@ -81,7 +81,7 @@ def by_cause(ctx, result, pulled: dict) -> dict:
     drawn = set(result.polylines)
     used = {p for w in drawn if w in ctx.conns for p in (ctx.conns[w].src, ctx.conns[w].dst)}
     board = ctx.board_with_vias()
-    kinds = ("asleep", "unused via", "redundant", "skeleton")
+    kinds = ("redundant", "unused via", "asleep", "skeleton")  # (the redundant first, as the router takes them out: ``router._taut``)
     out = {kind: [0, 0.0, 0.0, 0, 0] for kind in kinds}
     for layer in ctx.layers:
         pmap, state = layer.pmap, layer.state

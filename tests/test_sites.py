@@ -596,14 +596,13 @@ def test_a_map_takes_up_a_log_that_went_back_before_its_own_end():
     assert [e["kind"] for e in sites.log(mine)] == [e["kind"] for e in sites.log(theirs)]
 
 
-@pytest.mark.parametrize("net", [None, 1, 2])
+@pytest.mark.parametrize("net", [None, 2])
 @pytest.mark.parametrize("off", [-0.06, -0.03, 0.03, 0.06])
 def test_a_trace_goes_round_a_via_site_only_where_it_is_copper(off, net):
     """ROADMAP 1.1, traces pulled fully taut: a site left asleep where a via was
-    taken out (``sites.delete`` can refuse) is no copper, nor is a via of the
-    trace's own net that it does not end on. A trace with no wire of another
-    net across such a site does not bend round it (13.1). A via of another net
-    it does go round."""
+    taken out (``sites.delete`` can refuse) is no copper. A trace with no wire
+    of another net across such a site does not bend round it (13.1). A via of
+    another net it does go round."""
     board = Board.rectangle(12.0, 10.0, Rules(), layers=["F.Cu"])
     board.pads += [Pad.circle(0, 4, 5, 0.3, 1), Pad.circle(1, 8, 5, 0.3, 1)]
     pmap = planar_map.build(board, 0)
