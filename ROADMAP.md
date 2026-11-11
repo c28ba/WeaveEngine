@@ -85,7 +85,8 @@ To do, in order:
    `export-shape`; below).
 10. [x] Curves that are not arcs: few; no Bézier or spline track exists in
    KiCad or the session format (below).
-11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
+11. [x] Teardrops as polygons instead of fans of tracks: as KiCad teardrop zones in a
+   routed copy of the board, a setting of three (branch `export-shape`; below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
    (below).
 
@@ -156,11 +157,44 @@ To do, in order:
   lines (`PCB_TRACK`) and arcs (`PCB_ARC`) only (Bézier exists for graphic
   shapes, not tracks), and a Specctra wire is a `path`, `qarc`, `polygon`,
   `rect` or `circle`.
-- **Teardrops as polygons.** Teardrops and taper wedges are written as fans
-  of tracks. Check whether the session format and KiCad's import take a
-  filled polygon for them (a Specctra `wire` with a polygon shape, or KiCad's
-  own teardrop zones), which would be one clean shape to edit instead of many
-  tracks.
+- **Teardrops as polygons** (branch `export-shape`). Not through the
+  session: KiCad 10's SES import drops a `wire` of any shape but `path` and
+  `qarc` without a word (a `polygon` wire, with or without `(type route)`, and
+  a `rect` wire were tried on pic-programmer: no zone, no drawing, no track
+  came in; the import's own source says such a wire is a zone the board
+  already has). So the teardrops are now a setting of three (`teardrop_style`,
+  `--teardrops`): WeaveEngine's as tracks in the SES (the default, as before);
+  WeaveEngine's as KiCad teardrop zones (`(attr (teardrop (type padvia)))`, as
+  KiCad makes its own) in a routed copy of the board; or none (KiCad's own
+  Edit > Edit Teardrops can add them; no pad or via is marked for KiCad's, so
+  none means none). `--no-teardrops` and `--no-ses-teardrops` are kept and
+  mean none. The routed copy (`io/kicad_board.py`, `--routed-board FILE`,
+  setting "Routed copy of the board"; default NAME-routed.kicad_pcb beside the
+  SES, written for zones) is the original `.kicad_pcb` text with the unlocked
+  tracks, vias and old teardrops taken out as KiCad's session import does, the
+  zones' stale fills taken out, and the routing (tracks, arcs, vias) and
+  teardrop zones put in; the `.kicad_pro` and `.kicad_dru` are copied beside
+  it so KiCad checks it by the same rules. The original board is never
+  written. A taper's wedge stays a fan of tracks: as a `track_end` teardrop
+  zone KiCad's check found the narrow piece unconnected (pic-programmer: 2
+  unconnected, 4 dangling tracks). KiCad 10 has no teardrop generator outside
+  its PCB editor (neither kicad-cli nor the Python module), which is why
+  "left to KiCad" can only mean none plus that note.
+  Checked with KiCad 10.0.6 (copy loaded, zones filled, DRC), against the SES
+  imported with fans: pic-programmer, sweep-mini, sonde, ringlight, ecc83 all
+  have the same violations and unconnected counts; KiCad items per board,
+  fans -> zones copy: pic-programmer 982 tracks + 92 arcs -> 231 + 92 + 169
+  teardrop zones, sweep-mini 1535 + 186 -> 376 + 186 + 168, sonde 413 + 48 ->
+  104 + 48 + 88.
+  Teardrops after routing: they are made last, round the finished routing,
+  so the app makes them again (`router.redo_teardrops`), and only them, when
+  the teardrop settings change after routing (style on or off, longest,
+  widest, breathing room); the drawing, the pour estimate and what Export
+  writes follow. The style itself and arcs in the session are read when
+  exporting. Made again with unchanged settings, the teardrops come out the
+  same as the router's (checked on three boards). Not made live, since they
+  change the routed geometry the design-rule repair and fan-out checked:
+  rounding corners, tapering, straightening vias, fan-out and pour skeletons.
 - **A 45-degree output option.** Traces drawn as straight runs at multiples of
   45 degrees, as many boards are expected to look, instead of taut curves:
   the same topology, realised on octilinear paths, with the clearances checked

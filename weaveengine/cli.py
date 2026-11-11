@@ -8,6 +8,7 @@ import time
 from weaveengine import __version__, accel, safe_output
 from weaveengine.io.check import kicad_project_rules, measure
 from weaveengine.io.dsn import read_dsn, walled_note
+from weaveengine.io.kicad_board import TEARDROP_STYLES, routed_board_path, source_board, write_routed_board
 from weaveengine.io.ses import write_ses
 from weaveengine.pours import note as pour_note, of_result as estimate_pours
 from weaveengine.plan.context import Options
@@ -133,7 +134,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="signal layers to route (default: all in the DSN); vias still keep clear of the others' copper and reach their planes")
     ap.add_argument("--svg", help="also write an SVG picture of the result")
     ap.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
-    ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all")
+    ap.add_argument("--teardrops", choices=list(TEARDROP_STYLES), default="tracks",
+                    help="teardrops where traces meet pads and vias: " + "; ".join(f"{k}: {v}" for k, v in TEARDROP_STYLES.items())
+                         + " (default %(default)s)")
+    ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all (the same as --teardrops none)")
     for name, (flag, text) in OPTION_SWITCHES.items():
         ap.add_argument(flag, dest="no_" + name, action="store_true", help=text)
     ap.add_argument("--teardrop-max-length", type=float, default=Options.teardrop_max_length, metavar="MM",
@@ -154,8 +158,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-narrowing", action="store_true",
                     help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
     ap.add_argument("--no-ses-teardrops", action="store_true",
-                    help="keep teardrops out of the SES (they are written as short widening traces; "
-                         "leave them out to use the CAD tool's own teardrops instead)")
+                    help="no teardrops in the SES (the same as --teardrops none: KiCad's own Edit > Edit Teardrops can add them)")
+    ap.add_argument("--routed-board", metavar="FILE",
+                    help="also write the routing straight into a copy of the .kicad_pcb beside the DSN, as FILE (with "
+                         "--teardrops zones this is where the teardrops go; default then: NAME-routed.kicad_pcb beside the output). "
+                         "The original board is never changed")
     ap.add_argument("--no-ses-arcs", action="store_true",
                     help="write curves in the SES as short straight segments, not arcs (qarc)")
     ap.add_argument("--edge-clearance", type=float, metavar="MM",
@@ -277,7 +284,8 @@ def main(argv: list[str] | None = None) -> int:
     rules.clearance = want_clearance + args.margin
     rules.edge_clearance = want_edge + args.margin
     rules.margin = args.margin
-    options = Options(vias=not args.no_vias, teardrops=not args.no_teardrops, portfolio=args.portfolio, narrow=not args.no_narrowing,
+    style = "none" if args.no_teardrops or args.no_ses_teardrops else args.teardrops
+    options = Options(vias=not args.no_vias, teardrops=style != "none", portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
                       teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
@@ -296,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{time.strftime('%H:%M:%S', time.localtime(deadline))}, then the best so far is finished and written")
     bar = None if args.quiet else ProgressBar(deadline=deadline)
     out = args.output or (args.dsn.rsplit(".", 1)[0] + ".ses")
-    saver = Checkpoint(design, out, not args.no_ses_teardrops, bar, not args.no_ses_arcs)
+    saver = Checkpoint(design, out, style == "tracks", bar, not args.no_ses_arcs)
     try:
         result = route_board(design.board, params, options=options, seed=args.seed, drc_rounds=args.drc_rounds,
                              workers=args.workers, events=bar.event if bar else None, deadline=deadline, checkpoint=saver)
@@ -309,7 +317,22 @@ def main(argv: list[str] | None = None) -> int:
     if bar:
         bar.finish()
     stats = result.stats
-    write_ses(design, result, out, teardrops=not args.no_ses_teardrops, arcs=not args.no_ses_arcs)
+    write_ses(design, result, out, teardrops=style == "tracks", arcs=not args.no_ses_arcs)
+    board_out = args.routed_board or (routed_board_path(out) if style == "zones" else None)
+    if board_out:
+        source = source_board(args.dsn)
+        if source is None:
+            print(f"WARNING: no routed copy of the board: there is no {os.path.splitext(os.path.basename(args.dsn))[0]}.kicad_pcb "
+                  "beside the DSN" + (", so the teardrops (zones) are not written anywhere" if style == "zones" else ""))
+        else:
+            try:
+                counts = write_routed_board(design, result, source, board_out, style, not args.no_ses_arcs)
+                print(f"routed copy of the board: {counts['tracks']} tracks, {counts['arcs']} arcs, {counts['vias']} vias, "
+                      f"{counts['zones']} teardrop zones -> {board_out} (fill its zones in KiCad, B, before checking it)")
+            except (OSError, ValueError) as error:
+                print(f"WARNING: could not write the routed copy of the board {board_out}: {error}")
+    if style == "none" and not args.quiet:
+        print("no teardrops written: KiCad's own Edit > Edit Teardrops can add them")
     per_layer = ", ".join(f"{name}: {count}" for name, count in stats["wires_per_layer"].items())
     print(f"{stats['routed']}/{stats['connections']} connections routed ({per_layer}; {stats['vias']} vias), "
           f"length ratio {stats['length_ratio']:.3f}, {stats['time_total']:.1f}s -> {out}"

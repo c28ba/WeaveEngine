@@ -33,13 +33,14 @@ def test_every_option_is_a_setting_too():
     s = Settings()
     assert s.options() == Options(portfolio=s.portfolio) and "taper_to_pins" in DESCRIPTIONS
     flipped = {"taper_to_pins": "taper", "smooth_corners": "smooth", "slide_vias": "slide", "untangle": "untangle",
-               "narrow_to_reach": "narrow", "fanout_to_planes": "fanout", "teardrops": "teardrops", "use_vias": "vias",
+               "narrow_to_reach": "narrow", "fanout_to_planes": "fanout", "use_vias": "vias",
                "global_selection": "global_selection", "regret_order": "regret_order", "lookahead": "lookahead",
                "demand": "demand", "ripup": "ripup", "refine": "refine"}
     for setting, option in flipped.items():
         t = Settings(**{setting: False})
         assert getattr(t.options(), option) is False, setting
-    assert set(flipped.values()) | {"skeleton", "portfolio", "teardrop_max_length", "teardrop_max_width", "teardrop_breathing"} \
+    assert Settings(teardrop_style="none").options().teardrops is False  # (teardrops: a choice of three, one of them none)
+    assert set(flipped.values()) | {"teardrops", "skeleton", "portfolio", "teardrop_max_length", "teardrop_max_width", "teardrop_breathing"} \
         == {f.name for f in dataclasses.fields(Options)}
 
 

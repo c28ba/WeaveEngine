@@ -62,12 +62,24 @@ DESCRIPTIONS = {
     "taper_to_pins": ("Taper traces to fine-pitch pins", "A net narrowed to reach fine-pitch pins is drawn at its own width again, "
                       "narrowing (with a wedge) only over the last stretch to each such pin, where there is room", "Routing"),
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
-    "teardrops": ("Teardrops", "Add teardrops where traces meet pads and vias", "Teardrops"),
-    "teardrops_in_ses": ("Write teardrops to the SES", "As fans of ordinary traces (SES has no filled shapes)", "Teardrops"),
+    "teardrop_style": ("Teardrops", "Where traces meet pads and vias. Can be changed after routing: only the teardrops are made "
+                       "again", "Teardrops"),
+    "routed_board": ("Routed copy of the board", "Also write the routing straight into a copy of the KiCad board (.kicad_pcb) "
+                     "beside the SES, at this path; empty: NAME-routed.kicad_pcb, written only for teardrop zones. The "
+                     "original board is never changed", "Teardrops"),
     "arcs_in_ses": ("Write arcs to the SES", "Curves as arcs (qarc) instead of many short segments", "Routing"),
     "teardrop_max_length": ("Longest teardrop (mm)", "Beyond the pad edge", "Teardrops"),
     "teardrop_max_width": ("Widest teardrop (mm)", "Across, at the pad", "Teardrops"),
     "teardrop_breathing": ("Teardrop breathing room", "Clearances kept from foreign copper; cramped teardrops are left out", "Teardrops"),
+}
+
+# A setting that is one of a few choices: name -> {value: label}
+CHOICES = {
+    "teardrop_style": {
+        "tracks": "WeaveEngine's, as tracks in the SES",
+        "zones": "WeaveEngine's, as KiCad teardrop zones in a routed copy of the board",
+        "none": "None (KiCad's own Edit > Edit Teardrops can add them)",
+    },
 }
 
 # name -> words and synonyms a designer might type (the search also reads the label, description and name)
@@ -109,8 +121,9 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "slide_vias": ("move", "straighten", "bend", "shift", "adjust", "via", "optimise", "optimize", "kink"),
     "taper_to_pins": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "wedge"),
     "smooth_corners": ("round", "arc", "curve", "bend", "angle", "45", "90", "chamfer", "radius", "fillet", "acute"),
-    "teardrops": ("teardrop", "fillet", "pad entry", "tear drop", "reinforce", "annular ring", "junction", "via"),
-    "teardrops_in_ses": ("teardrop", "session", "export", "output", "freerouting", "save", "import", "fan"),
+    "teardrop_style": ("teardrop", "fillet", "pad entry", "tear drop", "reinforce", "annular ring", "junction", "via", "kicad",
+                       "zone", "session", "export", "fan", "tracks", "none", "off"),
+    "routed_board": ("kicad", "kicad_pcb", "board", "copy", "export", "output", "save", "pcb", "file", "teardrop", "zone"),
     "arcs_in_ses": ("curve", "arc", "qarc", "session", "export", "output", "freerouting", "segments", "round"),
     "teardrop_max_length": ("teardrop", "fillet", "size", "longest", "extent", "limit", "pad entry"),
     "teardrop_max_width": ("teardrop", "fillet", "size", "widest", "limit", "pad entry"),
@@ -204,8 +217,8 @@ class Settings:
     show_outlines: bool = True
     show_names: bool = True
     gpu_drawing: bool = False
-    teardrops: bool = True
-    teardrops_in_ses: bool = True
+    teardrop_style: str = "tracks"  # one of CHOICES["teardrop_style"]
+    routed_board: str = ""          # where the routed copy of the board goes ("": NAME-routed.kicad_pcb, for teardrop zones only)
     arcs_in_ses: bool = True
     teardrop_max_length: float = 1.0
     teardrop_max_width: float = 2.0
@@ -228,6 +241,11 @@ class Settings:
                     setattr(settings, field.name, type(getattr(settings, field.name))(data[field.name]))
                 except (TypeError, ValueError):
                     pass  # a bad value in the file: keep the default
+        if "teardrop_style" not in data and False in (data.get("teardrops"), data.get("teardrops_in_ses")):
+            settings.teardrop_style = "none"  # (as a settings file from before 1.1 says it)
+        for name, choices in CHOICES.items():
+            if getattr(settings, name) not in choices:
+                setattr(settings, name, getattr(cls(), name))
         return settings
 
     def save(self, path: str | None = None) -> str:
@@ -242,7 +260,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, skeleton=self.pour_skeletons, teardrops=self.teardrops, teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        portfolio=self.portfolio)
 

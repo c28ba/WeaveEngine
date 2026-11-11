@@ -16,7 +16,7 @@ from dataclasses import asdict
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from shapely.geometry import Point
 from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QDockWidget, QDoubleSpinBox,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QFrame, QGraphicsScene, QGraphicsView, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
@@ -25,13 +25,15 @@ from weaveengine import HOME, __version__, accel, safe_output
 from weaveengine.cli import narrowed_note, plane_left_note, unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
+from weaveengine.io.kicad_board import routed_board_path, source_board, write_routed_board
 from weaveengine.io.ses import write_ses
 from weaveengine.pours import of_result as estimate_pours
 from weaveengine.realize.taper import with_wedges
 from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
-from weaveengine.settings import AUTOMATIC, DESCRIPTIONS, RULES, Settings, matches_search, default_path, detected_rules, skip_nets, undetected
+from weaveengine.router import redo_teardrops
+from weaveengine.settings import AUTOMATIC, CHOICES, DESCRIPTIONS, RULES, Settings, matches_search, default_path, detected_rules, skip_nets, undetected
 from weaveengine.viz.svg import export_result
 
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227", "#b06cff", "#22cfcf"]
@@ -623,6 +625,14 @@ class SettingsDialog(QDialog):
             value = getattr(Settings(), name)
             if name == "portfolio":
                 self._race_row(form, label, description)
+            elif name in CHOICES:
+                combo = QComboBox()
+                for key, text in CHOICES[name].items():
+                    combo.addItem(text, key)
+                combo.setToolTip(description)
+                form.addRow(label, combo)
+                self.readers[name] = combo.currentData
+                self.writers[name] = lambda value, combo=combo: combo.setCurrentIndex(max(0, combo.findData(value)))
             elif isinstance(value, bool):
                 box = QCheckBox(label)
                 box.setToolTip(description)
@@ -1333,8 +1343,18 @@ class MainWindow(QMainWindow):
 
     def export_ses(self, path: str) -> bool:
         try:
-            write_ses(self.routed_design, self.result, path, teardrops=self.settings.teardrops_in_ses, arcs=self.settings.arcs_in_ses)
+            style = self.settings.teardrop_style
+            write_ses(self.routed_design, self.result, path, teardrops=style == "tracks", arcs=self.settings.arcs_in_ses)
             m = measure(self.routed_design, path, *self.want)
+            board = self.settings.routed_board or (routed_board_path(path) if style == "zones" else "")
+            source = source_board(self.dsn_path)
+            if board and source is None:
+                self.say(f"No routed copy of the board written: there is no {os.path.splitext(os.path.basename(self.dsn_path))[0]}"
+                         ".kicad_pcb beside the DSN" + (" (and the teardrops, as zones, are in that copy only)" if style == "zones" else ""))
+            elif board:
+                counts = write_routed_board(self.routed_design, self.result, source, board, style, self.settings.arcs_in_ses)
+                self.say(f"Wrote {board}: the board with this routing in it ({counts['tracks']} tracks, {counts['arcs']} arcs, "
+                         f"{counts['vias']} vias, {counts['zones']} teardrop zones); fill its zones in KiCad (B) before checking it")
         except (OSError, ValueError) as error:
             self.say(f"Could not write {path}: {error}")
             if self.interactive:
@@ -1374,7 +1394,8 @@ class MainWindow(QMainWindow):
     def edit_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self.settings_path, self, *self._detected())
         if dialog.exec() == QDialog.Accepted:
-            self.settings = dialog.settings()
+            before, self.settings = self.settings, dialog.settings()
+            self._teardrops_again(before)
             self.outline_box.setChecked(self.settings.show_outlines)
             self.name_box.setChecked(self.settings.show_names)
             self.pour_box.setChecked(self.settings.show_pours)
@@ -1387,6 +1408,20 @@ class MainWindow(QMainWindow):
                 self._apply_gpu()
             except OSError as error:
                 QMessageBox.critical(self, "Could not save the settings", str(error))
+
+    def _teardrops_again(self, before: Settings) -> None:
+        """After routing, a change to the teardrops (on or off, their size) makes
+        only them again on the result shown, and draws it again (the routing
+        and its pour estimate with them); what Export writes follows. The
+        other export settings (the style, arcs) are read when exporting."""
+        keys = ("teardrop_max_length", "teardrop_max_width", "teardrop_breathing")
+        on = self.settings.teardrop_style != "none"
+        if self.result is None or (self.job is not None and self.job.running()) or (
+                on == (before.teardrop_style != "none") and all(getattr(before, k) == getattr(self.settings, k) for k in keys)):
+            return
+        self.result = redo_teardrops(self.result, on, *(getattr(self.settings, k) for k in keys))
+        self._show(self.result)
+        self.say(f"Teardrops made again: {sum(len(d) for d in self.result.teardrops.values())}" if on else "Teardrops taken off")
 
     def _detected(self) -> tuple[dict | None, str]:
         """What the open board gives for each rule, and its file name (for the settings editor)."""
@@ -1564,7 +1599,7 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
             dialog.grab().save(os.path.splitext(screenshot)[0] + f"_settings{i + 1}.png")
         assert dialog.settings() == window.settings
         # every state the file can hold comes back out of the editor unchanged
-        for odd in (Settings(workers=3, portfolio=1, trace_width=0.127, edge_clearance=0.5, teardrops=False),
+        for odd in (Settings(workers=3, portfolio=1, trace_width=0.127, edge_clearance=0.5, teardrop_style="none"),
                     Settings(workers=0, portfolio=5, via_diameter=0.45, via_drill=0.2, ignore_keepouts=True)):
             dialog.load(odd)
             assert dialog.settings() == odd, (dialog.settings(), odd)

@@ -166,6 +166,45 @@ def _fitted(board, result, teardrops: bool, min_radius: float) -> dict:
             return shapes
 
 
+def routed_copper(design: Design, result, teardrops: bool = True, arcs: bool = True, min_radius: float = 0.0,
+                  wedges: bool = True, kept: bool | None = None):
+    """The routing as a session or a board holds it, net by net in order: (net,
+    items), each item ("path", layer, width, points), ("arc", layer, width,
+    from, to, centre) of at most 90 degrees, or ("via", x, y); millimetres, in
+    the DSN's frame. With ``teardrops`` and ``wedges``, those are there as fans
+    of tracks (``teardrop_tracks``, ``wedge_tracks``); without, they are left
+    to the caller. ``kept``: whether the teardrops are on the board all the
+    same, for the arcs to keep clear of (default ``teardrops``). Arcs: see
+    ``write_ses``."""
+    board = result.board
+    by_net: dict[int, list[int]] = {}
+    for wire, net in result.wire_net.items():
+        if wire in result.polylines:
+            by_net.setdefault(net, []).append(wire)
+    vias_by_net: dict[int, list] = {}
+    for via in result.vias:
+        vias_by_net.setdefault(via.net_id, []).append(via)
+    shapes = _fitted(board, result, teardrops if kept is None else kept, min_radius) if arcs else {}
+    for net in sorted(set(by_net) | set(vias_by_net)):
+        items = []
+        for wire in sorted(by_net.get(net, [])):
+            layer = result.wire_layer.get(wire, 0)
+            # (a tapered trace is several pieces, each of its own width)
+            for piece, (pts, drawn) in enumerate(result.widths.get(wire) or [(result.polylines[wire], board.rules.drawn(net))]):
+                for run in shapes.get((wire, piece)) or [("path", pts)]:
+                    if run[0] == "arc":
+                        items += [("arc", layer, drawn, a, b, run[2]) for a, b in run[1]]
+                    else:
+                        items.append(("path", layer, drawn, run[1]))
+            for poly in result.wedges.get(wire, []) if wedges else ():  # (a tapered trace's wedges: a fan of tracks)
+                items += [("path", layer, w, [a, b]) for w, a, b in wedge_tracks(poly)]
+            if teardrops:
+                for poly in result.teardrops.get(wire, []):
+                    items += [("path", layer, w, [a, b]) for w, a, b in teardrop_tracks(poly, board.rules.drawn(net))]
+        items += [("via", *via.centre) for via in vias_by_net.get(net, [])]
+        yield net, items
+
+
 def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: bool = True) -> None:
     """Writes the routed traces and vias of ``result``. With ``teardrops``,
     each teardrop is added as a fan of ordinary traces (see ``teardrop_tracks``).
@@ -211,47 +250,23 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: b
     out.append("    )")
 
     out.append("    (network_out")
-    by_net: dict[int, list[int]] = {}
-    for wire, net in result.wire_net.items():
-        if wire in result.polylines:
-            by_net.setdefault(net, []).append(wire)
-    vias_by_net: dict[int, list] = {}
-    for via in result.vias:
-        vias_by_net.setdefault(via.net_id, []).append(via)
-    shapes = _fitted(board, result, teardrops, MIN_ARC_UNITS / factor) if arcs else {}
-    for net in sorted(set(by_net) | set(vias_by_net)):
-        width = n(board.rules.drawn(net))
+    for net, items in routed_copper(design, result, teardrops, arcs, MIN_ARC_UNITS / factor):
         out.append(f"      (net {q(names.get(net, f'N{net}'))}")
-        for wire in sorted(by_net.get(net, [])):
-            wire_layer = result.wire_layer.get(wire, 0)
-            layer = board.layers[wire_layer]
-            # (a tapered trace is several pieces, each of its own width)
-            for piece, (pts, drawn) in enumerate(result.widths.get(wire) or [(result.polylines[wire], board.rules.drawn(net))]):
-                width = n(drawn)
-                runs = shapes.get((wire, piece)) or [("path", pts)]
-                for run in runs:
-                    if run[0] == "arc":
-                        cx, cy = run[2]
-                        for a, b in run[1]:
-                            if (n(a[0]), n(a[1])) != (n(b[0]), n(b[1])):
-                                out.append(f"        (wire (qarc {layer} {width} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])} {n(cx)} {n(cy)}))")
-                        continue
-                    # Points that coincide after rounding would make zero-length segments.
-                    pp = [f"{n(x)} {n(y)}" for x, y in run[1]]
-                    pp = [p for i, p in enumerate(pp) if i == 0 or p != pp[i - 1]]
-                    if len(pp) >= 2:
-                        out.append(f"        (wire (path {layer} {width} {' '.join(pp)}))")
-            for poly in result.wedges.get(wire, []):  # (a tapered trace's wedges: a fan of tracks)
-                for w, a, b in wedge_tracks(poly):
-                    out.append(f"        (wire (path {layer} {n(w)} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])}))")
-            if teardrops:
-                for poly in result.teardrops.get(wire, []):
-                    for w, a, b in teardrop_tracks(poly, board.rules.drawn(net)):
-                        if (n(a[0]), n(a[1])) != (n(b[0]), n(b[1])):
-                            out.append(f"        (wire (path {layer} {n(w)} {n(a[0])} {n(a[1])} {n(b[0])} {n(b[1])}))")
-        for via in vias_by_net.get(net, []):
-            x, y = via.centre
-            out.append(f"        (via {q(via_name)} {n(x)} {n(y)})")
+        for item in items:
+            if item[0] == "via":
+                out.append(f"        (via {q(via_name)} {n(item[1])} {n(item[2])})")
+                continue
+            layer, width = board.layers[item[1]], n(item[2])
+            if item[0] == "arc":
+                (ax, ay), (bx, by), (cx, cy) = item[3:]
+                if (n(ax), n(ay)) != (n(bx), n(by)):
+                    out.append(f"        (wire (qarc {layer} {width} {n(ax)} {n(ay)} {n(bx)} {n(by)} {n(cx)} {n(cy)}))")
+                continue
+            # Points that coincide after rounding would make zero-length segments.
+            pp = [f"{n(x)} {n(y)}" for x, y in item[3]]
+            pp = [p for i, p in enumerate(pp) if i == 0 or p != pp[i - 1]]
+            if len(pp) >= 2:
+                out.append(f"        (wire (path {layer} {width} {' '.join(pp)}))")
         out.append("      )")
     out += ["    )", "  )", ")"]
     part = f"{path}.{os.getpid()}.part"

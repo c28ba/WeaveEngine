@@ -11,11 +11,11 @@ from weaveengine.settings import DESCRIPTIONS, KEYWORDS, Settings, default_path
 def test_settings_round_trip_and_bad_files(tmp_path):
     path = str(tmp_path / "settings.json")
     assert Settings.load(path) == Settings()                     # no file: the defaults
-    custom = Settings(workers=3, margin=0.02, teardrops=False, heuristic_weight=1.5, ignore_keepouts=True)
+    custom = Settings(workers=3, margin=0.02, teardrop_style="none", heuristic_weight=1.5, ignore_keepouts=True)
     custom.save(path)
     assert Settings.load(path) == custom
     data = json.load(open(path, encoding="utf-8"))
-    assert data["workers"] == 3 and data["teardrops"] is False
+    assert data["workers"] == 3 and data["teardrop_style"] == "none"
     # hand-edited: unknown keys ignored, bad values keep their defaults, the rest is read
     data.update({"no_such_setting": 1, "margin": "not a number", "seed": 7})
     json.dump(data, open(path, "w", encoding="utf-8"))
