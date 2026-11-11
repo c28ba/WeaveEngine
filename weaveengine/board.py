@@ -184,6 +184,8 @@ class Board:
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     pour_min: dict = field(default_factory=dict)       # (net, layer index) -> the least width of that pour's fill, from its zone's min_thickness
     pour_zone: dict = field(default_factory=dict)      # (net, layer index) -> its zone's settings (``Zone``), from the .kicad_pcb
+    net_clearance: dict = field(default_factory=dict)  # net -> its class's clearance (the DSN's), for the pours' fill; a net not in it keeps ``default_clearance``
+    default_clearance: float | None = None             # mm: the default class's clearance (None: the board's, ``Rules.clearance``)
     pour_override: float = 0.0                         # mm: the least width of every pour's fill if set (the user's), else the zones' own
     pour_edge: float | None = None                     # mm: what a pour's fill keeps from the board edge, the board's own rule (the
                                                        # .kicad_pro's and custom rules'), not the traces' (None: the traces')

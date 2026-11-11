@@ -267,6 +267,19 @@ def test_the_fill_keeps_the_boards_edge_clearance_and_fills_mask_openings():
     assert fill.distance(Point(30, 20)) == pytest.approx(1.25, abs=0.01)
 
 
+def test_a_pour_keeps_the_clearance_of_its_nets_classes_from_each_net():
+    board = board_with_pour()
+    board.rules.clearance = 0.5  # (the most of any class)
+    board.default_clearance = 0.2
+    board.net_clearance = {SIG: 0.5, 5: 0.3}
+    board.pads += [Pad.circle(3, 10, 20, 0.6, SIG, "R1-1", BACK), Pad.circle(4, 30, 20, 0.6, 5, "R2-1", BACK),
+                   Pad.circle(5, 20, 4, 0.6, 6, "R3-1", BACK)]
+    fill = shapely.union_all([p.shape for p in pours.estimate(board, {}, {}, {})[0].pieces])
+    assert fill.distance(Point(10, 20)) == pytest.approx(0.5 + 0.6, abs=0.01)  # (the signal's class asks 0.5)
+    assert fill.distance(Point(30, 20)) == pytest.approx(0.3 + 0.6, abs=0.01)  # (a class of 0.3)
+    assert fill.distance(Point(20, 4)) == pytest.approx(0.2 + 0.6, abs=0.01)   # (the default class: 0.2)
+
+
 def test_islands_the_zone_removes_are_not_counted():
     from weaveengine.board import Zone
     board = board_with_pour()

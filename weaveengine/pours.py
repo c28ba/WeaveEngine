@@ -53,18 +53,24 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
     if board.margin:  # (and as much from drawings on the Margin layer)
         inside = inside.difference(shapely.union_all([m.buffer(edge if board.pour_edge is None else board.pour_edge) for m in board.margin]))
     layers = {at for _, at, _ in board.pours}
-    # Each layer's copper: (shape, net, clearance asked; None for a keepout, which asks none).
+    def asks(net: int) -> float:  # (what a net's class asks, the board's if it is not known, never more than the board's)
+        if clearance is not None or not (board.net_clearance or board.default_clearance):
+            return base
+        got = board.net_clearance.get(net, board.default_clearance)
+        return base if got is None else min(base, got)
+
+    # Each layer's copper: (shape, net, its own local clearance; None for a keepout, which asks none).
     copper: dict[int, list] = {at: [] for at in layers}
     for p in board.pads:
         for at in layers:
             if p.on(at):
-                copper[at].append((p.shape, p.net_id, max(base, p.clearance)))
+                copper[at].append((p.shape, p.net_id, p.clearance))
     for o in board.obstacles:
         for at in layers:
             if o.on(at) and o.hole:  # (KiCad keeps the hole clearance from a hole with no copper, not the zone's)
-                copper[at].append((o.shape.buffer(o.clearance, quad_segs=4), -2, 0.0))
+                copper[at].append((o.shape.buffer(o.clearance, quad_segs=4), -2, None))
             elif o.on(at) and o.fill:
-                copper[at].append((o.shape, o.net_id if o.copper or o.net_id >= 0 else -2, max(base, o.clearance) if o.copper or o.net_id >= 0 else 0.0))
+                copper[at].append((o.shape, o.net_id if o.copper or o.net_id >= 0 else -2, o.clearance if o.copper or o.net_id >= 0 else None))
     wires = []  # (shape, net, layer) of every trace and teardrop
     for w, line in lines.items():
         if len(line) >= 2 and w in wire_layer:
@@ -76,7 +82,7 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
             wires += [(shapely.Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for poly in drops]
     for shape, net, at in wires:
         if at in layers:
-            copper[at].append((shape, net, base))
+            copper[at].append((shape, net, 0.0))
     trees = {at: shapely.STRtree([c[0] for c in cs]) for at, cs in copper.items() if cs}
     # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
     order = sorted(range(len(board.pours)), key=lambda k: (-board.zone(*board.pours[k][:2]).priority, k))
@@ -85,7 +91,9 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
     for k in order:
         net, at, outline = board.pours[k]
         zone = board.zone(net, at)
-        keep = base if clearance is not None else max(base, board.pour_clearance(net, at))
+        own_zone = (board.zone(net, at).clearance or 0.0) if clearance is None else 0.0
+        keep = max(asks(net), own_zone)  # (and from another net's copper, the more of the two classes)
+        pair = lambda other: max(keep, asks(other))
         area = outline.intersection(inside)
         fill = area
         tree = trees.get(at)
@@ -93,9 +101,9 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         # clearances out, the spokes in, the clearances out again, then what is narrower than the least width).
         blocked = []
         if tree is not None:
-            near = [copper[at][i] for i in tree.query(outline, predicate="dwithin", distance=keep + 1.0).tolist()]
-            blocked += [s.buffer(max(ask, keep) if ask else ask, quad_segs=4) for s, other, ask in near if other != net]
-        blocked += [f.buffer(keep, quad_segs=4) for other, rank, f in filled.get(at, ()) if other != net and rank > zone.priority]
+            near = [copper[at][i] for i in tree.query(outline, predicate="dwithin", distance=max(base, keep) + own_zone + 1.0).tolist()]
+            blocked += [s.buffer(max(ask, pair(other)) if ask is not None else 0.0, quad_segs=4) for s, other, ask in near if other != net]
+        blocked += [f.buffer(pair(other), quad_segs=4) for other, rank, f in filled.get(at, ()) if other != net and rank > zone.priority]
         blocked = shapely.union_all(blocked) if blocked else None
         if blocked is not None:
             fill = fill.difference(blocked)
