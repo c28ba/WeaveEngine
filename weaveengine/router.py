@@ -4,7 +4,7 @@ insertion for connections that no single layer can complete (section 12)."""
 import copy
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from shapely.geometry import Polygon
 
@@ -69,6 +69,23 @@ class Result:
     @property
     def state(self) -> TopoState:
         return self.layers[0].state
+
+
+def redo_teardrops(result: "Result", on: bool = True, max_length: float = Options.teardrop_max_length,
+                   max_width: float = Options.teardrop_max_width, breathing: float = Options.teardrop_breathing) -> "Result":
+    """``result`` with its teardrops made again, to other limits, or taken
+    away (not ``on``), and nothing else changed: the routing is not touched.
+    Teardrops are drawn last, round the finished traces, vias and pads
+    (``realize.teardrop``), so they can be changed after routing. (The fan-out
+    vias were placed clear of the teardrops of the routing; new ones keep
+    clear of those vias and traces as any teardrop keeps clear of copper.)"""
+    drops: dict[int, list] = {}
+    pads = {**{w: (c.src, c.dst) for w, c in result.connections.items()}, **result.wire_pads}
+    if on:
+        for layer in sorted(set(result.wire_layer.values())):
+            on_layer = {w: pts for w, pts in result.polylines.items() if result.wire_layer.get(w) == layer}
+            drops.update(make_teardrops(result.board, on_layer, result.wire_net, pads, layer, max_length, max_width, breathing))
+    return replace(result, teardrops=drops)
 
 
 def route_board(board: Board, params: CostParams | None = None, options: Options | None = None, seed: int = 0,

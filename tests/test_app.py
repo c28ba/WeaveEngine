@@ -312,9 +312,9 @@ def test_settings_search_keywords_words_and_typos():
         return {name for name, (form, first, _) in dialog.rows.items() if form.isRowVisible(first)}
 
     assert "taper_to_pins" in shown("neckdown")
-    assert "teardrops" in shown("tear")
-    assert "teardrops" in shown("teardorp")
-    assert "teardrops" in shown("TEARDROP")
+    assert "teardrop_style" in shown("tear")
+    assert "teardrop_style" in shown("teardorp")
+    assert "teardrop_style" in shown("TEARDROP")
     both = shown("via size")
     assert {"via_diameter", "via_drill"} <= both and "clearance" not in both and both < shown("via")
     assert shown("size via") == both

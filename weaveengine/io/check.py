@@ -2,7 +2,7 @@
 
 Nothing here uses the router's own data: the session file is parsed back and
 the copper it describes is measured with shapely against the pads (round pads
-as true circles), the other traces and the board edge.
+as true circles, ovals with true round ends), the other traces and the board edge.
 """
 import json
 import math
@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import shapely
 from shapely.geometry import LineString, Point
 
+from weaveengine.io.clearance import pad_copper
 from weaveengine.io.dsn import UNIT_MM, Design, _child, _children, parse_sexpr
 
 
@@ -88,7 +89,7 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     # the clearance from keepouts as well, except where a pad of the design meets one.
     # Copper of no net (text, a logo) is held to the clearance like a pad. What an item
     # asks beyond the rule (a local clearance, a hole's) counts against the gap to it.
-    pads = [(Point(p.centre).buffer(p.radius, quad_segs=32) if p.radius else p.shape, p) for p in board.pads]
+    pads = [(shape.buffer(extent, quad_segs=32) if extent else shape, p) for p, (shape, extent) in ((p, pad_copper(p)) for p in board.pads)]
     pads += [(o.shape, o) for o in board.obstacles if o.net_id >= 0 or o.copper]
     keepouts = [o for o in board.obstacles if o.net_id < 0 and not o.copper]
     pad_net = [design.net_names.get(p.net_id, "") if p.net_id >= 0 else None for _, p in pads]

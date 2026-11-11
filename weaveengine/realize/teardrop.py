@@ -154,7 +154,7 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
         half = rules.width(net) / 2.0
         # Each end: its pad, the trace seen from it, how far along the trace the pad reaches, the pad's size.
         ends = []
-        for pad_id, pts in zip(wire_pads[w], (line, line[::-1])):
+        for pad_id, pts in zip(wire_pads.get(w, (None, None)), (line, line[::-1])):  # (a trace to no pad: copper to keep clear of only)
             pad = pads.get(pad_id)
             if pad is None:
                 ends.append((None, pts, 0.0, 0.0))
