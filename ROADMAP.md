@@ -63,6 +63,10 @@ probably partly one cause; before any new feature):
   the ones we do not account for are on the GND or 5V pours.
 - [ ] KiCad's DRC finds a great many disconnected pour pieces (islands).
 - [ ] The pour clearance and tolerance we use differ greatly from KiCad's.
+- [ ] (Minor) At a three-way junction on a via, only two of the three
+  traces get a teardrop to the via. Likely the teardrop pass handles a via
+  as a two-ended pass-through, or one teardrop's room check rejects the
+  third against the other two; check `realize` teardrops with a test.
 
 Details under Pours and planes, "Pour estimate against KiCad".
 
