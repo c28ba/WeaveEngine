@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 
 import shapely
+from shapely import affinity
 from shapely.geometry import LineString, Point
 
 from weaveengine.realize.taper import with_wedges
@@ -47,27 +48,41 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
     rules = board.rules
     base = rules.clearance - rules.margin if clearance is None else clearance
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance) - rules.margin
-    inside = board.outline.buffer(-max(edge, base))
+    # (KiCad's fill keeps the board's own edge clearance, whatever the traces were asked to keep)
+    inside = board.outline.buffer(-(max(edge, base) if board.pour_edge is None else board.pour_edge))
+    if board.margin:  # (and as much from drawings on the Margin layer)
+        inside = inside.difference(shapely.union_all([m.buffer(edge if board.pour_edge is None else board.pour_edge) for m in board.margin]))
     layers = {at for _, at, _ in board.pours}
-    # Each layer's copper: (shape, net, clearance asked; None for a keepout, which asks none).
+    def asks(net: int) -> float:  # (what a net's class asks, the board's if it is not known, never more than the board's)
+        if clearance is not None or not (board.net_clearance or board.default_clearance):
+            return base
+        got = board.net_clearance.get(net, board.default_clearance)
+        return base if got is None else min(base, got)
+
+    # Each layer's copper: (shape, net, its own local clearance; None for a keepout, which asks none).
     copper: dict[int, list] = {at: [] for at in layers}
     for p in board.pads:
         for at in layers:
             if p.on(at):
-                copper[at].append((p.shape, p.net_id, max(base, p.clearance)))
+                copper[at].append((p.shape, p.net_id, p.clearance))
     for o in board.obstacles:
         for at in layers:
-            if o.on(at):
-                copper[at].append((o.shape, o.net_id if o.copper or o.net_id >= 0 else -2, max(base, o.clearance) if o.copper or o.net_id >= 0 else 0.0))
+            if o.on(at) and o.hole:  # (KiCad keeps the hole clearance from a hole with no copper, not the zone's)
+                copper[at].append((o.shape.buffer(o.clearance, quad_segs=4), -2, None))
+            elif o.on(at) and o.fill:
+                copper[at].append((o.shape, o.net_id if o.copper or o.net_id >= 0 else -2, o.clearance if o.copper or o.net_id >= 0 else None))
+    wires = []  # (shape, net, layer) of every trace and teardrop
     for w, line in lines.items():
-        if len(line) >= 2 and wire_layer.get(w) in layers:
+        if len(line) >= 2 and w in wire_layer:
             net = wire_net[w]
             for pts, width in (widths or {}).get(w) or [(line, rules.drawn(net))]:
-                copper[wire_layer[w]].append((LineString(pts).buffer(width / 2.0, quad_segs=4), net, base))
+                wires.append((LineString(pts).buffer(width / 2.0, quad_segs=4), net, wire_layer[w]))
     for w, drops in (teardrops or {}).items():
-        if wire_layer.get(w) in layers:
-            for poly in drops:
-                copper[wire_layer[w]].append((shapely.Polygon(poly[:5]).buffer(0), wire_net[w], base))
+        if w in wire_layer:
+            wires += [(shapely.Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for poly in drops]
+    for shape, net, at in wires:
+        if at in layers:
+            copper[at].append((shape, net, 0.0))
     trees = {at: shapely.STRtree([c[0] for c in cs]) for at, cs in copper.items() if cs}
     # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
     order = sorted(range(len(board.pours)), key=lambda k: (-board.zone(*board.pours[k][:2]).priority, k))
@@ -76,17 +91,22 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
     for k in order:
         net, at, outline = board.pours[k]
         zone = board.zone(net, at)
-        keep = base if clearance is not None else max(base, board.pour_clearance(net, at))
-        fill = outline.intersection(inside)
+        own_zone = (board.zone(net, at).clearance or 0.0) if clearance is None else 0.0
+        keep = max(asks(net), own_zone)  # (and from another net's copper, the more of the two classes)
+        pair = lambda other: max(keep, asks(other))
+        area = outline.intersection(inside)
+        fill = area
         tree = trees.get(at)
+        # What other nets' copper and zones take, which the spokes keep clear of too (KiCad's order: the reliefs out, the
+        # clearances out, the spokes in, the clearances out again, then what is narrower than the least width).
+        blocked = []
         if tree is not None:
-            near = [copper[at][i] for i in tree.query(outline, predicate="dwithin", distance=keep + 1.0).tolist()]
-            held = [s.buffer(max(ask, keep) if ask else ask, quad_segs=4) for s, other, ask in near if other != net]
-            if held:
-                fill = fill.difference(shapely.union_all(held))
-        above = [f.buffer(keep, quad_segs=4) for other, rank, f in filled.get(at, ()) if other != net and rank > zone.priority]
-        if above:
-            fill = fill.difference(shapely.union_all(above))
+            near = [copper[at][i] for i in tree.query(outline, predicate="dwithin", distance=max(base, keep) + own_zone + 1.0).tolist()]
+            blocked += [s.buffer(max(ask, pair(other)) if ask is not None else 0.0, quad_segs=4) for s, other, ask in near if other != net]
+        blocked += [f.buffer(pair(other), quad_segs=4) for other, rank, f in filled.get(at, ()) if other != net and rank > zone.priority]
+        blocked = shapely.union_all(blocked) if blocked else None
+        if blocked is not None:
+            fill = fill.difference(blocked)
         own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline)]
         how = {p.pad_id: joined(p, zone) for p in own}
         relieved = [p for p in own if how[p.pad_id] in ("thermal", "none")]
@@ -94,15 +114,26 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
             fill = fill.difference(shapely.union_all([p.shape.buffer(relief(p, zone)[0] if how[p.pad_id] == "thermal" else keep, quad_segs=4)
                                                       for p in relieved]))
         least = board.pour_width(net, at) if min_width is None else min_width
-        fill = fill.buffer(-least / 2.0).buffer(least / 2.0)
-        # The net's own pads are copper whatever their width; one joined by a thermal relief, only with the spokes that reach the fill.
-        joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] == "solid"]
+        whole = fill
+        fill = fill.buffer(-least / 2.0 + EPSILON).buffer(least / 2.0 - EPSILON)
+        # The spokes of the pads it joins by a thermal relief: those whose end is in the fill, or in a spoke of another
+        # pad whose end is in it (two pads facing each other closer than their gaps). Then cut and thinned as the fill.
         thermal = [p for p in own if how[p.pad_id] == "thermal"]
-        index = shapely.STRtree([p.shape for p in thermal]) if thermal else None
-        for p in thermal:
-            reach = relief(p, zone)[0] * 2.0 + 0.5 * max(p.shape.bounds[2] - p.shape.bounds[0], p.shape.bounds[3] - p.shape.bounds[1])
-            near = [thermal[i] for i in index.query(p.shape, predicate="dwithin", distance=reach).tolist() if thermal[i] is not p]
-            joins += [p.shape.intersection(inside), *spokes(p, zone, fill, near)]
+        drawn = [s for p in thermal for s in spokes(p, zone, least)]
+        kept = [shape for shape, tip in drawn if fill.distance(tip) <= 1e-6]
+        if len(kept) < len(drawn):
+            index = shapely.STRtree([shape for shape, _ in drawn])
+            for i, (shape, tip) in enumerate(drawn):
+                if fill.distance(tip) > 1e-6 and any(j != i and drawn[j][0].distance(tip) <= 1e-6 and shape.distance(drawn[j][1]) <= 1e-6
+                                                     for j in index.query(tip, predicate="dwithin", distance=1e-6).tolist()):
+                    kept.append(shape)
+        grown = shapely.union_all([whole, *kept]).intersection(area) if kept else whole
+        if kept and blocked is not None:
+            grown = grown.difference(blocked)
+        fill = _prune(grown, least)
+        # The net's own pads are copper whatever their width, and its traces join what they touch.
+        joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] in ("solid", "thermal")]
+        joins += [shape for shape, other, at_ in wires if other == net and at_ == at and shape.intersects(outline)]
         fill = shapely.union_all([fill, *joins])
         filled.setdefault(at, []).append((net, zone.priority, fill))
         own = [p for p in own if how[p.pad_id] != "none"]
@@ -116,13 +147,34 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
                 pour.pieces.append(Piece(g, "main" if j == main and names else "", names, {p.pad_id for p in has[j]}))
         found[k] = pour
     pours = [found[k] for k in range(len(board.pours))]
-    _join(pours, _touching(board, {pour.net for pour in pours}))
+    _join(pours, _touching(board, {pour.net for pour in pours}, wires))
+    # The islands KiCad removes, by the zone's island removal, are not there; but a zone that is islands on every
+    # layer it fills (joined to nothing at all) is left whole. (One zone over several layers: one ``Zone``.)
+    zones: dict[int, list] = {}
+    for pour in pours:
+        zones.setdefault(id(board.zone(pour.net, pour.layer)), []).append(pour)
+    for group in zones.values():
+        zone = board.zone(group[0].net, group[0].layer)
+        if zone.islands == 1 or all(x.kind == "island" for pour in group for x in pour.pieces):
+            continue
+        for pour in group:
+            pour.pieces = [x for x in pour.pieces if x.kind != "island" or (zone.islands == 2 and x.shape.area >= zone.island_area)]
     return pours
 
 
-def _touching(board, nets: set) -> dict:
+def _prune(fill, least: float):
+    """What KiCad keeps of ``fill`` at a least width of ``least``: shrunk by half of it, the pieces then less than
+    it across either way dropped (a blob is not worth keeping), grown back."""
+    shrunk = fill.buffer(-least / 2.0 + EPSILON)
+    parts = [g for g in getattr(shrunk, "geoms", [shrunk])
+             if g.geom_type == "Polygon" and not g.is_empty and max(g.bounds[2] - g.bounds[0], g.bounds[3] - g.bounds[1]) >= least]
+    return shapely.union_all(parts).buffer(least / 2.0 - EPSILON) if parts else shapely.Polygon()
+
+
+def _touching(board, nets: set, wires=()) -> dict:
     """Pad id -> one pad of the group of the net's pads whose copper meets on a layer they share (a pad through
-    the board inside a part's surface pad, say): KiCad sees them joined, on any layer."""
+    the board inside a part's surface pad, say), or that a trace of the net joins (``wires``: shape, net, layer):
+    KiCad sees them joined, on any layer."""
     pads = [p for p in board.pads if p.net_id in nets]
     group = {p.pad_id: p.pad_id for p in pads}
 
@@ -137,11 +189,18 @@ def _touching(board, nets: set) -> dict:
             p, q = pads[i], pads[j]
             if i < j and p.net_id == q.net_id and (p.layers is None or q.layers is None or p.layers & q.layers):
                 group[root(p.pad_id)] = root(q.pad_id)
+        tree = shapely.STRtree([p.shape for p in pads])
+        for shape, net, at in wires:
+            if net in nets:
+                ends = [pads[i] for i in tree.query(shape, predicate="intersects").tolist() if pads[i].net_id == net and pads[i].on(at)]
+                for q in ends[1:]:
+                    group[root(q.pad_id)] = root(ends[0].pad_id)
     return {k: root(k) for k in group}
 
 
 GAP, SPOKE = 0.5, 0.5  # mm: KiCad's default thermal relief gap and spoke width
-TIP = 0.01             # mm past the gap where a spoke's end is looked for in the fill
+ERROR = 0.005          # mm: KiCad's default maximum error, which its spokes reach past the gap
+EPSILON = 0.001        # mm: what KiCad's fill leaves of the least width, so that copper just that wide stays
 
 
 def joined(pad, zone) -> str:
@@ -159,32 +218,48 @@ def relief(pad, zone) -> tuple[float, float]:
     return pad.thermal_gap or zone.gap or GAP, pad.spoke or zone.spoke or SPOKE
 
 
-def spokes(pad, zone, fill, others=()) -> list:
-    """The spokes of the thermal relief of ``pad`` that reach ``fill``: four, along the
-    pad's sides (at 45 degrees to them for a round pad, as KiCad draws them by default),
-    each from the pad across its gap; one is kept if its end, just past the gap, is in the fill,
-    or in the relief of another of ``others`` (pads of the net packed closer than their gaps: KiCad
-    joins a spoke that ends in another), which it then joins."""
-    gap, width = relief(pad, zone)
-    cx, cy = pad.centre
+def _turn(pad) -> float:
+    """The angle of ``pad`` on the board, in degrees: as the .kicad_pcb gives it, else along its longest side."""
+    if pad.turn is not None:
+        return pad.turn
     points = list(pad.shape.exterior.coords) if hasattr(pad.shape, "exterior") else []
-    turn = math.pi / 4.0
-    if pad.radius is None and len(points) > 2:  # (along its longest side)
-        a, b = max(zip(points, points[1:]), key=lambda e: math.dist(*e))
-        turn = math.atan2(b[1] - a[1], b[0] - a[0])
+    if pad.radius is not None or len(points) < 3:
+        return 0.0
+    a, b = max(zip(points, points[1:]), key=lambda e: math.dist(*e))
+    return math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+
+
+def spokes(pad, zone, least: float) -> list[tuple[object, Point]]:
+    """The four spokes of the thermal relief of ``pad``, as KiCad draws them (``ZONE_FILLER::buildThermalSpokes``):
+    each with the point at its end, which must be in the fill for KiCad to keep it. Square-ended, as wide as the
+    relief asks but no wider than the pad; from the middle of the pad's box, in the pad's own frame, out to that box
+    grown by the gap, KiCad's error and half the fill's ``least`` width; at the pad's spoke angle to its sides (45
+    degrees for a round pad, else 90: along them). None if narrower than ``least``."""
+    gap, width = relief(pad, zone)
+    turn = _turn(pad)
+    flat = affinity.rotate(pad.shape, -turn, origin=(0.0, 0.0))
+    x0, y0, x1, y1 = flat.bounds
+    hx, hy = (x1 - x0) / 2.0, (y1 - y0) / 2.0
+    if pad.radius is not None:
+        hx = hy = pad.radius
+    width = min(width, 2.0 * min(hx, hy))
+    if width < least - 1e-9:
+        return []
+    angle = pad.spoke_angle if pad.spoke_angle is not None else 45.0 if pad.radius is not None else 90.0
+    grow = gap + ERROR + least / 2.0
+    c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+    mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    cx, cy = mx * c - my * s, mx * s + my * c
     out = []
     for k in range(4):
-        dx, dy = math.cos(turn + k * math.pi / 2.0), math.sin(turn + k * math.pi / 2.0)
-        reach = max(((x - cx) * dx + (y - cy) * dy for x, y in points), default=0.0)
-        end = reach + gap + width / 2.0
-        tip = Point(cx + dx * (reach + gap + TIP), cy + dy * (reach + gap + TIP))
-        if fill.distance(tip) > 1e-6:
-            near = next((q for q in others if q.shape.distance(tip) <= relief(q, zone)[0]), None)
-            if near is None:
-                continue
-            out.append(LineString([(cx, cy), (tip.x, tip.y), near.centre]).buffer(width / 2.0, cap_style="flat"))
-            continue
-        out.append(LineString([(cx, cy), (cx + dx * end, cy + dy * end)]).buffer(width / 2.0, cap_style="flat"))
+        a = math.radians(angle + 90.0 * k)
+        dx, dy = math.cos(a), math.sin(a)
+        if pad.radius is not None:  # (KiCad turns a round pad's spokes, built along its box, rather than cutting them at it)
+            reach = hx + grow
+        else:
+            reach = min((hx + grow) / abs(dx) if abs(dx) > 1e-9 else math.inf, (hy + grow) / abs(dy) if abs(dy) > 1e-9 else math.inf)
+        ex, ey = cx + reach * (dx * c - dy * s), cy + reach * (dx * s + dy * c)
+        out.append((LineString([(cx, cy), (ex, ey)]).buffer(width / 2.0, cap_style="flat"), Point(ex, ey)))
     return out
 
 

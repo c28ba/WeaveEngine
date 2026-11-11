@@ -58,16 +58,16 @@ Done:
 
 Fix first (bugs in features just added, seen on a user's board, 2026-11-10;
 probably partly one cause; before any new feature):
-- [ ] Skeleton and KiCad's fill disagree where two pads' copper overlaps.
-- [ ] KiCad's DRC finds many more unconnected items than our estimate; all
-  the ones we do not account for are on the GND or 5V pours.
-- [ ] KiCad's DRC finds a great many disconnected pour pieces (islands).
-- [ ] The pour clearance and tolerance we use differ greatly from KiCad's.
-- [ ] (Minor) At a three-way junction on a via, only two of the three
-  traces get a teardrop to the via. Likely the teardrop pass handles a via
-  as a two-ended pass-through, or one teardrop's room check rejects the
-  third against the other two; check `realize` teardrops with a test.
-
+- [x] Skeleton and KiCad's fill disagree where two pads' copper overlaps
+  (the estimate's thermal spokes between packed pads: now KiCad's own rule).
+- [x] KiCad's DRC finds more unconnected items than our estimate, all on the
+  pour (spokes, and fan-out's own traces not counted as joining).
+- [x] KiCad's DRC finds a great many disconnected pour pieces (islands): the
+  zone keeps them (island removal "never"); now read and said.
+- [x] The pour clearance and tolerance we use differ from KiCad's (the
+  traces' edge clearance used for the fill).
+  (Branch `pour-kicad`; what was found is under Pours and planes, "Pour
+  estimate against KiCad".)
 Details under Pours and planes, "Pour estimate against KiCad".
 
 To do, in order:
@@ -87,6 +87,17 @@ To do, in order:
 11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
    (below).
+
+
+Back burner: bugs seen once that could not be found again. Each waits for a
+new example (a board and where on it); then it moves up to be fixed.
+- [ ] At a three-way junction on a via, only two of the three traces got a
+  teardrop to the via (seen 2026-11-10). Not reproduced: each trace end gets
+  its own teardrop, one never blocks another of its net, and every 3-way via
+  junction on lily58-pro, coldfire and a user's board had all its teardrops.
+  Known causes of a missing via teardrop, all deliberate: a trace wider than
+  0.9 of the via's radius, a trace too short, and fan-out stubs (added after
+  the teardrop pass, so they never get one).
 
 ### Trace shape
 
@@ -191,28 +202,97 @@ To do, in order:
     priority in the estimate; lumen-ringlight's pads were those its zone
     does not join at all, now given a trace into the fill.)
 
-- **Pour estimate against KiCad.** Found on a user's board (not public,
-  not in `boards/`): routed, then filled and checked in KiCad, four
-  disagreements, likely related and all in features just added, so to be
-  fixed before more features:
-  - where two pads' copper overlaps (or touches), the skeleton does not
-    match the fill KiCad makes there: check how overlapping pads are merged
-    in the pour estimate and the skeleton;
-  - KiCad's DRC reports many more unconnected items than the estimate; every
-    one the estimate misses is on the GND or 5V pour, so the estimate thinks
-    pads joined that KiCad's fill leaves cut off;
-  - KiCad's DRC reports a great many disconnected pour pieces. Find whether
-    they come from our traces cutting the pour or are KiCad's own, and look
-    at a way to keep pour out of places it does not need to be (zone keepouts
-    written with the session, a smaller zone, or the islands removed with
-    KiCad's "remove islands" setting read and honoured);
-  - the distance and tolerance the estimate uses for the pour (zone
-    clearance, minimum width, thermal gap, fill tolerance) seem quite
-    different from KiCad's: compare each value read from the `.kicad_pcb`
-    against what KiCad applies, including `.kicad_dru` rules and net class
-    clearances, which may override the zone's own.
-  Make the board a regression check (local only, from its owner), and add a
-  sweep metric comparing the estimate's unconnected count with KiCad's.
+- **Pour estimate against KiCad.** Done on branch `pour-kicad`. Found on a
+  user's board (not public, not in `boards/`), routed in the app as the user
+  did (edge clearance 1.5 mm in its settings), the SES imported into KiCad 10,
+  zones refilled, DRC run, and compared pad by pad and piece by piece with the
+  estimate (and with KiCad's `zone_filler.cpp`, 10.0). Causes, all in the
+  estimate:
+  - *Thermal spokes.* The estimate joined a pad whose spoke ended in a
+    neighbour's relief by a spoke bent from centre to centre: the strange
+    shapes between packed pads, and pads joined that KiCad leaves cut off (a
+    USB connector's surface and through pins). KiCad keeps a spoke only where
+    its end is in the fill, or in a spoke of another pad whose end is in it
+    (two in line, facing). Its spokes run from the middle of the pad's box, in
+    the pad's own frame, to that box grown by the gap, 0.005 mm and half the
+    least width; at the pad's spoke angle (`thermal_bridge_angle`, else 45
+    degrees for a round pad, 90 for others); no wider than the pad, and none
+    if narrower than the least width; cut by other nets' clearances and pruned
+    with the fill. Now the same (`pours.spokes`), with the pad's angle read.
+  - *Edge clearance.* The fill was kept the traces' edge clearance from the
+    edge and from holes in the board (1.5 mm from the app's setting); KiCad's
+    fill keeps the board's own (0.5 mm here), so 1.2 mm too little pour all
+    round the edge and round every mounting hole (about 600 mm2 a layer).
+    Now `Board.pour_edge`, from the .kicad_pro and custom rules; Margin
+    drawings are kept as clear.
+  - *Solder-mask openings* were taken as keepouts of the fill; KiCad fills them.
+  - *Fan-out's own traces* (a short trace from a cut-off pad into the fill)
+    were not counted as joining, so pads they join stayed "cut off".
+  - *Blobs:* KiCad drops a piece of fill less than the least width across
+    either way (after shrinking it by half of it); now the estimate does too.
+  - *Islands.* This zone keeps its islands (`island_removal_mode` 1, "never"),
+    so KiCad reports every one as isolated copper, while the app said KiCad
+    removes them and hid them. Now each zone's island removal is read; islands
+    KiCad removes are not counted, the ones it keeps are named as KiCad's
+    isolated copper (a zone joined to nothing at all is left whole, as KiCad
+    leaves it). KiCad's fill alone makes 67 islands on this board with no
+    traces at all; the routing makes about 120 more, small pieces between
+    traces. Keeping pour out where it is not needed (keepouts written with the
+    session, a smaller zone) is not done: setting the zone to remove islands is
+    the simple way, and the app now says so.
+  - What was right: the clearance to other nets (0.15 mm: the board's minimum
+    over the zone's 0.125, both measured on KiCad's fill), the thermal gap
+    (0.3), and the least width (0.125). A custom rule asking 0.3 mm from the
+    zone to surface pads is skipped by the estimate, and KiCad 10's fill does
+    not apply it either (measured 0.15). Net classes' clearances were taken as
+    the largest of them for every pour (`Rules.clearance`); see the follow-ups.
+  Measured on the Mac against main (99d465d), `--jobs 4`: tier 1 routes the
+  same, KiCad open 104 to 104, DRC 9 to 9, isolated copper the same, cut-off
+  pads 53 to 47; tier 2 (fresh main baseline) routes the same on all 16,
+  KiCad open 364 to 352 (castor-mainboard 36 to 30, tinytapeout 64 to 59,
+  bling-mx 4 to 3), DRC 275 to 275, cut-off pads 125 to 93, none worse;
+  time 2023 to 2174 s (+7 %). The estimate's open items are 74 from KiCad's
+  over tier 2, against 171 before.
+  On the user's board, as the user routed it: KiCad 3 unconnected and 184
+  isolated copper against the estimate's 1 cut-off pad (the wrong one) and
+  223 islands; now (fan-out joins the pads KiCad would cut off) KiCad 0
+  unconnected, 183 isolated, the estimate 0 and 184, pieces 167 against 169
+  on the front and 28 against 28 on the back. The CLI says what the estimate
+  expects KiCad to find unconnected, and the sweep compares it and the
+  islands with KiCad's on every board ("estimate off by").
+  Follow-ups (same branch), measured against the numbers above:
+  - *Net-class clearance per pour.* The fill keeps, from each other net, the
+    larger of the two nets' class clearances (and the zone's, and a pad's own
+    local or rule clearance), never more than the board's
+    (`Board.net_clearance`, `default_clearance`, read from the DSN's classes;
+    `pours.estimate`). Test: `test_a_pour_keeps_the_clearance_of_its_nets_classes_from_each_net`.
+  - *Island removal "below area limit"* (`island_removal_mode` 2 with
+    `island_area_min`) was already read and applied (islands of less than that
+    area removed); checked, nothing to change.
+  - *Estimate too high on kicad-cm5-minima (+17) and sweep-bling-mx (+23).*
+    Cause: the "open" count added the pads fan-out found no room for a via
+    beside (`plane_left`), but a pad with no room is often joined all the same
+    through another pad of its piece (a through pad) that did get a via, and
+    the count was made before that; and a pad drawn in pieces (U1-23,
+    U1-23@1 ... @4) was counted once per piece, KiCad once. Now the router
+    drops from `plane_left` the pads the final estimate finds joined, and the
+    CLI counts a pad drawn in pieces once. bling-mx: 26 to 4 (KiCad 3).
+  - Measured, Mac, `--jobs 4`, against the runs above: tier 1 routes the same,
+    KiCad open 104 to 104, DRC 9 to 9; the estimate's open items off by 52 to
+    38 over its 12 boards, islands off by 208 to 40 (sweep-half-swept open +12
+    to 0). Tier 2: all 16 route the same, KiCad open 352 to 352, DRC 275 to 275;
+    the estimate's open items off by 74 to 40 (cm5-minima +17 to +4,
+    bling-mx +23 to +1), islands off by 5. What is left is mostly
+    kicad-interf-u (+15) and fomu (+23): not looked into. Note that
+    `bench/sweep/run.py` runs the router in each board's work directory, so
+    `PYTHONPATH` must be an absolute path to the checkout.
+
+  Left: the sweep's prep strips tracks but keeps KiCad's teardrop zones on
+  them, and KiCad writes each in the DSN as a plane of its net
+  (kicad-complex-hierarchy: 165 of them); a user who deletes the tracks
+  and not the teardrops gets the same. Not changed here, as it remakes every
+  prepared DSN and so needs a new baseline; the router could also skip zones
+  that are teardrops (the .kicad_pcb says so).
 
 - **Pour pieces and pins joined by the cheaper way.** Where a pour piece is
   far from the rest of its net, or a pin needs to reach a pour, there are

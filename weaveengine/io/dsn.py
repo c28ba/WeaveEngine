@@ -308,7 +308,10 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         for pin in (pins[1:] if pins else []):
             pin_net[pin] = net_id
     board.net_names = design.net_names
-    for cls, w, _ in classes:
+    board.default_clearance = next((c for cls, _, c in classes if c and len(cls) > 1 and cls[1] in ("kicad_default", "default")), clearance)
+    for cls, w, c in classes:
+        if c:
+            board.net_clearance.update({design.net_ids[name]: c for name in cls[2:] if isinstance(name, str) and name in design.net_ids})
         design.net_classes.update({name: cls[1] for name in cls[2:] if isinstance(name, str) and len(cls) > 1})
         if w and abs(w - width) > 1e-9:
             for name in cls[2:]:

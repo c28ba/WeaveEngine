@@ -208,6 +208,11 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
     rec["measured"] = m[1] if m else None
     # The pours' estimated fill (``pours.estimate``): pads cut off from their pour; skeleton joins that gave way.
     rec["cut_off"] = sum(int(n) for n in re.findall(r"(\d+) pads? cut off", text))
+    # What the estimate expects KiCad to find: open items (connections left unrouted, pads cut off) and islands.
+    rec["est_islands"] = sum(int(n) for n in re.findall(r"(\d+) islands?\b", text))
+    m = re.search(r"estimate: (\d+) items left unconnected", text)
+    if m:
+        rec["est_open"] = int(m[1])
     m = re.search(r"pours: (\d+) of (\d+) joins", text)
     rec["skeleton_open"] = int(m[1]) if m else 0
     if code == "timeout":  # (it may have left the best routing it had in board.ses: that is not this board's result)

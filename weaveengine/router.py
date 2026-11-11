@@ -186,6 +186,10 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         for net, layer_index, points in traces:
             lines[w], wire_net[w], wire_layer[w] = points, net, layer_index
             w += 1
+        if unplaned:  # (a pad with no room for a via may be joined all the same, through a pad of its piece that got one)
+            joined = {i for pour in estimate_pours(work, lines, wire_net, wire_layer, with_wedges(drops, wedges), widths=pieces)
+                      for piece in pour.pieces if piece.kind in ("main", "via") for i in piece.pad_ids}
+            unplaned = [p for p in unplaned if p.pad_id not in joined]
 
     for layer in ctx.layers:
         assert layer.state.check_invariants(), "topological invariant broken"
