@@ -259,6 +259,12 @@ def test_the_fill_keeps_the_boards_edge_clearance_and_fills_mask_openings():
     assert gap() == pytest.approx(1.5, abs=0.01)
     board.obstacles.append(Obstacle(box(25, 10, 27, 12), -1, BACK, fill=False))
     assert any(p.shape.contains(Point(26, 11)) for p in pours.estimate(board, {}, {}, {})[0].pieces)
+    # A hole with no copper is kept its hole clearance from, not the zone's clearance.
+    from weaveengine.board import Zone
+    board.pour_zone[(GND, 1)] = Zone(clearance=0.5)
+    board.obstacles.append(Obstacle(Point(30, 20).buffer(1.0), -1, None, clearance=0.25, copper=True, hole=True))
+    fill = shapely.union_all([p.shape for p in pours.estimate(board, {}, {}, {})[0].pieces])
+    assert fill.distance(Point(30, 20)) == pytest.approx(1.25, abs=0.01)
 
 
 def test_islands_the_zone_removes_are_not_counted():
@@ -272,6 +278,8 @@ def test_islands_the_zone_removes_are_not_counted():
     assert pours.estimate(board, lines, nets, layers)[0].islands == 1
     board.pour_zone[(GND, 1)] = Zone(islands=2, island_area=30.0)
     assert pours.estimate(board, lines, nets, layers)[0].islands == 0
+    board.pads = []  # (a zone joined to nothing at all is left whole, as KiCad leaves it)
+    assert pours.estimate(board, lines, nets, layers)[0].islands == 2
 
 
 def test_a_zones_island_removal_and_a_pads_angle_and_spoke_angle_are_read(tmp_path):

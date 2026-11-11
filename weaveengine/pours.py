@@ -61,7 +61,9 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
                 copper[at].append((p.shape, p.net_id, max(base, p.clearance)))
     for o in board.obstacles:
         for at in layers:
-            if o.on(at) and o.fill:
+            if o.on(at) and o.hole:  # (KiCad keeps the hole clearance from a hole with no copper, not the zone's)
+                copper[at].append((o.shape.buffer(o.clearance, quad_segs=4), -2, 0.0))
+            elif o.on(at) and o.fill:
                 copper[at].append((o.shape, o.net_id if o.copper or o.net_id >= 0 else -2, max(base, o.clearance) if o.copper or o.net_id >= 0 else 0.0))
     wires = []  # (shape, net, layer) of every trace and teardrop
     for w, line in lines.items():
@@ -138,9 +140,16 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         found[k] = pour
     pours = [found[k] for k in range(len(board.pours))]
     _join(pours, _touching(board, {pour.net for pour in pours}, wires))
-    for pour in pours:  # (the islands KiCad removes, by the zone's island removal, are not there)
-        zone = board.zone(pour.net, pour.layer)
-        if zone.islands != 1:
+    # The islands KiCad removes, by the zone's island removal, are not there; but a zone that is islands on every
+    # layer it fills (joined to nothing at all) is left whole. (One zone over several layers: one ``Zone``.)
+    zones: dict[int, list] = {}
+    for pour in pours:
+        zones.setdefault(id(board.zone(pour.net, pour.layer)), []).append(pour)
+    for group in zones.values():
+        zone = board.zone(group[0].net, group[0].layer)
+        if zone.islands == 1 or all(x.kind == "island" for pour in group for x in pour.pieces):
+            continue
+        for pour in group:
             pour.pieces = [x for x in pour.pieces if x.kind != "island" or (zone.islands == 2 and x.shape.area >= zone.island_area)]
     return pours
 

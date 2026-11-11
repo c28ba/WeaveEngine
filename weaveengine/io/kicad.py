@@ -702,7 +702,8 @@ def apply(design, kicad: KicadBoard) -> str:
         bare = every if not kp.plated else every - has
         if bare:
             # (a local clearance of the pad holds its hole too: a mounting hole's 1.55 mm, against the board's 0.15)
-            board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=max(hole, kp.clearance), copper=True))
+            board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=max(hole, kp.clearance), copper=True,
+                                            hole=not kp.plated))
             holes += 1
     kept = [x for x in ("vias" if rules.via_clearance else "", f"{narrow} pads with a narrow ring" if narrow else "",
                         f"{holes} holes" if holes else "") if x]

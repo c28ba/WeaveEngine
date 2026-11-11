@@ -127,6 +127,7 @@ class Obstacle:
     copper: bool = False             # copper of no net (text, a logo): kept at the clearance, not only out of
     via: bool = False                # a fixed via: drilled, and a way to its net's plane (``plan.fanout``)
     fill: bool = True                # kept clear of by a pour's fill (a solder-mask opening is not: ``pours.estimate``)
+    hole: bool = False               # a hole with no copper: a pour's fill keeps only ``clearance`` from it, not its own
 
     def on(self, layer: int) -> bool:
         return self.layers is None or layer in self.layers

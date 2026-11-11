@@ -45,7 +45,7 @@ def estimate_off(d: dict) -> tuple[int | None, int | None] | None:
     KiCad's DRC finds (unconnected items, isolated copper); None where a run has no count."""
     if d.get("routed") is None or d.get("cut_off") is None or "kinds" not in d.get("drc", {}):
         return None
-    opened = d["connections"] - d["routed"] + d["cut_off"] - d["drc"]["unconnected"]
+    opened = d.get("est_open", d["connections"] - d["routed"] + d["cut_off"]) - d["drc"]["unconnected"]
     islands = d["est_islands"] - d["drc"]["kinds"].get("isolated_copper", 0) if "est_islands" in d else None
     return opened, islands
 
