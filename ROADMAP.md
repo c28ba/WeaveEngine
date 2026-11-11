@@ -80,7 +80,7 @@ To do, in order:
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
 5. [ ] The Margin layer as board edge: a directional rule (below).
 6. [ ] No acute angles where copper of one net meets.
-7. [ ] The 45-degree option (a second way of drawing, off by default).
+7. [-] The 45-degree option: moved to 1.2, with the editor (below).
 8. [ ] A via size per net class.
 9. [x] Most curves still exported as segments, not arcs (branch
    `export-shape`; below).
@@ -231,10 +231,6 @@ new example (a board and where on it); then it moves up to be fixed.
   same as the router's (checked on three boards). Not made live, since they
   change the routed geometry the design-rule repair and fan-out checked:
   rounding corners, tapering, straightening vias, fan-out and pour skeletons.
-- **A 45-degree output option.** Traces drawn as straight runs at multiples of
-  45 degrees, as many boards are expected to look, instead of taut curves:
-  the same topology, realised on octilinear paths, with the clearances checked
-  again.
 - **No acute angles where copper of one net meets.** Sharp junctions and
   acid traps are one fault: a trace meeting its pad, a trace of its net, or
   two more at a junction, via or fan-out stub, at an angle that traps etchant
@@ -466,6 +462,15 @@ Wanted:
 - mark copper as fixed, so later routing works around it;
 - undo and redo;
 - the same rule checks as a full routing, live, before export.
+
+### The 45-degree option
+
+Moved from 1.1 to come with the editor. Traces drawn as straight runs at
+multiples of 45 degrees, as many boards are expected to look, instead of taut
+curves: the same topology, realised on octilinear paths, with the clearances
+checked again. A second way of drawing, off by default (a setting and a
+command-line flag); like the other drawing settings, switchable after routing
+where the clearances allow.
 
 ### Traces spread for the most space
 
