@@ -335,7 +335,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  pours: {pour_note(pour, result.board)}")
     if found:  # (what KiCad's check should find open: connections not routed, pads no pour or via joins)
         lost = {p for pour in found for piece in pour.pieces if piece.kind == "cut" for p in piece.pad_ids} | set(stats["plane_left"] or ())
-        print(f"  estimate: {stats['connections'] - stats['routed'] + len(lost)} items left unconnected in KiCad")
+        # (a pad drawn in several pieces, its name then ``@1``, ``@2``..., is one pad to KiCad)
+        left = {pads[i].name.split("@")[0] if pads[i].name else i for i in lost}
+        print(f"  estimate: {stats['connections'] - stats['routed'] + len(left)} items left unconnected in KiCad")
     m = measure(design, out, want_clearance, want_edge)
     print(f"measured from {os.path.basename(out)}: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
           f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"
