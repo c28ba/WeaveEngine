@@ -55,6 +55,7 @@ Done:
   (`io/kicad_rules.py`).
 - [x] A Warnings section in the app, with a warning for Margin-layer drawings.
 - [x] Settings: a Pours tab and a search box.
+- [x] A warning when the DSN has no `.kicad_pcb`/`.kicad_pro` beside it (or one that cannot be read), naming other boards in the folder.
 
 Fix first (bugs in features just added, seen on a user's board, 2026-11-10;
 probably partly one cause; before any new feature):

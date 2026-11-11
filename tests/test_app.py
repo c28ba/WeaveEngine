@@ -320,3 +320,15 @@ def test_settings_search_keywords_words_and_typos():
     assert shown("size via") == both
     assert shown("") == set(dialog.rows) and shown("   ") == set(dialog.rows)
     assert shown("zzzzqq") == set()
+
+
+def test_the_warnings_panel_says_when_the_kicad_board_is_missing(tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from tests.test_io import KICAD_STYLE
+    from weaveengine.app import MainWindow
+    app = QApplication.instance() or QApplication([])
+    (tmp_path / "m.dsn").write_text(KICAD_STYLE.replace("(pcb demo.dsn", "(pcb m.dsn"), encoding="utf-8")
+    window = MainWindow(str(tmp_path / "settings.json"))
+    window.interactive = False
+    assert window.open(str(tmp_path / "m.dsn"))
+    assert "No KiCad board file m.kicad_pcb" in window.warnings_label.text()

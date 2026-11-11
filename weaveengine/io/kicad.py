@@ -91,26 +91,44 @@ def project_rules(path: str) -> dict[str, float]:
             "min_drill": get("min_through_hole_diameter")}
 
 
-def read_kicad(dsn_path: str) -> KicadBoard | None:
-    """The board and project beside ``dsn_path`` (same name), or None if there is no board."""
+def read_kicad(dsn_path: str, notes: list[str] | None = None) -> KicadBoard | None:
+    """The board and project beside ``dsn_path`` (same name), or None if there is no board.
+    What is missing or cannot be read is added to ``notes``, as warnings."""
     from weaveengine.io.dsn import parse_sexpr
+    notes = [] if notes is None else notes
     stem = os.path.splitext(dsn_path)[0]
+    name = os.path.basename(stem)
     if not os.path.exists(stem + ".kicad_pcb"):
+        others = sorted(f for f in os.listdir(os.path.dirname(os.path.abspath(dsn_path))) if f.endswith(".kicad_pcb"))
+        notes.append(
+            f"No KiCad board file {name}.kicad_pcb was found beside the DSN, so the pours, thermal reliefs, custom rules and "
+            "clearances from KiCad are not used, and the result may differ from KiCad's DRC. Put the DSN in the KiCad project "
+            "folder, named as the board.")
+        if others:
+            notes.append(f"Other KiCad boards in that folder: {', '.join(others)}. If the DSN is for one of them, rename it to "
+                         f"match (for {others[0]}, {os.path.splitext(others[0])[0]}.dsn); it is not used automatically.")
         return None
     try:
         with open(stem + ".kicad_pcb", encoding="utf-8", errors="replace") as f:
             root = parse_sexpr(f.read())
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError) as err:
+        notes.append(f"{name}.kicad_pcb could not be read ({err or type(err).__name__}), so the pours, rules and clearances "
+                     "from KiCad are not used and the result may differ from KiCad's DRC.")
         return None
     if not root or root[0] != "kicad_pcb":
+        notes.append(f"{name}.kicad_pcb is not a KiCad board file (it does not start with kicad_pcb), so it is not used.")
         return None
     out = KicadBoard()
     if os.path.exists(stem + ".kicad_pro"):
         try:
             out.rules = project_rules(stem + ".kicad_pro")
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-    out.custom, out.skipped = read_rules(stem)
+        except (OSError, ValueError, KeyError, TypeError) as err:
+            notes.append(f"{name}.kicad_pro could not be read ({'no board rules in it' if isinstance(err, KeyError) else err or type(err).__name__}), so the project's rules and net "
+                         "classes are not used.")
+    else:
+        notes.append(f"No KiCad project file {name}.kicad_pro was found beside the board, so the project's rules (edge and hole "
+                     "clearance, minimums) and net classes are not used and the result may differ from KiCad's DRC.")
+    out.custom, out.skipped = read_rules(stem, notes)
     for layer in _children(_child(root, "layers"), None):
         if len(layer) >= 3 and isinstance(layer[1], str) and layer[1].endswith(".Cu"):
             out.layer_names[layer[1]] = layer[3] if len(layer) > 3 and isinstance(layer[3], str) else layer[1]

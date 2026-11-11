@@ -196,7 +196,8 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             outline = max(outline.geoms, key=lambda p: p.area)
 
     # A KiCad board beside the DSN says more than its export does (io/kicad.py); first, which rule areas let traces through.
-    kicad = read_kicad(path)
+    kicad_notes: list[str] = []
+    kicad = read_kicad(path, kicad_notes)
     open_areas = kicad.open_areas if kicad else []
 
     def forbids(shape, wire: bool = False) -> bool:
@@ -412,6 +413,8 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
                 "User layer; if they mark a no-go area, draw a keepout zone over it in KiCad, which WeaveEngine routes around.")
         if taken:
             design.kicad = f"from {os.path.basename(os.path.splitext(path)[0])}.kicad_pcb/.kicad_pro: {taken}"
+
+    design.warnings += kicad_notes
 
     # Pre-existing copper that is marked fixed is an obstacle. The rest is
     # routing some earlier run left behind (a saved, already-routed design):

@@ -194,7 +194,7 @@ def parse_rules(text: str) -> tuple[list[Rule], list[str]]:
     return rules, skipped
 
 
-def read_rules(stem: str) -> tuple[list[Rule], list[str]]:
+def read_rules(stem: str, notes: list[str] | None = None) -> tuple[list[Rule], list[str]]:
     """The rules of ``stem``.kicad_dru, if it is beside the DSN, and those skipped."""
     path = stem + ".kicad_dru"
     if not os.path.exists(path):
@@ -202,7 +202,9 @@ def read_rules(stem: str) -> tuple[list[Rule], list[str]]:
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return parse_rules(f.read())
-    except OSError:
+    except OSError as err:
+        if notes is not None:
+            notes.append(f"{os.path.basename(stem)}.kicad_dru could not be read ({err.strerror or err}), so its custom rules are not used.")
         return [], []
 
 
