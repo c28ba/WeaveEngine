@@ -241,6 +241,13 @@ To do, in order:
     not apply it either (measured 0.15). Net classes' clearances are taken as
     the largest of them for every pour (`Rules.clearance`): on a board whose
     classes differ, the gap is too large by the difference (not changed).
+  Measured on the Mac against main (99d465d), `--jobs 4`: tier 1 routes the
+  same, KiCad open 104 to 104, DRC 9 to 9, isolated copper the same, cut-off
+  pads 53 to 47; tier 2 (fresh main baseline) routes the same on all 16,
+  KiCad open 364 to 352 (castor-mainboard 36 to 30, tinytapeout 64 to 59,
+  bling-mx 4 to 3), DRC 275 to 275, cut-off pads 125 to 93, none worse;
+  time 2023 to 2174 s (+7 %). The estimate's open items are 74 from KiCad's
+  over tier 2, against 171 before.
   On the user's board, as the user routed it: KiCad 3 unconnected and 184
   isolated copper against the estimate's 1 cut-off pad (the wrong one) and
   223 islands; now (fan-out joins the pads KiCad would cut off) KiCad 0
