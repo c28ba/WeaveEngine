@@ -56,6 +56,20 @@ Done:
 - [x] A Warnings section in the app, with a warning for Margin-layer drawings.
 - [x] Settings: a Pours tab and a search box.
 
+Fix first (bugs in features just added, seen on a user's board, 2026-11-10;
+probably partly one cause; before any new feature):
+- [ ] Skeleton and KiCad's fill disagree where two pads' copper overlaps.
+- [ ] KiCad's DRC finds many more unconnected items than our estimate; all
+  the ones we do not account for are on the GND or 5V pours.
+- [ ] KiCad's DRC finds a great many disconnected pour pieces (islands).
+- [ ] The pour clearance and tolerance we use differ greatly from KiCad's.
+- [ ] (Minor) At a three-way junction on a via, only two of the three
+  traces get a teardrop to the via. Likely the teardrop pass handles a via
+  as a two-ended pass-through, or one teardrop's room check rejects the
+  third against the other two; check `realize` teardrops with a test.
+
+Details under Pours and planes, "Pour estimate against KiCad".
+
 To do, in order:
 1. [ ] Traces pulled fully taut. Likely cause: via sites left unused stay in
    the map as holes that traces keep passing round (design 13.1). Check it on a
@@ -67,6 +81,12 @@ To do, in order:
 6. [ ] No acute angles where copper of one net meets.
 7. [ ] The 45-degree option (a second way of drawing, off by default).
 8. [ ] A via size per net class.
+9. [ ] Most curves still exported as segments, not arcs (below).
+10. [ ] Curves that are not arcs: check how many, and whether a Bézier or
+   spline output would help (below).
+11. [ ] Teardrops as polygons instead of fans of tracks, if supported (below).
+12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
+   (below).
 
 ### Trace shape
 
@@ -88,6 +108,23 @@ To do, in order:
   arc is written in pieces; pieces of at most 90 degrees, since the Specctra
   format means a quarter arc and other tools may hold to it. Far fewer tracks
   per connection, and ones KiCad's drag tools handle as a curve.
+  Left (user report, 2026-11-10): it works, but most of what looks like an
+  arc in the app still comes out as short segments. A guess, not checked: a
+  round pad is held as a polygon, so a trace wrapped round it follows that
+  polygon's corners and the arc fit does not see one circle. Count, on a few
+  boards, the curved runs written as `qarc` and those that are not, and see
+  why the fit misses them (pad polygons, tolerance, or runs too short).
+- **Curves that are not arcs.** Some curves may not be circular at all (a
+  taut trace bending between two obstacles of different size, a smoothed
+  corner), so no arc fits them. Measure how much of the drawn curve that is;
+  if it is a lot, look at whether Specctra sessions or KiCad take a Bézier or
+  spline track (KiCad's tracks are only lines and arcs, as far as known; check
+  KiCad 10), or else fit those runs with a few arcs each.
+- **Teardrops as polygons.** Teardrops and taper wedges are written as fans
+  of tracks. Check whether the session format and KiCad's import take a
+  filled polygon for them (a Specctra `wire` with a polygon shape, or KiCad's
+  own teardrop zones), which would be one clean shape to edit instead of many
+  tracks.
 - **A 45-degree output option.** Traces drawn as straight runs at multiples of
   45 degrees, as many boards are expected to look, instead of taut curves:
   the same topology, realised on octilinear paths, with the clearances checked
@@ -170,6 +207,51 @@ To do, in order:
     priority in the estimate; lumen-ringlight's pads were those its zone
     does not join at all, now given a trace into the fill.)
 
+- **Pour estimate against KiCad.** Found on a user's board (not public,
+  not in `boards/`): routed, then filled and checked in KiCad, four
+  disagreements, likely related and all in features just added, so to be
+  fixed before more features:
+  - where two pads' copper overlaps (or touches), the skeleton does not
+    match the fill KiCad makes there: check how overlapping pads are merged
+    in the pour estimate and the skeleton;
+  - KiCad's DRC reports many more unconnected items than the estimate; every
+    one the estimate misses is on the GND or 5V pour, so the estimate thinks
+    pads joined that KiCad's fill leaves cut off;
+  - KiCad's DRC reports a great many disconnected pour pieces. Find whether
+    they come from our traces cutting the pour or are KiCad's own, and look
+    at a way to keep pour out of places it does not need to be (zone keepouts
+    written with the session, a smaller zone, or the islands removed with
+    KiCad's "remove islands" setting read and honoured);
+  - the distance and tolerance the estimate uses for the pour (zone
+    clearance, minimum width, thermal gap, fill tolerance) seem quite
+    different from KiCad's: compare each value read from the `.kicad_pcb`
+    against what KiCad applies, including `.kicad_dru` rules and net class
+    clearances, which may override the zone's own.
+  Make the board a regression check (local only, from its owner), and add a
+  sweep metric comparing the estimate's unconnected count with KiCad's.
+
+- **Pour pieces and pins joined by the cheaper way.** Where a pour piece is
+  far from the rest of its net, or a pin needs to reach a pour, there are
+  two ways to join it: stitching vias to the net's pour or plane on another
+  layer, or a trace from the pin (or the piece) to the pour. Try both and
+  weigh them (length, vias, the room each takes from other traces, how sure
+  the fill is to reach it), keeping the cheaper; today a starved pad gets a
+  via or a short trace by a fixed rule. After the "Fix first" pour bugs.
+  The ways to weigh, cheapest first:
+  1. the pad's thermal relief changed (solid connection, or spokes turned,
+     added or widened): no copper moves, but it departs from the zone's
+     rules, so off by default, a setting and a command-line flag to allow it
+     (written back to the `.kicad_pcb` as a per-pad override);
+  2. a via in the pad, or a stitching via beside it;
+  3. a trace, or a small filled shape or higher-priority zone of the net,
+     bridging to the pour;
+  4. the traces in the way moved (as `make_way`), or one taken to the other
+     layer with a pair of vias so the fill passes over it.
+  A narrower clearance or minimum width for that pad is the same kind of rule
+  change as 1: off by default, behind its own setting and flag. Pin swaps,
+  net ties and moved parts change the design, so they are only suggested in
+  the Warnings section, never done.
+
 ### Rules
 
 - **A via size per net class.** Route each net with its class's via (the
@@ -208,6 +290,22 @@ Wanted:
 - mark copper as fixed, so later routing works around it;
 - undo and redo;
 - the same rule checks as a full routing, live, before export.
+
+### Traces spread for the most space
+
+A routing goal that gives each trace as much room as it can have, instead of
+the shortest length: a setting (and a command-line flag) choosing between
+shortest traces (now) and most space. With most space, the traces through
+each gate are spaced evenly across its width, and between gates each trace
+runs down the middle of the room it has (the largest clearance to its
+neighbours on both sides), longer where that buys space. The topology can
+also be chosen for it: a trace may take a wider gate over a shorter, narrower
+one. Wider gaps are easier to make, cross-talk less and are easier to inspect
+and edit by hand.
+
+Builds on 1.1's "Room used where there is room" (spreading traces where a
+gap holds fewer than it could, otherwise still taut); this goes further, to
+the most even spacing everywhere, at the cost of length.
 
 ## Later
 

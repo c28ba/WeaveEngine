@@ -598,11 +598,11 @@ class Context:
         """Restore every layer and recompute everything derived from the states.
         The maps are taken back to where they were (sites made since are
         removed, sites deleted since are put back). ``logs``, per layer, are
-        log entries to do again first: those of another copy of the maps, on
-        which the snapshot was taken."""
+        the log of another copy of the maps, on which the snapshot was taken:
+        this one's is made the same first."""
         for i, (layer, s, length) in enumerate(zip(self.layers, snap["states"], snap["logs"])):
             if logs is not None:
-                sites.replay(layer.pmap, logs[i][len(sites.log(layer.pmap)):])
+                sites.sync(layer.pmap, logs[i])
             sites.rewind(layer.pmap, length)
             layer.pmap.__dict__.pop("_moved_wires", None)
             sites.journal(layer.state).clear()
