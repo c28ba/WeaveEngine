@@ -1000,19 +1000,20 @@ class MainWindow(QMainWindow):
                  swatch(CUT_OFF_COLOR, "cut off (cross-hatched): pads of the net it no longer joins, each outlined in the same colour")]
         show_islands = self.view.show_pour_islands
         if show_islands:
-            lines.append(swatch("#ffd24d", "an island: copper joined to nothing (KiCad removes these)"))
+            lines.append(swatch("#ffd24d", "an island: copper joined to nothing, kept by its zone (KiCad's isolated copper)"))
         for pour in pours:
             name = board.net_names.get(pour.net, pour.net) if board is not None else pour.net
             layer = board.layers[pour.layer] if board is not None and pour.layer < len(board.layers) else pour.layer
             reached = sum(len(p.pads) for p in pour.pieces if p.kind in ("main", "via"))
             cut = [pad for p in pour.pieces if p.kind == "cut" for pad in p.pads]
-            islands = sum(1 for p in pour.pieces if p.kind == "island") if show_islands else 0
+            islands = sum(1 for p in pour.pieces if p.kind == "island")  # (only those the zone keeps: KiCad reports them)
             text = f"{html.escape(str(name))} on {html.escape(str(layer))}: joins {reached} pads"
             if cut:
                 shown = ", ".join(cut[:6]) + (f" and {len(cut) - 6} more" if len(cut) > 6 else "")
                 text += f"; <span style='color:{CUT_OFF_COLOR}'>{len(cut)} cut off ({html.escape(shown)})</span>"
             if islands:
-                text += f"; {islands} island{'s' if islands > 1 else ''}"
+                text += (f"; {islands} island{'s' if islands > 1 else ''} the zone keeps (KiCad's isolated copper; "
+                         "its island removal set to always leaves none)")
             lines.append(text)
         self.pour_key.setText("<br>".join(lines))
         self.pour_key.setVisible(self.pour_box.isChecked())

@@ -9,7 +9,8 @@ open in KiCad, has more DRC errors the routing causes, or more islands of pour
 (isolated copper: pieces of a zone joined to nothing). Solder mask bridges
 and starved thermals are shown apart: they depend on the board's own mask and
 zone settings more than on the routing. Only the boards in NEW are compared.
-Exit status 1 if any is worse.
+Exit status 1 if any is worse. Also shown, not judged: how far the pour estimate's
+open items and islands are from KiCad's ("estimate off by"), where NEW has them.
 """
 import json, sys
 
@@ -39,11 +40,22 @@ def caused(d: dict, kinds: set[str]) -> tuple[int | None, dict[str, int]]:
     return sum(extra.values()), extra
 
 
+def estimate_off(d: dict) -> tuple[int | None, int | None] | None:
+    """How far the pour estimate's open items (connections left unrouted and pads cut off) and islands are from what
+    KiCad's DRC finds (unconnected items, isolated copper); None where a run has no count."""
+    if d.get("routed") is None or d.get("cut_off") is None or "kinds" not in d.get("drc", {}):
+        return None
+    opened = d["connections"] - d["routed"] + d["cut_off"] - d["drc"]["unconnected"]
+    islands = d["est_islands"] - d["drc"]["kinds"].get("isolated_copper", 0) if "est_islands" in d else None
+    return opened, islands
+
+
 def compare(base_path: str, new_path: str) -> bool:
     """Prints the comparison; True if any board is worse."""
     base, new = load(base_path), load(new_path)
     worse_any = False
     total = {"drc": [0, 0], "islands": [0, 0], "apart": [0, 0], "open": [0, 0], "cut": [0, 0], "time": [0.0, 0.0]}
+    drift = [0, [0, 0], [0, 0]]  # boards; |estimated open - KiCad's open| and |estimated islands - KiCad's isolated copper|, each run
     for bid in sorted(new):
         a, b = base.get(bid), new[bid]
         if a is None:
@@ -75,13 +87,25 @@ def compare(base_path: str, new_path: str) -> bool:
             if x is not None and y is not None:
                 total[key][0] += x
                 total[key][1] += y
+        off = ""
+        ea, eb = estimate_off(a), estimate_off(b)
+        if ea is not None and eb is not None:
+            drift[0] += 1
+            for k in range(2):
+                drift[1 + k][0] += abs(ea[k] if ea[k] is not None else 0)
+                drift[1 + k][1] += abs(eb[k] if eb[k] is not None else 0)
+            off = "  estimate off by open {} -> {:+d}{}".format("?" if ea[0] is None else f"{ea[0]:+d}", eb[0],
+                                                                  "" if eb[1] is None else f" islands {eb[1]:+d}")
         print(f"{bid:26s} routed {a.get('routed')}/{a.get('connections')} -> {b.get('routed')}/{b.get('connections')}  "
               f"drc {na} -> {nb} {kinds or ''}  islands {ia} -> {ib}  mask/thermal {ma} -> {mb}  open {ua} -> {ub}  "
-              f"{'' if ca is None and cb is None else f'cut off {ca} -> {cb}  '}{ta:.0f} -> {tb:.0f} s{slow}" + (f"  WORSE: {', '.join(why)}" if why else ""))
+              f"{'' if ca is None and cb is None else f'cut off {ca} -> {cb}  '}{ta:.0f} -> {tb:.0f} s{slow}{off}" + (f"  WORSE: {', '.join(why)}" if why else ""))
     d, i, m, o, c, t = total["drc"], total["islands"], total["apart"], total["open"], total["cut"], total["time"]
     print(f"TOTAL drc {d[0]} -> {d[1]}, islands {i[0]} -> {i[1]}, mask/thermal {m[0]} -> {m[1]}, open {o[0]} -> {o[1]}, "
           f"cut off {c[0]} -> {c[1]} (where both have it), "
           f"routing time {t[0]:.0f} -> {t[1]:.0f} s" + ("  (some boards worse)" if worse_any else ""))
+    if drift[0]:
+        print(f"estimate against KiCad on {drift[0]} boards: open items off by {drift[1][0]} -> {drift[1][1]} in all, "
+              f"islands off by {drift[2][1]} (where NEW has them)")
     return worse_any
 
 

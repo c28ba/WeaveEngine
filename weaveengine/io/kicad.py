@@ -52,6 +52,8 @@ class KicadPad:
     thermal_gap: float | None = None       # its thermal relief gap and spoke width, its own or its part's (None: the zone's)
     spoke: float | None = None
     hole: object = None                    # the hole as a shape, if it has one
+    turn: float = 0.0                      # degrees: its angle on the board (its part's in it)
+    spoke_angle: float | None = None       # degrees: its thermal spokes' angle, if it sets one
     outlines: tuple = ()                   # a custom pad's copper, as placed and as placed mirrored (see ``apply``)
     mask: float | None = None              # how far its solder-mask opening reaches past its copper, its own or its part's
                                            # (None: the board's; -1: it has no opening)
@@ -165,9 +167,13 @@ def _settings(item, out: KicadBoard) -> None:
         zone.connect = {"yes": "solid", "no": "none", "thru_hole_only": "tht"}.get(how, "thermal")
         zone.clearance = _number(pads, "clearance")
     fill = _child(item, "fill")
+    zone.islands = 0  # (KiCad's default)
     if fill:
         zone.gap = _number(fill, "thermal_gap")
         zone.spoke = _number(fill, "thermal_bridge_width")
+        mode, least = _number(fill, "island_removal_mode"), _number(fill, "island_area_min")
+        zone.islands = int(mode) if mode in (0, 1, 2) else 0
+        zone.island_area = least if least is not None else zone.island_area
     priority = _number(item, "priority")
     zone.priority = int(priority) if priority is not None else 0
     net = _child(item, "net_name") or _child(item, "net")
@@ -343,7 +349,8 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
         elif name.endswith(".Cu"):
             layers.add(name)
     pad = KicadPad(ref, number, x, y, layers, plated=kind != "np_thru_hole", size=min(size) if size else 0.0,
-                   clearance=_local_clearance(item) or own)
+                   clearance=_local_clearance(item) or own, turn=at[2] if len(at) > 2 else 0.0,
+                   spoke_angle=_number(item, "thermal_bridge_angle"))
     bared = [MASKED[l] for l in _layers(item) if l in MASKED] or \
         [c for m, c in MASKED.items() if "*.Mask" in _layers(item) or "F&B.Mask" in _layers(item)]
     if not layers and bared and len(size) == 2:  # a pad of mask only: copper bared where there is no pad
@@ -588,6 +595,8 @@ def apply(design, kicad: KicadBoard) -> str:
     if (rule := next((x for x in reversed(wide) if "min" in x.limits.get("clearance", ())), None)) \
             and rule.limits["clearance"]["min"] > r.get("min_clearance", 0.0):
         r["min_clearance"] = rule.limits["clearance"]["min"]
+    if r.get("edge_clearance", 0.0) > 0:  # (what KiCad's fill keeps from the edge, whatever the traces are asked to)
+        board.pour_edge = r["edge_clearance"]
     if r.get("edge_clearance", 0.0) > kicad.rules.get("edge_clearance", 0.0) + 1e-9:
         rules.edge_clearance = max(rules.edge_clearance or 0.0, r["edge_clearance"])
         said.append(f"an edge clearance of {r['edge_clearance']:g} mm (a custom rule)")
@@ -640,7 +649,8 @@ def apply(design, kicad: KicadBoard) -> str:
     local = narrow = masked = custom_pads = 0
     for pad in board.pads:
         ref, _, number = pad.name.split("@")[0].rpartition("-")
-        mine = found.get((ref, number))
+        mine = found.get((ref, number)) or found.get((re.sub(r"_\d+$", "", ref), number))  # (KiCad's DSN export names a
+        # part whose reference another has already as REF**_1, REF**_2, ...)
         if not mine:
             continue
         cx, cy = pad.centre
@@ -650,6 +660,7 @@ def apply(design, kicad: KicadBoard) -> str:
             continue
         need = 0.0
         pad.zone_connect, pad.thermal_gap, pad.spoke = kp.zone_connect, kp.thermal_gap, kp.spoke
+        pad.turn, pad.spoke_angle = kp.turn, kp.spoke_angle
         local += kp.clearance > rules.clearance + 1e-9
         # Foreign copper inside a pad's solder-mask opening is bared beside it: KiCad's "solder mask bridge".
         opening = kicad.mask if kp.mask is None else kp.mask
@@ -732,7 +743,7 @@ def apply(design, kicad: KicadBoard) -> str:
         if len(nets) > 1:
             continue
         net = next(iter(nets)) if nets else -1
-        board.obstacles.append(Obstacle(shape, net, frozenset({i}), copper=net >= 0))
+        board.obstacles.append(Obstacle(shape, net, frozenset({i}), copper=net >= 0, fill=False))  # (no copper: a pour fills it)
         opened += 1
     if opened:
         said.append(f"{opened} openings in the solder mask")

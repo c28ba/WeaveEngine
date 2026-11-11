@@ -85,6 +85,8 @@ class Pad:
     zone_connect: str | None = None  # how a pour joins it, its own or its part's ("thermal", "solid", "none"; ``Zone``): None, the zone's
     thermal_gap: float | None = None  # its own thermal relief gap and spoke width, if it sets them (None: the zone's)
     spoke: float | None = None
+    turn: float | None = None         # degrees: its angle on the board, from the .kicad_pcb (None: not known; along its longest side)
+    spoke_angle: float | None = None  # degrees: its thermal spokes' angle to its sides (None: KiCad's, 45 for a round pad, else 90)
 
     @property
     def centre(self) -> tuple[float, float]:
@@ -124,6 +126,7 @@ class Obstacle:
     clearance: float = 0.0           # what it asks of foreign copper beyond the rule (``Rules.apart``)
     copper: bool = False             # copper of no net (text, a logo): kept at the clearance, not only out of
     via: bool = False                # a fixed via: drilled, and a way to its net's plane (``plan.fanout``)
+    fill: bool = True                # kept clear of by a pour's fill (a solder-mask opening is not: ``pours.estimate``)
 
     def on(self, layer: int) -> bool:
         return self.layers is None or layer in self.layers
@@ -138,6 +141,9 @@ class Zone:
     spoke: float | None = None       # the width of the relief's spokes
     connect: str = "thermal"         # how it joins its pads: "thermal", "solid", "none", or "tht" (thermal for pads through the board, solid for the rest)
     priority: int = 0                # where zones of two nets overlap, the higher fills first and the other keeps clear of it
+    islands: int = 1                 # KiCad's island removal: 0 every island removed (its default for a zone), 1 none (and when
+                                     # not known: shown), 2 those under ``island_area``
+    island_area: float = 10.0        # mm2
 
 
 @dataclass
@@ -178,6 +184,8 @@ class Board:
     pour_min: dict = field(default_factory=dict)       # (net, layer index) -> the least width of that pour's fill, from its zone's min_thickness
     pour_zone: dict = field(default_factory=dict)      # (net, layer index) -> its zone's settings (``Zone``), from the .kicad_pcb
     pour_override: float = 0.0                         # mm: the least width of every pour's fill if set (the user's), else the zones' own
+    pour_edge: float | None = None                     # mm: what a pour's fill keeps from the board edge, the board's own rule (the
+                                                       # .kicad_pro's and custom rules'), not the traces' (None: the traces')
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
     components: list[Component] = field(default_factory=list)

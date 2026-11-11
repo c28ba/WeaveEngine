@@ -3,6 +3,7 @@ import math
 
 import pytest
 
+import shapely
 from shapely.geometry import Point, box
 
 from weaveengine import pours
@@ -200,3 +201,95 @@ def test_pads_whose_copper_meets_are_joined_whatever_the_pour():
     assert pours.estimate(board, lines, nets, layers)[0].cut_off == []
     board.pads.pop()
     assert pours.estimate(board, lines, nets, layers)[0].cut_off == ["C3-2"]
+
+
+def test_spokes_as_kicad_draws_them():
+    """Four square-ended spokes from the pad's middle to its box grown by the gap, KiCad's error and half the fill's
+    least width: along a pad's sides, turned with it, at 45 degrees on a round pad; no wider than the pad, and none
+    narrower than the fill's least width."""
+    from weaveengine.board import Zone
+    zone, least = Zone(gap=0.5, spoke=0.3), 0.25
+    grow = 0.5 + pours.ERROR + least / 2
+    round_ = Pad.circle(0, 10, 10, 0.4, GND)
+    ends = sorted((round(t.x - 10, 4), round(t.y - 10, 4)) for _, t in pours.spokes(round_, zone, least))
+    d = round((0.4 + grow) / math.sqrt(2), 4)
+    assert ends == sorted([(d, d), (-d, d), (-d, -d), (d, -d)])
+    turned = Pad.rect(1, 10, 10, 2.0, 1.0, GND, rotation=30)
+    turned.turn = 30.0
+    tips = [t for _, t in pours.spokes(turned, zone, least)]
+    a = math.radians(30)
+    assert min(math.dist((t.x, t.y), (10 + (1 + grow) * math.cos(a), 10 + (1 + grow) * math.sin(a))) for t in tips) < 1e-6
+    assert min(math.dist((t.x, t.y), (10 - (0.5 + grow) * math.sin(a), 10 + (0.5 + grow) * math.cos(a))) for t in tips) < 1e-6
+    narrow = Pad.rect(2, 10, 10, 1.0, 0.2, GND)
+    assert max(s.area for s, _ in pours.spokes(narrow, zone, 0.15)) == pytest.approx(0.2 * (0.5 + 0.5 + pours.ERROR + 0.075), rel=1e-3)
+    assert pours.spokes(narrow, zone, least) == []  # (0.2 wide at most: narrower than the fill may be)
+
+
+def test_pads_packed_closer_than_their_gaps_are_joined_only_by_spokes_that_meet():
+    """Two pads in a box of traces with no fill inside, their reliefs overlapping: KiCad keeps a spoke whose end is
+    in a spoke of the other pad that ends in it (facing each other, in line), not one that only ends in the other's
+    relief."""
+    from weaveengine.board import Zone
+    for dy, together in ((0.0, True), (0.4, False)):
+        board = board_with_pour()
+        board.pads[2] = Pad.rect(2, 19.25, 22, 0.6, 0.6, GND, name="C3-1", layers=BACK)
+        board.pads.append(Pad.rect(3, 20.75, 22 + dy, 0.6, 0.6, GND, name="C3-2", layers=BACK))  # (1.5 apart: a spoke's reach is 1.23)
+        board.pour_zone[(GND, 1)] = Zone(gap=0.8, spoke=0.3)
+        corners = [(18.4, 20.4), (21.6, 20.4), (21.6, 23.6), (18.4, 23.6)]  # (a closed box: the reliefs leave no fill inside)
+        lines = {k: [corners[k], corners[(k + 1) % 4]] for k in range(4)}
+        nets, layers = {w: SIG for w in lines}, {w: 1 for w in lines}
+        [pour] = pours.estimate(board, lines, nets, layers)
+        held = [set(x.pads) for x in pour.pieces if {"C3-1", "C3-2"} & set(x.pads)]
+        assert sorted(pour.cut_off) == ["C3-1", "C3-2"]
+        assert (held == [{"C3-1", "C3-2"}]) == together
+
+
+def test_the_fill_keeps_the_boards_edge_clearance_and_fills_mask_openings():
+    """The fill keeps the board's own copper-edge clearance from the edge, not what the traces were asked to keep;
+    and a solder-mask opening, a rule for traces, is filled."""
+    from weaveengine.board import Obstacle
+    board = board_with_pour()
+    board.rules.edge_clearance = 1.5
+    reach = lambda: shapely.union_all([p.shape for p in pours.estimate(board, {}, {}, {})[0].pieces]).bounds[0]
+    assert reach() == pytest.approx(1.5)
+    board.pour_edge = 0.5
+    assert reach() == pytest.approx(1.0)  # (the zone's own outline is 1 mm in)
+    board.outline = box(0, 0, 40, 30).difference(Point(10, 15).buffer(1.0))  # (a hole in the board)
+    gap = lambda: shapely.union_all([p.shape for p in pours.estimate(board, {}, {}, {})[0].pieces]).distance(Point(10, 15))
+    assert gap() == pytest.approx(1.5, abs=0.01)
+    board.obstacles.append(Obstacle(box(25, 10, 27, 12), -1, BACK, fill=False))
+    assert any(p.shape.contains(Point(26, 11)) for p in pours.estimate(board, {}, {}, {})[0].pieces)
+
+
+def test_islands_the_zone_removes_are_not_counted():
+    from weaveengine.board import Zone
+    board = board_with_pour()
+    lines, nets, layers = {0: ring(20, 12, 3)}, {0: SIG}, {0: 1}
+    assert pours.estimate(board, lines, nets, layers)[0].islands == 1  # (not known: shown)
+    board.pour_zone[(GND, 1)] = Zone(islands=0)
+    assert pours.estimate(board, lines, nets, layers)[0].islands == 0
+    board.pour_zone[(GND, 1)] = Zone(islands=2, island_area=10.0)  # (the island is about 21 mm2)
+    assert pours.estimate(board, lines, nets, layers)[0].islands == 1
+    board.pour_zone[(GND, 1)] = Zone(islands=2, island_area=30.0)
+    assert pours.estimate(board, lines, nets, layers)[0].islands == 0
+
+
+def test_a_zones_island_removal_and_a_pads_angle_and_spoke_angle_are_read(tmp_path):
+    from weaveengine.io.kicad import read_kicad
+    pcb = """(kicad_pcb (version 20240108) (generator "pcbnew")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (footprint "R" (layer "F.Cu") (at 5 5 90) (property "Reference" "R1")
+    (pad "1" smd rect (at -1 0 90) (size 1 1) (layers "F.Cu") (thermal_bridge_angle 45))
+    (pad "2" smd rect (at 1 0 120) (size 1 1) (layers "F.Cu")))
+  (zone (net 1) (net_name "GND") (layer "B.Cu") (fill yes (island_removal_mode 2) (island_area_min 4))
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+  (zone (net 1) (net_name "GND") (layer "F.Cu") (fill yes)
+    (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+)
+"""
+    (tmp_path / "z.kicad_pcb").write_text(pcb, encoding="utf-8")
+    kicad = read_kicad(str(tmp_path / "z.kicad_pcb"))
+    back, front = sorted(kicad.zones, key=lambda z: z[1])
+    assert (back[3].islands, back[3].island_area, front[3].islands) == (2, 4.0, 0)  # (KiCad's default: every island removed)
+    one, two = kicad.pads
+    assert (one.turn, one.spoke_angle, two.turn, two.spoke_angle) == (90.0, 45.0, 120.0, None)
