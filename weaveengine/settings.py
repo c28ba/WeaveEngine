@@ -57,7 +57,8 @@ DESCRIPTIONS = {
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
                        "pours' skeletons are drawn to. From the board: each zone's own minimum thickness", "Pours"),
     "show_pours": ("Show pours", "Draw the estimated fill of each copper pour after routing", "Pours"),
-    "show_pour_islands": ("Show islands", "Draw the islands of a pour: pieces joined to nothing, which KiCad removes", "Pours"),
+    "show_pour_islands": ("Show islands", "Draw the islands of a pour: pieces joined to nothing, left in by its zone (KiCad "
+                          "reports them as isolated copper; a zone set to remove islands has none)", "Pours"),
     "slide_vias": ("Straighten vias", "Move each via to where its traces run through it with less of a bend", "Routing"),
     "taper_to_pins": ("Taper traces to fine-pitch pins", "A net narrowed to reach fine-pitch pins is drawn at its own width again, "
                       "narrowing (with a wedge) only over the last stretch to each such pin, where there is room", "Routing"),

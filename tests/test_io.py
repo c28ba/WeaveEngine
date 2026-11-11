@@ -909,6 +909,7 @@ MARGIN_PCB = """(kicad_pcb (version 20240108) (generator "pcbnew")
 def test_drawings_on_the_margin_layer_are_a_warning(tmp_path, capsys):
     (tmp_path / "m.dsn").write_text(KICAD_STYLE.replace("(pcb demo.dsn", "(pcb m.dsn"), encoding="utf-8")
     (tmp_path / "m.kicad_pcb").write_text(MARGIN_PCB, encoding="utf-8")
+    (tmp_path / "m.kicad_pro").write_text('{"board": {"design_settings": {"rules": {}}}}', encoding="utf-8")
     design = read_dsn(str(tmp_path / "m.dsn"))
     assert len(design.warnings) == 1 and design.warnings[0].startswith("2 drawings on the Margin layer")
     main([str(tmp_path / "m.dsn"), "-o", str(tmp_path / "m.ses"), "--max-rounds", "1"])
@@ -954,3 +955,38 @@ def test_custom_design_rules(tmp_path):
     assert design.board.rules.apart(pads["R1-1"].clearance) == pytest.approx(0.1)
     assert design.board.rules.width(design.net_ids["GND"]) == pytest.approx(0.4)
     assert "zone (B.Type)" in design.kicad and "length" not in design.kicad
+
+
+def _warned(tmp_path, files, dsn="m.dsn"):
+    (tmp_path / dsn).write_text(KICAD_STYLE, encoding="utf-8")
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    return read_dsn(str(tmp_path / dsn)).warnings
+
+
+def test_no_kicad_board_beside_the_dsn_is_a_warning(tmp_path):
+    [text] = _warned(tmp_path, {})
+    assert "No KiCad board file m.kicad_pcb was found beside the DSN" in text and "differ from KiCad's DRC" in text
+
+
+def test_a_board_with_another_name_is_named_but_not_used(tmp_path):
+    got = _warned(tmp_path, {"other.kicad_pcb": MARGIN_PCB})
+    assert len(got) == 2 and "m.kicad_pcb was found" in got[0]
+    assert "other.kicad_pcb" in got[1] and "rename" in got[1]
+    assert not any("Margin" in w for w in got)
+
+
+def test_a_board_without_a_project_file_is_a_warning(tmp_path):
+    got = _warned(tmp_path, {"m.kicad_pcb": MARGIN_PCB})
+    assert any("No KiCad project file m.kicad_pro" in w for w in got) and not any("m.kicad_pcb was found" in w for w in got)
+    assert not any("kicad_pro" in w for w in _warned(tmp_path, {"m.kicad_pro": '{"board": {"design_settings": {"rules": {}}}}'}))
+
+
+def test_a_file_that_cannot_be_read_is_reported(tmp_path):
+    got = _warned(tmp_path, {"m.kicad_pcb": MARGIN_PCB, "m.kicad_pro": "{not json"})
+    assert any(w.startswith("m.kicad_pro could not be read") for w in got)
+    got = _warned(tmp_path, {"m.kicad_pcb": "(foo)", "m.kicad_pro": "{}"})
+    assert any("m.kicad_pcb is not a KiCad board file" in w for w in got)
+    (tmp_path / "m.kicad_dru").mkdir()
+    got = _warned(tmp_path, {"m.kicad_pcb": MARGIN_PCB})
+    assert any("m.kicad_dru could not be read" in w for w in got)

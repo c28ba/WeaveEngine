@@ -52,6 +52,8 @@ class KicadPad:
     thermal_gap: float | None = None       # its thermal relief gap and spoke width, its own or its part's (None: the zone's)
     spoke: float | None = None
     hole: object = None                    # the hole as a shape, if it has one
+    turn: float = 0.0                      # degrees: its angle on the board (its part's in it)
+    spoke_angle: float | None = None       # degrees: its thermal spokes' angle, if it sets one
     outlines: tuple = ()                   # a custom pad's copper, as placed and as placed mirrored (see ``apply``)
     mask: float | None = None              # how far its solder-mask opening reaches past its copper, its own or its part's
                                            # (None: the board's; -1: it has no opening)
@@ -89,26 +91,44 @@ def project_rules(path: str) -> dict[str, float]:
             "min_drill": get("min_through_hole_diameter")}
 
 
-def read_kicad(dsn_path: str) -> KicadBoard | None:
-    """The board and project beside ``dsn_path`` (same name), or None if there is no board."""
+def read_kicad(dsn_path: str, notes: list[str] | None = None) -> KicadBoard | None:
+    """The board and project beside ``dsn_path`` (same name), or None if there is no board.
+    What is missing or cannot be read is added to ``notes``, as warnings."""
     from weaveengine.io.dsn import parse_sexpr
+    notes = [] if notes is None else notes
     stem = os.path.splitext(dsn_path)[0]
+    name = os.path.basename(stem)
     if not os.path.exists(stem + ".kicad_pcb"):
+        others = sorted(f for f in os.listdir(os.path.dirname(os.path.abspath(dsn_path))) if f.endswith(".kicad_pcb"))
+        notes.append(
+            f"No KiCad board file {name}.kicad_pcb was found beside the DSN, so the pours, thermal reliefs, custom rules and "
+            "clearances from KiCad are not used, and the result may differ from KiCad's DRC. Put the DSN in the KiCad project "
+            "folder, named as the board.")
+        if others:
+            notes.append(f"Other KiCad boards in that folder: {', '.join(others)}. If the DSN is for one of them, rename it to "
+                         f"match (for {others[0]}, {os.path.splitext(others[0])[0]}.dsn); it is not used automatically.")
         return None
     try:
         with open(stem + ".kicad_pcb", encoding="utf-8", errors="replace") as f:
             root = parse_sexpr(f.read())
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError) as err:
+        notes.append(f"{name}.kicad_pcb could not be read ({err or type(err).__name__}), so the pours, rules and clearances "
+                     "from KiCad are not used and the result may differ from KiCad's DRC.")
         return None
     if not root or root[0] != "kicad_pcb":
+        notes.append(f"{name}.kicad_pcb is not a KiCad board file (it does not start with kicad_pcb), so it is not used.")
         return None
     out = KicadBoard()
     if os.path.exists(stem + ".kicad_pro"):
         try:
             out.rules = project_rules(stem + ".kicad_pro")
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-    out.custom, out.skipped = read_rules(stem)
+        except (OSError, ValueError, KeyError, TypeError) as err:
+            notes.append(f"{name}.kicad_pro could not be read ({'no board rules in it' if isinstance(err, KeyError) else err or type(err).__name__}), so the project's rules and net "
+                         "classes are not used.")
+    else:
+        notes.append(f"No KiCad project file {name}.kicad_pro was found beside the board, so the project's rules (edge and hole "
+                     "clearance, minimums) and net classes are not used and the result may differ from KiCad's DRC.")
+    out.custom, out.skipped = read_rules(stem, notes)
     for layer in _children(_child(root, "layers"), None):
         if len(layer) >= 3 and isinstance(layer[1], str) and layer[1].endswith(".Cu"):
             out.layer_names[layer[1]] = layer[3] if len(layer) > 3 and isinstance(layer[3], str) else layer[1]
@@ -165,9 +185,13 @@ def _settings(item, out: KicadBoard) -> None:
         zone.connect = {"yes": "solid", "no": "none", "thru_hole_only": "tht"}.get(how, "thermal")
         zone.clearance = _number(pads, "clearance")
     fill = _child(item, "fill")
+    zone.islands = 0  # (KiCad's default)
     if fill:
         zone.gap = _number(fill, "thermal_gap")
         zone.spoke = _number(fill, "thermal_bridge_width")
+        mode, least = _number(fill, "island_removal_mode"), _number(fill, "island_area_min")
+        zone.islands = int(mode) if mode in (0, 1, 2) else 0
+        zone.island_area = least if least is not None else zone.island_area
     priority = _number(item, "priority")
     zone.priority = int(priority) if priority is not None else 0
     net = _child(item, "net_name") or _child(item, "net")
@@ -343,7 +367,8 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
         elif name.endswith(".Cu"):
             layers.add(name)
     pad = KicadPad(ref, number, x, y, layers, plated=kind != "np_thru_hole", size=min(size) if size else 0.0,
-                   clearance=_local_clearance(item) or own)
+                   clearance=_local_clearance(item) or own, turn=at[2] if len(at) > 2 else 0.0,
+                   spoke_angle=_number(item, "thermal_bridge_angle"))
     bared = [MASKED[l] for l in _layers(item) if l in MASKED] or \
         [c for m, c in MASKED.items() if "*.Mask" in _layers(item) or "F&B.Mask" in _layers(item)]
     if not layers and bared and len(size) == 2:  # a pad of mask only: copper bared where there is no pad
@@ -588,6 +613,8 @@ def apply(design, kicad: KicadBoard) -> str:
     if (rule := next((x for x in reversed(wide) if "min" in x.limits.get("clearance", ())), None)) \
             and rule.limits["clearance"]["min"] > r.get("min_clearance", 0.0):
         r["min_clearance"] = rule.limits["clearance"]["min"]
+    if r.get("edge_clearance", 0.0) > 0:  # (what KiCad's fill keeps from the edge, whatever the traces are asked to)
+        board.pour_edge = r["edge_clearance"]
     if r.get("edge_clearance", 0.0) > kicad.rules.get("edge_clearance", 0.0) + 1e-9:
         rules.edge_clearance = max(rules.edge_clearance or 0.0, r["edge_clearance"])
         said.append(f"an edge clearance of {r['edge_clearance']:g} mm (a custom rule)")
@@ -640,7 +667,8 @@ def apply(design, kicad: KicadBoard) -> str:
     local = narrow = masked = custom_pads = 0
     for pad in board.pads:
         ref, _, number = pad.name.split("@")[0].rpartition("-")
-        mine = found.get((ref, number))
+        mine = found.get((ref, number)) or found.get((re.sub(r"_\d+$", "", ref), number))  # (KiCad's DSN export names a
+        # part whose reference another has already as REF**_1, REF**_2, ...)
         if not mine:
             continue
         cx, cy = pad.centre
@@ -650,6 +678,7 @@ def apply(design, kicad: KicadBoard) -> str:
             continue
         need = 0.0
         pad.zone_connect, pad.thermal_gap, pad.spoke = kp.zone_connect, kp.thermal_gap, kp.spoke
+        pad.turn, pad.spoke_angle = kp.turn, kp.spoke_angle
         local += kp.clearance > rules.clearance + 1e-9
         # Foreign copper inside a pad's solder-mask opening is bared beside it: KiCad's "solder mask bridge".
         opening = kicad.mask if kp.mask is None else kp.mask
@@ -691,7 +720,8 @@ def apply(design, kicad: KicadBoard) -> str:
         bare = every if not kp.plated else every - has
         if bare:
             # (a local clearance of the pad holds its hole too: a mounting hole's 1.55 mm, against the board's 0.15)
-            board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=max(hole, kp.clearance), copper=True))
+            board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=max(hole, kp.clearance), copper=True,
+                                            hole=not kp.plated))
             holes += 1
     kept = [x for x in ("vias" if rules.via_clearance else "", f"{narrow} pads with a narrow ring" if narrow else "",
                         f"{holes} holes" if holes else "") if x]
@@ -732,7 +762,7 @@ def apply(design, kicad: KicadBoard) -> str:
         if len(nets) > 1:
             continue
         net = next(iter(nets)) if nets else -1
-        board.obstacles.append(Obstacle(shape, net, frozenset({i}), copper=net >= 0))
+        board.obstacles.append(Obstacle(shape, net, frozenset({i}), copper=net >= 0, fill=False))  # (no copper: a pour fills it)
         opened += 1
     if opened:
         said.append(f"{opened} openings in the solder mask")
