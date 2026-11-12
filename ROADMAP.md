@@ -76,7 +76,7 @@ To do, in order:
    no longer goes round a sleeping via site, or a wire that is not drawn
    (below; design 13.1). The reported case itself is on the back burner.
 2. [x] Pours that stay whole by default (done above; what is left is below).
-3. [ ] Room used where there is room.
+3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
 5. [ ] The Margin layer as board edge: a directional rule (below).
 6. [ ] No acute angles where copper of one net meets.
@@ -133,10 +133,6 @@ new example (a board and where on it); then it moves up to be fixed.
   wires that are not drawn (`router._taut`; design 13.1). `bench/slack.py`
   checks a board for slack left in drawn traces. What is left is on the back
   burner list.
-- **Room used where there is room.** Traces are drawn at exactly the
-  clearance even where the board has space, so they bunch in narrow places
-  and leave open areas empty. Where a gap holds fewer traces than it could,
-  spread them across it: easier to make, less crosstalk, and easier to read.
 - **Arcs in the session.** Write rounded corners and the curves of taut traces
   as arcs (`qarc`: start, end and centre) instead of many short straight
   segments. KiCad's session import turns a `qarc` into a true track arc of
@@ -484,9 +480,11 @@ also be chosen for it: a trace may take a wider gate over a shorter, narrower
 one. Wider gaps are easier to make, cross-talk less and are easier to inspect
 and edit by hand.
 
-Builds on 1.1's "Room used where there is room" (spreading traces where a
-gap holds fewer than it could, otherwise still taut); this goes further, to
-the most even spacing everywhere, at the cost of length.
+This is also 1.1's "Room used where there is room", moved here as one
+feature with it (user, 2026-11-12): traces are drawn at exactly the clearance
+even where the board has space, so they bunch in narrow places and leave open
+areas empty. Where a gap holds fewer traces than it could, spread them across
+it: easier to make, less crosstalk, and easier to read.
 
 ## Later
 
