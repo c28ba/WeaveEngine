@@ -44,14 +44,16 @@ def test_the_skeleton_keeps_the_pad_in_the_bay_joined():
     assert result.polylines and all(result.wire_net[w] == SIG for w in result.polylines)
 
 
-def test_where_the_skeleton_loses_a_via_takes_its_pad_to_the_plane_below():
+def test_where_the_skeleton_loses_two_vias_join_its_piece_through_the_plane_below():
     # The ground pads are against the board edge at each end: the skeleton would cut the board in two, the trace has to cross it.
+    # The pour on the back joins no pad, so a via down into it alone would join nothing: a via in the bay and one in the
+    # rest of the front's pour, both down into it.
     board = bay((20, 0.9, 0.5), (20, 29.1, 0.5), layers=("F.Cu", "B.Cu"))
     result, [front, _] = routed(board, True)
     assert result.stats["routed"] == 1 and result.stats["skeletons_routed"] == 0
-    assert result.stats["fanout"] == 1  # (cut off on the front, it is joined to the plane on the back)
-    assert [p for p in result.vias if p.fanout][0].net_id == GND
-    assert front.cut_off == ["G"]
+    assert result.stats["joins"] == {"stitch": 2} and result.stats["fanout"] == 2 and result.stats["plane_left"] == []
+    assert all(p.net_id == GND for p in result.vias if p.fanout)
+    assert front.cut_off == []
 
 
 def test_without_the_option_there_are_no_skeletons():

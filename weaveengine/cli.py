@@ -67,11 +67,37 @@ def narrowed_note(narrowed: dict[int, float], names: dict) -> str:
 
 
 def plane_left_note(left: list[int], board) -> str:
-    """What to tell the user about pads of a plane net that the plane does not reach and no via could be placed for."""
+    """What to tell the user about pads of a plane net that no join found reaches the rest of the net."""
     pads = {p.pad_id: p for p in board.pads}
     names = sorted(pads[p].name for p in left)
-    return (f"{len(names)} pads of a plane net are not reached by its plane and have no room beside them for a via: "
-            + ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "") + " (join them in KiCad)")
+    return (f"{len(names)} pads of a plane net are not joined to the rest of it, and no via, trace or jumper was found that "
+            "joins them: " + ", ".join(names[:12]) + (f" and {len(names) - 12} more" if len(names) > 12 else "")
+            + " (join them in KiCad: moving a trace or the part, a pin swap or a net tie may make room)")
+
+
+JOIN_NAMES = {"via": "via beside a pad", "via in pad": "via in a pad", "stitch": "stitching via in a cut-off piece",
+              "trace": "trace into the fill", "trace to pad": "trace to a joined pad or via",
+              "jumper": "jumper (a via in a cut-off piece and a trace on another layer)",
+              "relief": "thermal relief changed", "narrowed": "relief gap and spokes narrowed"}
+
+
+def joins_note(kinds: dict) -> str:
+    """One line: how the pads and pieces their pour did not reach were joined (``plan.fanout``)."""
+    return "joined to their pour: " + ", ".join(f"{n} by a {JOIN_NAMES.get(k, k)}" for k, n in sorted(kinds.items(), key=lambda x: (-x[1], x[0])))
+
+
+def reliefs_note(reliefs: dict, board) -> str:
+    """What to tell the user about the thermal reliefs changed: where they are written."""
+    pads = {p.pad_id: p for p in board.pads}
+    said = []
+    for pad_id, change in sorted(reliefs.items(), key=lambda x: pads[x[0]].name if x[0] in pads else ""):
+        what = ", ".join("solid" if k == "zone_connect" and v == "solid" else f"spokes at {v:g} degrees" if k == "spoke_angle"
+                         else f"gap {v:g} mm" if k == "thermal_gap" else f"spokes {v:g} mm" if k == "spoke" else f"{k} {v}"
+                         for k, v in change.items())
+        said.append(f"{pads[pad_id].name if pad_id in pads else pad_id} ({what})")
+    return (f"thermal reliefs changed for {len(said)} pads, to join them to their pour: " + ", ".join(said[:8])
+            + (f" and {len(said) - 8} more" if len(said) > 8 else "")
+            + ". Written as the pads' own in the routed copy of the board; the SES cannot carry them")
 
 
 class Checkpoint:
@@ -117,6 +143,7 @@ OPTION_SWITCHES = {
                             "(a wedge from the full width over the last stretch)"),
 }
 OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
+                "reliefs": "--change-reliefs", "narrow_reliefs": "--narrow-reliefs",
                 "skeleton": "--no-skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
                 "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing",
                 **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
@@ -148,6 +175,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="clearances a teardrop keeps from foreign copper, else it is left out (default %(default)g)")
     ap.add_argument("--no-fanout", action="store_true",
                     help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
+    ap.add_argument("--change-reliefs", action="store_true",
+                    help="a pad whose thermal spokes do not reach its pour may be joined solid, or its spokes turned, where that "
+                         "is the cheapest join: written as the pad's own in the routed copy of the board (--routed-board; the SES "
+                         "cannot carry it)")
+    ap.add_argument("--narrow-reliefs", action="store_true",
+                    help="a pad cut off from its pour may have its relief gap narrowed to the zone's clearance and its spokes to "
+                         "the zone's minimum width, where that is the cheapest join (written as with --change-reliefs)")
     ap.add_argument("--no-skeleton", action="store_true",
                     help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
                          "traces are routed, which traces move off where they can; design 11.3)")
@@ -286,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     rules.margin = args.margin
     style = "none" if args.no_teardrops or args.no_ses_teardrops else args.teardrops
     options = Options(vias=not args.no_vias, teardrops=style != "none", portfolio=args.portfolio, narrow=not args.no_narrowing,
-                      fanout=not args.no_fanout, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
+                      fanout=not args.no_fanout, reliefs=args.change_reliefs, narrow_reliefs=args.narrow_reliefs, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
                       teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
@@ -318,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         bar.finish()
     stats = result.stats
     write_ses(design, result, out, teardrops=style == "tracks", arcs=not args.no_ses_arcs)
-    board_out = args.routed_board or (routed_board_path(out) if style == "zones" else None)
+    board_out = args.routed_board or (routed_board_path(out) if style == "zones" or stats["reliefs"] else None)
     if board_out:
         source = source_board(args.dsn)
         if source is None:
@@ -328,7 +362,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 counts = write_routed_board(design, result, source, board_out, style, not args.no_ses_arcs)
                 print(f"routed copy of the board: {counts['tracks']} tracks, {counts['arcs']} arcs, {counts['vias']} vias, "
-                      f"{counts['zones']} teardrop zones -> {board_out} (fill its zones in KiCad, B, before checking it)")
+                      f"{counts['zones']} teardrop zones" + (f", {counts['reliefs']} pads' thermal reliefs" if counts['reliefs'] else "")
+                      + f" -> {board_out} (fill its zones in KiCad, B, before checking it)")
             except (OSError, ValueError) as error:
                 print(f"WARNING: could not write the routed copy of the board {board_out}: {error}")
     if style == "none" and not args.quiet:
@@ -347,6 +382,10 @@ def main(argv: list[str] | None = None) -> int:
               "gave way to traces")
     if stats["fanout"]:
         print(f"  {stats['fanout']} vias placed to join pads to their net's plane")
+    if stats["joins"]:
+        print(f"  {joins_note(stats['joins'])}")
+    if stats["reliefs"]:
+        print(f"  {reliefs_note(stats['reliefs'], result.board)}")
     if stats["plane_left"]:
         print(f"  {plane_left_note(stats['plane_left'], result.board)}")
     if stats["narrowed"]:

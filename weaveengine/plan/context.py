@@ -197,7 +197,9 @@ class Options:
     untangle: bool = True           # undo long detours by moving the wires in their way (``ripup.untangle``)
     taper: bool = True              # a narrowed net is drawn at its width again, but at a fine-pitch pin (``realize.taper``)
     narrow: bool = True             # narrower traces for nets whose pads their width cannot reach (``router.reach``)
-    fanout: bool = True             # a via beside each pad its net's plane does not reach (``plan.fanout``)
+    fanout: bool = True             # pads and pour pieces their plane does not reach joined to it, the cheapest way (``plan.fanout``)
+    reliefs: bool = False           # a join may change a pad's thermal relief: solid, or its spokes turned (``plan.fanout``)
+    narrow_reliefs: bool = False    # a join may narrow a pad's relief gap and spokes, to the zone's clearance and least width
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
     teardrop_max_width: float = 2.0    # mm across

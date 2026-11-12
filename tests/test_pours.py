@@ -72,9 +72,23 @@ def test_a_sliver_narrower_than_the_minimum_width_is_dropped():
         assert len(pour.pieces) == pieces
 
 
+def joined_after(board, lines, wire_net, wire_layer, vias, traces, widths=None) -> list:
+    """The pads of plane nets still not joined to the rest of their net with fan-out's ``vias`` and ``traces``."""
+    from weaveengine.plan.fanout import unjoined
+    import copy
+    after = copy.copy(board)
+    after.pads = board.pads + vias
+    lines, wire_net, wire_layer = dict(lines), dict(wire_net), dict(wire_layer)
+    for w, (net, layer, pts) in enumerate(traces, start=max(lines, default=0) + 1):
+        lines[w], wire_net[w], wire_layer[w] = pts, net, layer
+    return [p.name for p in unjoined(after, lines, wire_net, wire_layer, widths=widths)]
+
+
 def test_fanout_puts_no_via_where_the_plane_has_no_fill():
     """A pad on the front has GND poured on the back, but a ring of another net's trace on the back cuts the
-    pour round the pad off from the pad it joins: the pour's outline is there, its fill is not. No via."""
+    pour round the pad off from the pad it joins: the pour's outline is there, its fill is not. No via inside
+    the ring alone (it would join nothing): a trace on the front to a via outside it; and a ring too wide for
+    that, a via into the island in it and a jumper from there over the ring."""
     from weaveengine.plan.fanout import fanout
     board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu", "B.Cu"])
     board.net_names = {GND: "GND", SIG: "SIG"}
@@ -85,12 +99,18 @@ def test_fanout_puts_no_via_where_the_plane_has_no_fill():
     assert len(vias) == 1 and not left        # (nothing in the way: a via into the pour)
     ringed = {0: ring(20, 15, 2.5)}
     vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 1})
-    assert vias == [] and traces == [] and [p.name for p in left] == ["U1-1"]
+    assert len(vias) == 1 and not left and math.dist(vias[0].centre, (20, 15)) > 2.5  # (outside the ring)
+    assert traces[0][1] == 0  # (its trace on the front)
+    ringed = {0: ring(20, 15, 6.0)}
+    vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 1})
+    assert len(vias) == 3 and not left and joined_after(board, ringed, {0: SIG}, {0: 1}, vias, traces) == []
+    assert sum(math.dist(v.centre, (20, 15)) > 6.0 for v in vias) == 1  # (one outside the ring)
 
 
 def test_fanout_keeps_clear_of_a_tapered_trace_as_drawn():
     """A ring of another net's trace round a pad on the front leaves room for a via inside it at its
-    narrow width, and none where the trace is drawn wider in pieces (``realize.taper``)."""
+    narrow width, and none where the trace is drawn wider in pieces (``realize.taper``): then the via goes in the
+    pad."""
     from weaveengine.plan.fanout import fanout
     board = Board.rectangle(40, 30, Rules(0.2, 0.2), ["F.Cu", "B.Cu"])
     board.net_names = {GND: "GND", SIG: "SIG"}
@@ -99,9 +119,10 @@ def test_fanout_keeps_clear_of_a_tapered_trace_as_drawn():
     board.pours.append((GND, 1, box(1, 1, 39, 29)))
     ringed = {0: ring(20, 15, 1.6)}
     vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 0})
-    assert len(vias) == 1 and not left
+    assert len(vias) == 1 and not left and math.dist(vias[0].centre, (20, 15)) < 1.6
     vias, traces, left = fanout(board, ringed, {0: SIG}, {0: 0}, widths={0: [(ringed[0], 0.8)]})
-    assert vias == [] and [p.name for p in left] == ["U1-1"]
+    assert not left and len(vias) == 1 and vias[0].shape.within(board.pads[0].shape.buffer(1e-6)) and traces == []  # (in the pad)
+    assert joined_after(board, ringed, {0: SIG}, {0: 0}, vias, traces, {0: [(ringed[0], 0.8)]}) == []
 
 
 def test_a_zones_minimum_thickness_sets_the_slivers_its_fill_drops(tmp_path):

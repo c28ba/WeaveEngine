@@ -45,14 +45,48 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
     is joined only where one of its spokes reaches the fill (``spokes``); where zones of two nets
     overlap, the one of higher priority fills first and the other keeps clear of its fill.
     ``widths``: wire -> [(points, width)] for traces drawn in pieces (``realize.taper``)."""
+    found, wires = fills(board, lines, wire_net, wire_layer, teardrops, clearance, min_width, widths)
+    return classify(board, found, wires)
+
+
+def copper_of(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict | None = None,
+              widths: dict | None = None) -> list[tuple]:
+    """(shape, net, layer) of every trace and teardrop of the routing."""
+    rules = board.rules
+    wires = []
+    for w, line in lines.items():
+        if len(line) >= 2 and w in wire_layer:
+            net = wire_net[w]
+            for pts, width in (widths or {}).get(w) or [(line, rules.drawn(net))]:
+                wires.append((LineString(pts).buffer(width / 2.0, quad_segs=4), net, wire_layer[w]))
+    for w, drops in (teardrops or {}).items():
+        if w in wire_layer:
+            wires += [(shapely.Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for poly in drops]
+    return wires
+
+
+def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict | None = None,
+          clearance: float | None = None, min_width: float | None = None, widths: dict | None = None,
+          nets: set | None = None, wires: list | None = None, window=None) -> tuple[dict, list]:
+    """The fill of each pour (its index in ``board.pours`` -> its copper, with the net's own pads and traces in it, as
+    one shape: ``estimate``), and the routing's copper (``copper_of``). ``nets``: only the pours of these nets (the
+    zones of other nets that fill before them, which they keep clear of, are filled but not returned); ``wires``: the
+    routing's copper, if known already; ``window``: only the fill within this shape (``refill``)."""
     rules = board.rules
     base = rules.clearance - rules.margin if clearance is None else clearance
-    edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance) - rules.margin
-    # (KiCad's fill keeps the board's own edge clearance, whatever the traces were asked to keep)
-    inside = board.outline.buffer(-(max(edge, base) if board.pour_edge is None else board.pour_edge))
-    if board.margin:  # (and as much from drawings on the Margin layer)
-        inside = inside.difference(shapely.union_all([m.buffer(edge if board.pour_edge is None else board.pour_edge) for m in board.margin]))
-    layers = {at for _, at, _ in board.pours}
+    inside = pour_area(board, clearance)
+    # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
+    rank = lambda k: board.zone(*board.pours[k][:2]).priority
+    order = sorted(range(len(board.pours)), key=lambda k: (-rank(k), k))
+    if nets is not None:
+        want = {k for k in order if board.pours[k][0] in nets}
+        more = want
+        while more:
+            more = {j for j in order if j not in want for k in more
+                    if board.pours[j][1] == board.pours[k][1] and board.pours[j][0] != board.pours[k][0] and rank(j) > rank(k)}
+            want |= more
+        order = [k for k in order if k in want]
+    layers = {board.pours[k][1] for k in order}
     def asks(net: int) -> float:  # (what a net's class asks, the board's if it is not known, never more than the board's)
         if clearance is not None or not (board.net_clearance or board.default_clearance):
             return base
@@ -71,23 +105,14 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
                 copper[at].append((o.shape.buffer(o.clearance, quad_segs=4), -2, None))
             elif o.on(at) and o.fill:
                 copper[at].append((o.shape, o.net_id if o.copper or o.net_id >= 0 else -2, o.clearance if o.copper or o.net_id >= 0 else None))
-    wires = []  # (shape, net, layer) of every trace and teardrop
-    for w, line in lines.items():
-        if len(line) >= 2 and w in wire_layer:
-            net = wire_net[w]
-            for pts, width in (widths or {}).get(w) or [(line, rules.drawn(net))]:
-                wires.append((LineString(pts).buffer(width / 2.0, quad_segs=4), net, wire_layer[w]))
-    for w, drops in (teardrops or {}).items():
-        if w in wire_layer:
-            wires += [(shapely.Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for poly in drops]
+    if wires is None:
+        wires = copper_of(board, lines, wire_net, wire_layer, teardrops, widths)
     for shape, net, at in wires:
         if at in layers:
             copper[at].append((shape, net, 0.0))
     trees = {at: shapely.STRtree([c[0] for c in cs]) for at, cs in copper.items() if cs}
-    # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
-    order = sorted(range(len(board.pours)), key=lambda k: (-board.zone(*board.pours[k][:2]).priority, k))
     filled: dict[int, list] = {}  # layer -> (net, priority, fill) of the pours done
-    found: dict[int, Pour] = {}
+    found: dict[int, object] = {}
     for k in order:
         net, at, outline = board.pours[k]
         zone = board.zone(net, at)
@@ -95,19 +120,22 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         keep = max(asks(net), own_zone)  # (and from another net's copper, the more of the two classes)
         pair = lambda other: max(keep, asks(other))
         area = outline.intersection(inside)
+        if window is not None:
+            area = area.intersection(window)
         fill = area
         tree = trees.get(at)
         # What other nets' copper and zones take, which the spokes keep clear of too (KiCad's order: the reliefs out, the
         # clearances out, the spokes in, the clearances out again, then what is narrower than the least width).
         blocked = []
         if tree is not None:
-            near = [copper[at][i] for i in tree.query(outline, predicate="dwithin", distance=max(base, keep) + own_zone + 1.0).tolist()]
+            near = [copper[at][i] for i in tree.query(area, predicate="dwithin", distance=max(base, keep) + own_zone + 1.0).tolist()]
             blocked += [s.buffer(max(ask, pair(other)) if ask is not None else 0.0, quad_segs=4) for s, other, ask in near if other != net]
-        blocked += [f.buffer(pair(other), quad_segs=4) for other, rank, f in filled.get(at, ()) if other != net and rank > zone.priority]
+        blocked += [f.buffer(pair(other), quad_segs=4) for other, rank_, f in filled.get(at, ()) if other != net and rank_ > zone.priority]
         blocked = shapely.union_all(blocked) if blocked else None
         if blocked is not None:
             fill = fill.difference(blocked)
-        own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline)]
+        own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline)
+               and (window is None or p.shape.intersects(window))]
         how = {p.pad_id: joined(p, zone) for p in own}
         relieved = [p for p in own if how[p.pad_id] in ("thermal", "none")]
         if relieved:  # (the fill keeps its gap from a pad it joins by spokes, and its clearance from one it does not join)
@@ -133,20 +161,72 @@ def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: di
         fill = _prune(grown, least)
         # The net's own pads are copper whatever their width, and its traces join what they touch.
         joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] in ("solid", "thermal")]
-        joins += [shape for shape, other, at_ in wires if other == net and at_ == at and shape.intersects(outline)]
+        joins += [shape for shape, other, at_ in wires if other == net and at_ == at and shape.intersects(outline)
+                  and (window is None or shape.intersects(window))]
         fill = shapely.union_all([fill, *joins])
         filled.setdefault(at, []).append((net, zone.priority, fill))
-        own = [p for p in own if how[p.pad_id] != "none"]
+        found[k] = fill
+    if nets is not None:
+        found = {k: fill for k, fill in found.items() if board.pours[k][0] in nets}
+    return found, wires
+
+
+def pour_area(board, clearance: float | None = None):
+    """Where a pour may fill: the board less its edge clearance, as KiCad's fill keeps it (the board's own, whatever
+    the traces were asked to keep), and as much from drawings on the Margin layer."""
+    rules = board.rules
+    base = rules.clearance - rules.margin if clearance is None else clearance
+    edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance) - rules.margin
+    inside = board.outline.buffer(-(max(edge, base) if board.pour_edge is None else board.pour_edge))
+    if board.margin:
+        inside = inside.difference(shapely.union_all([m.buffer(edge if board.pour_edge is None else board.pour_edge) for m in board.margin]))
+    return inside
+
+
+def refill(board, fill_of: dict, nets: set, wires: list, near, reach: float) -> dict:
+    """The fills of ``nets``' pours (``fill_of``: pour index -> fill, ``fills``) made again where something changed
+    within ``near`` (a shape): within ``reach`` of it, the fill is made anew (from a window a little larger, so that
+    what is made at its edge is as the whole fill makes it), and the rest is as it was."""
+    inner = near.buffer(reach, join_style="mitre")
+    outer = inner.buffer(REFILL, join_style="mitre")
+    local, _ = fills(board, {}, {}, {}, nets=nets, wires=wires, window=outer)
+    return {k: shapely.union_all([fill_of[k].difference(inner), local[k].intersection(inner)]) for k in local}
+
+
+REFILL = 3.0  # mm round what is made anew by ``refill`` that it fills too, and does not keep
+
+
+def with_copper(board, fill_of: dict, shapes) -> dict:
+    """``fill_of`` (pour index -> fill, ``fills``) with more copper of the pours' net joined in as ``fills`` joins it
+    (``shapes``: (shape, layer), layer None for a via, on every layer): where it meets a pour's outline. Copper of
+    its own net takes nothing from a fill, so the rest of it is as it was."""
+    out = dict(fill_of)
+    for k, fill in fill_of.items():
+        _, at, outline = board.pours[k]
+        more = [shape for shape, layer in shapes if (layer is None or layer == at) and shape.intersects(outline)]
+        if more:
+            out[k] = shapely.union_all([fill, *more])
+    return out
+
+
+def classify(board, fill_of: dict, wires: list) -> list[Pour]:
+    """The pieces of each pour's fill (``fills``: pour index -> fill, with all the pours of each net in it) and their
+    kinds; the pours in the order of ``board.pours``."""
+    pours = []
+    for k in sorted(fill_of):
+        net, at, outline = board.pours[k]
+        zone = board.zone(net, at)
+        own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline) and joined(p, zone) != "none"]
+        fill = fill_of[k]
         parts = sorted(getattr(fill, "geoms", [fill]), key=lambda g: -g.area)
         pour = Pour(net, at, outline)
         has = [[p for p in own if g.intersects(p.shape)] for g in parts]
-        main = max(range(len(parts)), key=lambda k: (sum(not p.is_via for p in has[k]), parts[k].area), default=None)
+        main = max(range(len(parts)), key=lambda j: (sum(not p.is_via for p in has[j]), parts[j].area), default=None)
         for j, g in enumerate(parts):
             if g.geom_type == "Polygon" and not g.is_empty:
                 names = [p.name or str(p.pad_id) for p in has[j] if not p.is_via]
                 pour.pieces.append(Piece(g, "main" if j == main and names else "", names, {p.pad_id for p in has[j]}))
-        found[k] = pour
-    pours = [found[k] for k in range(len(board.pours))]
+        pours.append(pour)
     _join(pours, _touching(board, {pour.net for pour in pours}, wires))
     # The islands KiCad removes, by the zone's island removal, are not there; but a zone that is islands on every
     # layer it fills (joined to nothing at all) is left whole. (One zone over several layers: one ``Zone``.)

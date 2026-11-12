@@ -50,8 +50,16 @@ DESCRIPTIONS = {
     "untangle": ("Undo long detours", "Move the traces that force a connection the long way round, where that leaves less copper", "Routing"),
     "narrow_to_reach": ("Narrow traces to reach fine-pitch pins", "Where a net's pads cannot be reached at its class's width, route it "
                         "narrower, down to the board's minimum track width (from the KiCad project)", "Routing"),
-    "fanout_to_planes": ("Join pads to planes with vias", "A pad of a poured net (GND, say) that its pour does not reach on its "
-                         "own layer gets a via beside it down to the pour, routed before the other traces", "Pours"),
+    "fanout_to_planes": ("Join pads to planes", "A pad of a poured net (GND, say) that its pour does not reach, or a piece of "
+                         "the pour the traces cut off, is joined to the rest of the net once the board is routed, by the cheapest "
+                         "way that the estimated fill finds joins it: a via in or beside the pad or in the piece, a trace into "
+                         "the fill, or a jumper (a via pair and a trace on another layer)", "Pours"),
+    "pour_reliefs": ("Change thermal reliefs to join pads", "A pad whose thermal spokes do not reach its pour may be joined "
+                     "solid, or its spokes turned, where that joins it and costs least. Not the zone's rule: written as the "
+                     "pad's own in the routed copy of the board (the SES cannot carry it)", "Pours"),
+    "pour_narrow_reliefs": ("Narrow a pad's relief to join it", "A pad cut off from its pour may have its relief gap narrowed "
+                            "to the zone's clearance and its spokes to the zone's minimum width, where that joins it and costs "
+                            "least. Not the zone's rule: written as the pad's own in the routed copy of the board", "Pours"),
     "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which "
                        "traces move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it", "Pours"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
@@ -115,6 +123,8 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "untangle": ("detour", "wiggle", "shorten", "straighten", "loop", "long way", "tidy", "clean", "length"),
     "narrow_to_reach": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "bga", "qfn", "minimum track"),
     "fanout_to_planes": ("fan out", "fanout", "plane", "ground", "gnd", "power", "pour", "zone", "via", "stitch", "decoupling"),
+    "pour_reliefs": ("thermal", "relief", "spoke", "solid", "zone", "connection", "starved", "pad", "override", "kicad"),
+    "pour_narrow_reliefs": ("thermal", "relief", "gap", "spoke", "width", "clearance", "narrow", "starved", "pad", "override"),
     "pour_skeletons": ("zone", "plane", "copper fill", "fill", "connectivity", "split", "cut", "thermal", "spoke", "whole"),
     "pour_min_width": ("zone", "fill", "minimum thickness", "min width", "sliver", "copper fill", "thin", "narrowest"),
     "show_pours": ("zone", "plane", "copper fill", "fill", "display", "draw", "ground plane", "polygon"),
@@ -209,6 +219,8 @@ class Settings:
     narrow_to_reach: bool = True
     taper_to_pins: bool = True
     fanout_to_planes: bool = True
+    pour_reliefs: bool = False
+    pour_narrow_reliefs: bool = False
     pour_skeletons: bool = True
     pour_min_width: float = 0.0  # mm; 0 = from the board's zones
     show_pours: bool = True
@@ -261,7 +273,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        portfolio=self.portfolio)
 
