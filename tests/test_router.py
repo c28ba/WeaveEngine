@@ -1457,7 +1457,7 @@ def test_traces_are_pulled_again_without_the_wires_not_drawn():
     before = [layer.state.snapshot()[:3] for layer in ctx.layers]
     shorter = 0
     for x in lines:
-        new, found = router._taut(ctx, lines, violations, {x})
+        new, found, _ = router._taut(ctx, lines, violations, {x})
         assert len(found) <= len(violations) and new[x] == lines[x]
         assert [layer.state.snapshot()[:3] for layer in ctx.layers] == before
         shorter += sum(polyline_length(new[w]) < polyline_length(lines[w]) - 1e-3 for w in lines if w != x)
