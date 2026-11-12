@@ -289,7 +289,7 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
     only if the check finds no more on it than before. Returns them, the
     violations, and the traces as they would be if also not bent round a via
     of their own net that they pass (``relax``'s ``own_vias``), where they
-    differ and the check finds no more on their layer: ``_over_own_vias``
+    differ and the check finds nothing on them: ``_over_own_vias``
     takes those where the pours keep their room. (While routing, traces go
     round such vias, as the routing was planned with them.) The state and the
     maps are left as they were."""
@@ -316,11 +316,11 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
                 lines.update(new)
                 violations = [v for v in violations if v.layer != layer.index or skeleton(v)] + found
                 before = found
-        if vias:
+        if vias:  # (a trace the check finds anything on keeps its bends)
             new, found, _ = realize(state, board, own_vias=True)
-            if len([v for v in found if not skeleton(v)]) <= len(before):
-                straight.update({w: line for w, line in new.items()
-                                 if w in lines and line != lines[w] and not ctx.conns[w].skeleton})
+            held = {w for v in found for w in v.wires}
+            straight.update({w: line for w, line in new.items()
+                             if w in lines and line != lines[w] and not ctx.conns[w].skeleton and w not in held})
         sites.undo(pmap, state, *mark)
         state.restore(snap)
         if moved is not None:
@@ -334,8 +334,9 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
     cut off from its pour that was not before (``pours.estimate``), and
     fan-out finds a place for a via for every pad it did before
     (``plan.fanout``). Where that fails, the traces near the trouble keep
-    their bends, a few times over, and then all do. A layer whose traces the
-    check finds more on than before keeps its bends."""
+    their bends, a few times over, and then all do. Likewise the traces the
+    check finds more on than before (straightened beside others that keep
+    their bends), and then all on their layer."""
     from weaveengine.realize import drc
     straight = {w: line for w, line in straight.items() if w in lines}
     if not straight:
@@ -348,7 +349,8 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
             cut = [(piece, pour.layer) for pour in estimate_pours(work, drawn, wire_net, wire_layer)
                    for piece in pour.pieces if piece.kind == "cut"]
             left = fanout(work, drawn, wire_net, wire_layer, cut={(p, at) for piece, at in cut for p in piece.pad_ids})[2]
-            return [((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids] +                    [((p.pad_id, -1), p.shape, None) for p in left]
+            return ([((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids]
+                    + [((p.pad_id, -1), p.shape, None) for p in left])
 
         had = {key for key, _, _ in trouble(lines)}
         reach = work.rules.via_diameter + 4.0 * work.rules.pitch  # (room for a via and the traces round it)
@@ -366,7 +368,16 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
                 return lines
     for layer in {wire_layer[w] for w in straight}:
         on = [w for w, li in wire_layer.items() if li == layer]
-        if len(drc.check(work, {w: trial[w] for w in on}, wire_net, layer)) > len(drc.check(work, {w: lines[w] for w in on}, wire_net, layer)):
+        had = len(drc.check(work, {w: lines[w] for w in on}, wire_net, layer))
+        for _ in range(OWN_VIA_TRIES):
+            found = drc.check(work, {w: trial[w] for w in on}, wire_net, layer)
+            back = {w for v in found for w in v.wires if w in straight and trial[w] is straight[w]}
+            if len(found) <= had or not back:
+                break
+            trial.update({w: lines[w] for w in back})
+        else:
+            found = drc.check(work, {w: trial[w] for w in on}, wire_net, layer)
+        if len(found) > had:
             trial.update({w: lines[w] for w in on})
     return trial
 
