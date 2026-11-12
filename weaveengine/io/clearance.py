@@ -69,7 +69,7 @@ class Copper:
         that copper asks, or at least what ``old`` kept from it as drawn."""
         if layer not in self.trees:
             return True
-        old_line, new_line = LineString(old), LineString(new)
+        old_line, new_line = _line(old), _line(new)
         x0, y0, x1, y1 = old_line.bounds
         far = self.reach + half
         items = self.items[layer]
@@ -99,9 +99,17 @@ class Copper:
 
     def replace(self, wire: int, piece: int, pts) -> None:
         """The trace piece as written, for the checks of the traces after it."""
-        if (wire, piece) in self.trace_at and len(pts) >= 2:
+        if (wire, piece) in self.trace_at and len(pts) >= 1:
             layer, k = self.trace_at[wire, piece]
-            self.items[layer][k][0] = LineString(pts)
+            self.items[layer][k][0] = _line(pts)
+
+
+def _line(pts):
+    """A trace piece as a shape: a point where it has no length (a piece of a
+    tapered trace can start and end at one point, and ``outline_of`` then
+    leaves a single point)."""
+    pts = list(pts)
+    return Point(pts[0]) if len(set(map(tuple, pts))) < 2 else LineString(pts)
 
 
 def pad_copper(pad, parts=None):

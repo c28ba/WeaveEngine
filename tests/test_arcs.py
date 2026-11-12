@@ -130,6 +130,24 @@ def test_a_fitted_arc_is_turned_down_when_it_would_come_too_near():
     assert all(r[2] != (0.0, 0.0) for r in runs if r[0] == "arc")
 
 
+def test_a_trace_piece_with_no_length_is_checked_as_a_point():
+    """A piece of a tapered trace can start and end at one point: its outline
+    is then one point, which the check takes as such (it crashed kicad-openair,
+    kicad-cm5-minima and lumen-mobo)."""
+    import shapely
+    from shapely.geometry import Point
+    from weaveengine.io.clearance import Copper
+    copper = Copper.__new__(Copper)
+    copper.items = {0: [[Point(5.0, 0.0), 2, 0.5, 0.2]]}
+    copper.trees = {0: shapely.STRtree([copper.items[0][0][0]])}
+    copper.reach = 0.7
+    copper.trace_at = {(0, 0): (0, 0)}
+    assert copper.allows(0, 1, 0.1, [(0.0, 0.0), (0.0, 0.0)], [(0.0, 0.0)])
+    assert not copper.allows(0, 1, 0.1, [(4.5, 0.0), (4.5, 0.0)], [(4.6, 0.0)])  # nearer the pad than it was
+    copper.replace(0, 0, [(5.0, 0.0)])
+    assert copper.items[0][0][0].geom_type == "Point"
+
+
 def test_an_oval_pad_is_measured_by_its_true_round_ends():
     from shapely.geometry import LineString
     from shapely.ops import unary_union
