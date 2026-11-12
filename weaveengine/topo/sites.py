@@ -463,7 +463,7 @@ def replay(pmap: PlanarMap, entries: list) -> None:
             _move_map(pmap, pmap.sites[entry["pad"]], entry["to"])
         else:
             site = pmap.sites[entry["site"].pad]
-            _delete_map(pmap, site, _plan_delete(pmap, site, fill=entry["fill"]))
+            _delete_map(pmap, site, _plan_delete(pmap, site, fill=entry.get("fill")))  # (none in a log from before 2026-11: the first ears found)
 
 
 def _what(entry: dict) -> tuple:

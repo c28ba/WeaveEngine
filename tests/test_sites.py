@@ -672,6 +672,9 @@ def test_a_site_a_wire_passes_on_both_sides_is_deleted(monkeypatch):
                            for steps in state.wire_path.values())  # a wire passes the site twice
                 assert sites.delete(pmap, state, site) and site.pad not in pmap.sites
                 assert state.invariant_errors() == [] and map_errors(pmap) == []
+                copy_of = planar_map.build(board)
+                sites.replay(copy_of, sites.log(pmap))  # (filled the same way again)
+                assert fingerprint(copy_of) == fingerprint(pmap)
                 return
             made.remove(site)
         elif roll < 0.88 and len(made) < 60:
