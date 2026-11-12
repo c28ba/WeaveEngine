@@ -72,9 +72,30 @@ probably partly one cause; before any new feature):
 Details under Pours and planes, "Pour estimate against KiCad".
 
 To do, in order:
-1. [x] Traces pulled fully taut, as far as found (branch `taut`): a trace
-   no longer goes round a sleeping via site, or a wire that is not drawn
-   (below; design 13.1). The reported case itself is on the back burner.
+1. [ ] Traces pulled fully taut (branches `taut`, `taut2`): a trace no
+   longer goes round a sleeping via site, a wire that is not drawn, or (where
+   the pours keep their room) a via of its own net it passes (below; design
+   13.1). Reopened for two cases `bench/slack.py` finds again and again:
+   - A U-turn round a sleeping via site (a user's board, 0.47 mm from any
+     copper), with a wire of another net inside the U across the site from
+     others. Cause: `sites.delete` filled the hole's polygon with the first
+     ears it found; where a wire passes the site on both sides, that fill had
+     an edge the wire would cross twice, so the site was refused and stayed.
+     Now the fill has no such edge (every refusal in the random-operations
+     test now deletes, the invariant holding), and the last pull also takes
+     out the sleeping sites it can (`router._taut`). Not reproduced on
+     Windows: the board routes otherwise there; 4 sleeping sites were left on
+     it, now none.
+   - Traces bent through vias of their own net that they pass but do not end
+     on (lumen-blade13, corners up to 2.3 mm from foreign copper). Letting
+     every such trace pass straight cost the pours room (tier 1: lumen-blade13
+     KiCad open 18 to 20, cut-off pads 5 to 7; fomu mask/thermal 2 to 14).
+     Now the last pull draws them straight only off a pour net's vias, and
+     `router._over_own_vias` keeps each straightened trace only where the pour
+     estimate cuts off no new pad and fan-out still finds every via it did;
+     the traces near any new trouble get their bends back. lumen-blade13:
+     own-via bends 7 to 1, 8.7 mm shorter, 5 pads cut off as before; a user's
+     board: 9 to 4.
 2. [x] Pours that stay whole by default (done above; what is left is below).
 3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
@@ -101,38 +122,21 @@ new example (a board and where on it); then it moves up to be fixed.
   Known causes of a missing via teardrop, all deliberate: a trace wider than
   0.9 of the via's radius, a trace too short, and fan-out stubs (added after
   the teardrop pass, so they never get one).
-- [ ] Slack thin traces, and traces crossing a gap at an angle where they could
-  run along the clearance edge (seen 2026-11 on a user's board; the user cannot
-  make it happen again). `bench/slack.py` routes a board and finds, for each
-  drawn trace, corners with no copper within their clearance and how much
-  shorter each trace gets with each kind of thing that is not copper taken
-  out. On a user's board (217 connections, 99 vias) and 11 tier-1 boards it
-  found: sleeping via sites left in the map (6 on the user's board, 2 that
-  `sites.delete` refuses; one trace made a U-turn round one, 0.47 mm from any
-  copper); wires not drawn because their net joins those pads already
-  (`router._redundant`) holding drawn traces off (31 corners, 3 traces, up to
-  0.075 mm); vias of a trace's own net that it passes without ending on
-  them, bending it as if they were foreign (lumen-blade13: corners 2.3 mm
-  from any foreign copper); and the pours' skeletons, which hold traces off
-  on purpose (up to 1.9 mm on lumen-blade13, 18 traces). The first two are
-  fixed (design 13.1). Still open: the U-turn above stays where a wire of
-  another net inside the U is across the site from others; and letting a
-  trace pass straight over its own net's vias was tried and cost the pours
-  room (tier 1: lumen-blade13 KiCad open 18 to 20, fomu mask/thermal 2 to
-  14), so it waits for a way that keeps fan-out's and the fill's room. If the
-  symptom is seen again, run `bench/slack.py` on that board: a slack trace
-  held by a skeleton is the pour's room, not a bug.
 
 ### Trace shape
 
 - **Traces pulled fully taut.** Users saw thin traces on a complex board that
   were not pulled tight, and traces that cross a gap at an angle where they
-  could run along the clearance edge. Done as far as found (branch `taut`):
-  relaxation does not go round a sleeping via site unless a wire of another
-  net there needs it to, and the traces are pulled once more without the
-  wires that are not drawn (`router._taut`; design 13.1). `bench/slack.py`
-  checks a board for slack left in drawn traces. What is left is on the back
-  burner list.
+  could run along the clearance edge (branches `taut`, `taut2`): relaxation
+  does not go round a sleeping via site unless a wire of another net there
+  needs it to; the traces are pulled once more without the wires that are
+  not drawn and the sleeping sites that can be deleted, which a wire passing
+  on both sides no longer stops (`router._taut`); and a trace is drawn
+  straight over a via of its own net where the pours keep their room
+  (`router._over_own_vias`; design 13.1). `bench/slack.py` checks a board for
+  slack left in drawn traces. Seen too, not yet looked into: a trace bending
+  round a pad of its own net that it passes (a user's board, 0.8 mm from
+  foreign copper).
 - **Arcs in the session.** Write rounded corners and the curves of taut traces
   as arcs (`qarc`: start, end and centre) instead of many short straight
   segments. KiCad's session import turns a `qarc` into a true track arc of

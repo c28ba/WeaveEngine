@@ -16,8 +16,9 @@ round something that is not copper on the board:
 - *by geometry*, independent of the map: every corner of a drawn trace (as
   pulled, before corners are rounded) that turns by more than a degree must
   have something drawn within its clearance of it: a foreign pad, via,
-  keepout or trace, or the board edge. A corner with nothing there is listed
-  with how far the nearest thing is beyond its clearance.
+  keepout or trace, or the board edge. A bend with nothing there (the corners
+  of one arc are one bend) is listed with how far the nearest thing is beyond
+  its clearance, and what that is not drawn is near it.
 
     python bench/slack.py BOARD.dsn [weaveengine.cli options]
 
