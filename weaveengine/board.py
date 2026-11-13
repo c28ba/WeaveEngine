@@ -205,7 +205,8 @@ class Board:
     pour_override: float = 0.0                         # mm: the least width of every pour's fill if set (the user's), else the zones' own
     pour_edge: float | None = None                     # mm: what a pour's fill keeps from the board edge, the board's own rule (the
                                                        # .kicad_pro's and custom rules'), not the traces' (None: the traces')
-    margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer: kept clear of by ``plan.fanout`` only
+    margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer (lines): kept clear of by ``plan.fanout`` and the pours
+    margin_edge: str = "off"                           # how they are held as board edge besides: "edge", "added", "off" (``geom.margin``)
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
     components: list[Component] = field(default_factory=list)
 

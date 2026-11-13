@@ -70,6 +70,7 @@ any it does not carry). The ones you are most likely to change:
 |---|---|
 | Trace width, clearance, via size | Taken from the DSN unless you set them |
 | Copper to board edge | From the KiCad project beside the DSN, else the clearance |
+| Margin drawings as board edge | Traces and vias keep the edge clearance from drawings on KiCad's Margin layer too; on by default |
 | Safety margin | Extra clearance routed with, so nothing sits exactly on a limit |
 | Use vias | Off: every connection stays on one layer |
 | Join pads to planes with vias | A pad its net's pour does not reach gets a via beside it, down to the pour; on by default |
@@ -148,8 +149,11 @@ KiCad's own design rules check.
   if you want them redone: KiCad keeps its own teardrops as zones, and those
   are not taken out when the session is imported. Locked traces and vias are
   kept as they are, routed around, and count as joining a pad to its plane.
-- **Drawings on the Margin layer** are not treated as board edge, though
-  KiCad's check holds traces to the edge clearance from them.
+- **Drawings on the Margin layer** are board edge, as in KiCad's check, but a
+  pad that lies within the edge clearance of one is still reached (straight
+  away from the drawing where its part allows), so KiCad reports the pad and
+  the track that touches it. Move such drawings to a User layer if they are
+  only notes.
 - **Closed solder jumpers and net ties.** Copper drawn in a footprint that joins
   pads of two nets is kept clear by other nets' traces, but KiCad gives that
   copper no net, so its check reports a clearance error or a short wherever a

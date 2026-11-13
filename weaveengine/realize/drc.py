@@ -5,6 +5,7 @@ import shapely
 from shapely.geometry import LineString
 
 from weaveengine.board import Board
+from weaveengine.geom.margin import lines as margin_lines, too_near
 
 TOL = 1e-3  # mm. Traces are simplified to within half a micron, so allow one micron
 
@@ -53,6 +54,10 @@ def check(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_ne
         dist = line.distance(boundary)
         if dist < need - TOL or not board.outline.contains(line):
             out.append(Violation("outline", (ids[i],), dist, need, _closest(line, boundary), layer))
+            continue
+        near = too_near(board, layer, line, half[i], TOL)  # (Margin drawings held as edge, off the pads' ways out)
+        if near is not None:
+            out.append(Violation("outline", (ids[i],), near, need, _closest(line, margin_lines(board)), layer))
 
     # Wire to wire: independent crossing oracle (17.1) for every pair, and
     # copper-to-copper spacing s between different nets.

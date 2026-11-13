@@ -60,3 +60,25 @@ def test_the_switches_turn_options_off(tmp_path, monkeypatch):
     o = seen["options"]
     assert not o.taper and not o.smooth and not o.ripup and o.teardrop_max_length == 0.5 and o.refine and o.untangle
     assert seen["params"].K == 3 and seen["params"].h_weight == 1.5 and seen["kwargs"]["drc_rounds"] == 2
+
+
+def test_how_margin_drawings_are_held_is_a_flag_and_a_setting(tmp_path, monkeypatch):
+    """--margin-drawings, and the setting margin_drawings, say how the Margin drawings are held as board edge (``geom.margin``)."""
+    from tests.conftest import demo_board
+    from weaveengine.io.dsn import read_dsn, write_dsn
+    dsn = str(tmp_path / "b.dsn")
+    write_dsn(demo_board(), dsn)
+    seen = []
+
+    def fake(board, params=None, options=None, **kwargs):
+        seen.append(board.margin_edge)
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cli, "route_board", fake)
+    cli.main([dsn, "--quiet", "--workers", "1"])
+    cli.main([dsn, "--quiet", "--workers", "1", "--margin-drawings", "edge"])
+    cli.main([dsn, "--quiet", "--workers", "1", "--margin-drawings", "off"])
+    assert seen == ["added", "edge", "off"]
+    for mode in ("added", "edge", "off"):
+        design = read_dsn(dsn)
+        Settings(margin_drawings=mode).apply_rules(design, dsn)
+        assert design.board.margin_edge == mode

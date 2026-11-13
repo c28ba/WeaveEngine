@@ -7,10 +7,9 @@ the drill of every hole (so the hole clearance), what a rule area forbids
 (one that forbids neither tracks nor vias, only parts or pours, is written as
 a plain keepout all the same), and the board's own minimums.
 (Drawings on the Margin layer, which KiCad's check holds to the edge
-clearance, are not taken as edge: boards draw there what is not an edge,
-closer to their own pads than that, and taken as edge those pads could not be
-reached. Only the vias and traces that join pads to planes keep clear of
-them, being optional: ``Board.margin``.) When the board
+clearance: ``Board.margin``. Boards draw there closer to their own pads than
+that, so they are held as edge with a way out of each such pad,
+``geom.margin``.) When the board
 (``.kicad_pcb``) and project (``.kicad_pro``) of the same name lie beside the
 DSN, they are read for these.
 

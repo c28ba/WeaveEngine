@@ -13,6 +13,8 @@ import math
 import shapely
 from shapely.geometry import LineString, Point, Polygon
 
+from weaveengine.geom.margin import edge as margin_edge
+
 CELL = 1.0  # mm: the grid round pads are found in
 SLACK = 1e-4  # mm: below what the session can hold (its unit is commonly 0.1 micron), and a hundredth of the margin
 
@@ -42,8 +44,7 @@ class Copper:
                     self.round.setdefault(layer, {}).setdefault((math.floor(x / CELL), math.floor(y / CELL)), []).append((x, y))
             for obs in board.obstacles_on(layer):
                 items.append([obs.shape, obs.net_id if obs.net_id >= 0 else None, 0.0, rules.apart(obs.clearance)])
-            outline = board.outline
-            items.append([shapely.boundary(outline), None, 0.0, edge])
+            items.append([margin_edge(board), None, 0.0, edge])  # (the edge, and the Margin drawings if held as edge)
             self.items[layer] = items
         for wire, line in result.polylines.items():
             net, layer = result.wire_net[wire], result.wire_layer.get(wire, 0)

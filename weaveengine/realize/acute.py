@@ -32,6 +32,7 @@ from shapely.geometry import LineString, Point, Polygon
 from shapely.geometry.polygon import orient
 
 from weaveengine.board import Board
+from weaveengine.geom.margin import edge as margin_edge
 
 LEAST = 90.0        # degrees: the least angle copper of one net may meet at (``Options.least_angle``)
 REACH = 0.02        # mm along the outline either side of a corner at which its angle is read
@@ -352,7 +353,7 @@ class _Room:
         self.copper_tree = shapely.STRtree([c[0] for c in self.copper]) if self.copper else None
         self.farthest = max((c[2] for c in self.copper), default=rules.clearance)
         self.edge = rules.outline_inset - rules.base_width / 2.0
-        self.boundary, self.outline = board.outline.boundary, board.outline
+        self.boundary, self.outline = margin_edge(board), board.outline  # (the Margin drawings too, if held as edge)
         self.widest = max([rules.trace_width, *rules.net_width.values()])
         self.update()
 

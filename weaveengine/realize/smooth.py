@@ -13,6 +13,7 @@ import shapely
 from shapely.geometry import LineString, Polygon
 
 from weaveengine.board import Board
+from weaveengine.geom.margin import edge as margin_edge
 
 MIN_TURN = math.radians(12.0)   # corners gentler than this are left alone
 ARC_STEP = math.radians(6.0)    # an arc is drawn as a polyline turning this much per segment
@@ -68,7 +69,7 @@ def smooth(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_n
     farthest = max((c[2] for c in copper), default=rules.clearance)
     widest = max([rules.trace_width, *rules.net_width.values(), *rules.net_full.values()])
     edge = rules.outline_inset - rules.base_width / 2.0
-    boundary = board.outline.boundary  # the edge and its cutouts
+    boundary = margin_edge(board)  # the edge and its cutouts (and the Margin drawings, if held as edge)
     rounded = kept = 0
     out: dict[int, list] = {}
 

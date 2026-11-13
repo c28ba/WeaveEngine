@@ -180,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="traces on LAYER cost FACTOR times their length (1 or more), so it is used only where it must be: "
                          "a layer that also carries a plane, say (In1.Cu:5); once per layer")
     ap.add_argument("--ignore-keepouts", action="store_true", help="drop the keepout areas of the DSN")
+    ap.add_argument("--margin-drawings", choices=("added", "edge", "off"), default="added",
+                    help="drawings on KiCad's Margin layer, which its check holds copper to the edge clearance from: kept clear "
+                         "of by vias, teardrops and rounded corners, traces crossing them as they must (added, the default); "
+                         "board edge to everything, a pad within it left only straight away from the drawing (edge); or "
+                         "not (off)")
     ap.add_argument("--margin", type=float, default=0.01, metavar="MM",
                     help="extra clearance to route with, so nothing sits exactly on a limit (default 0.01)")
     ap.add_argument("--workers", type=int, metavar="N", help="processes to use (default: all cores; 1 = no parallelism)")
@@ -268,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.pour_min_width > 0:
         design.board.pour_override = args.pour_min_width
         print(f"pour minimum width {args.pour_min_width:g} mm, set with --pour-min-width (the zones' own are not used)")
+    design.board.margin_edge = args.margin_drawings
     note = skip_nets(design, args.skip_net)
     if note:
         print(note)
@@ -361,6 +367,9 @@ def main(argv: list[str] | None = None) -> int:
     if "acute" in stats:
         print(f"  acute meetings of one net's copper: {sum(stats['acute'].values())} ("
               + ", ".join(f"{kind} {n}" for kind, n in stats["acute"].items()) + f"); {stats['blunted']} traces redrawn for them")
+    if stats.get("margin_ends"):
+        print(f"  trace ends on pads within the edge clearance of a Margin drawing: {stats['margin_ends']}, "
+              f"{stats['margin_trimmed']} of them stopped inside the pad clear of it (KiCad reports the rest, and the pads)")
     if stats["buried_pads"]:
         print(f"  {unreachable_note(stats['buried_pads'], result.board)}")
     found = estimate_pours(result)

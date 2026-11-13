@@ -7,6 +7,7 @@ from shapely.geometry import LinearRing, MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 from weaveengine.board import EPS, Board
+from weaveengine.geom.margin import keep_out
 
 WALL = -1
 MITRE_LIMIT = 1.1
@@ -39,6 +40,9 @@ def preprocess(board: Board, layer: int = 0, max_segment: float = 2.0) -> FreeSp
     inflated += [_inflate(o.shape, delta + rules.apart(o.clearance) - rules.clearance) for o in board.obstacles_on(layer)]
 
     region = board.outline.buffer(-rules.outline_inset, join_style="mitre")
+    edge = keep_out(board, layer)  # (the Margin drawings, held as edge but for each pad's way out)
+    if edge is not None:
+        region = region.difference(edge)
     free = region.difference(unary_union(inflated)) if inflated else region
     free = shapely.set_precision(free, EPS)
     # Long walls get intermediate vertices (still on the obstacle, so every

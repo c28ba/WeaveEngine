@@ -12,6 +12,7 @@ import numpy as np
 import shapely
 
 from weaveengine.board import Board
+from weaveengine.geom.margin import keep_out
 
 SAMPLES = 17   # points tried along each pad edge
 SLACK = 1e-4   # mm: a point on the ring is at the required distance to within rounding
@@ -51,6 +52,13 @@ def exit_windows(board: Board, layer: int, pmap) -> tuple[dict[int, tuple[float,
             continue
         if lines[i].distance(shape) < reach[i] + more - SLACK:
             legal[i] = False
+    # Drawings on the Margin layer held as edge: a stub may not cross the edge clearance of one but on
+    # its pad's way out (``geom.margin``), so a pad within it is left only straight away from the drawing.
+    keep = keep_out(board, layer)
+    if keep is not None:
+        keep = keep.buffer(-SLACK)
+        shapely.prepare(keep)
+        legal &= ~shapely.intersects(keep, lines)
     windows: dict[int, tuple[float, float]] = {}
     dead: list[int] = []
     for n, e in enumerate(edges):

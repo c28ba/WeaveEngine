@@ -141,6 +141,18 @@ Single net class in v1: trace width `t`, spacing `s`.
 4. **Terminal ownership.** For each pad, record which segments of the (merged) obstacle boundary lie on that pad's own inflated boundary. A wire of net N may start or end only through boundary segments owned by a pad of net N. All other boundary segments are walls for N.
 5. **Same-net rule:** a pad of a wire's own net is that net's copper. The wire may end on it, and it may run into it and go on from any of its edges (section 11, "Its net's copper"). Until then (v1) it could only end on one, and went round every other.
 
+### 5.1 Drawings on the Margin layer as board edge (1.1; branch `margin-edge2`, `geom/margin.py`)
+
+KiCad's check holds copper to the edge clearance from every drawing on the Margin layer, as from the outline. A DSN does not carry them; they are read from the `.kicad_pcb` (`Board.margin`, lines). Boards draw there nearer their own pads than that: Solo's shield-can outlines run 0.07 to 0.4 mm from rows of capacitor pads, hackrf-lna915's line runs 0.17 mm from C1 and through the pins of a DFN. KiCad flags those pads in the unrouted board (Solo A 43 pad items, lna915 20), and every track that touches one.
+
+*Measured first* (KiCad DRC of main's routing, local): copper_edge_clearance at Margin drawings, solo-a 199, solo-c 199, lna915 9. By what the track is: most are **teardrops** (each written as a fan of 10 to 15 short tracks, every one an error) at pads within the edge clearance (solo-a 100) and at the 4 to 6 vias placed within it (71); the rest traces running along a drawing or crossing it (22), and the vias themselves.
+
+*Tried before (2026-11, branch `margin-edge`):* the drawings as obstacles with a disc carved round each pad. The discs are where the errors were: a generous one removed none, a tight one lost connections.
+
+*The rule.* In the free space (section 5, step 2) the drawings are edge: a base-width centreline keeps `edge_clearance + t/2` from them (`keep_out`). Each pad within that and a trace width keeps one **way out**: its shadow cast straight away from the nearest point of the drawing (both ways across a drawing through its anchor), long enough to clear it (`ways_out`). The pad's exit windows (13.1, step 4, `geom/exits.py`) admit only stubs that stay off the rest of the band, so a trace leaves such a pad only away from the drawing: one track within the edge clearance, not a run along it. Where the pad reaches out of the band, the trace's end is moved back from the anchor to the first point inside the pad where the trace is clear (`trim`; KiCad joins a track to the pad its end is in), and there is no error at all (lna915's C1, the synthetic test). A pad whose way out is shut by other copper (the DFN's pins, whose part lies away from the line) gets room all round instead (the pad grown by the edge clearance and a trace width): taking it away left lna915's U1-3 and U1-4 unreachable. Vias keep the edge clearance from the drawings every way (`plan.path.Legal`), and teardrops, rounded corners, tapers, blunted meetings and arcs (`margin.edge`) keep it as from the outline, whole, so there is no teardrop at a pad within it. The design-rule check (13.2) counts a trace off the ways out as an outline violation.
+
+A setting, `margin_as_edge` (on), and `--no-margin-edge`.
+
 ---
 
 ## 6. The planar map
