@@ -61,7 +61,7 @@ TRIES = 8          # joins checked against the estimate for one group, cheapest 
 SAMPLES = 12       # places in a cut-off piece a via (a jumper's, or a bridge's start) is tried at
 KEPT = 6           # joins of each kind to each group kept from one place, the cheapest, ending ``APART``
 APART = 1.0        # mm
-STARVED = 2.0      # mm round a join within which a pad's spokes may change (``_starved``)
+STARVED = 4.0      # mm round a join within which a pad's spokes may change, or fill round it that met nothing else (``_starved``)
 INSET = 0.03       # mm a place is taken inside a region where copper may stand (its edge is drawn with polygons: the check is exact)
 
 
@@ -412,7 +412,7 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
     near = shapely.union_all([c for c, _ in copper] + [p.shape for p in board.pads if p.pad_id in way.relief])
     joins = traces + [(net, layer, pts) for layer, pts in way.traces]
     after = estimates.classify(board, mine, new_wires)
-    if _starved(board, after, new_wires, joins, net, near, now) > _starved(work, now, wires, traces, net, near, after):
+    if _starved(board, after, new_wires, joins, net, near) > _starved(work, now, wires, traces, net, near):
         return None
     changed = {net: _reach(board, after, new_wires, net)}
     for other in sorted(others):
@@ -420,7 +420,7 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
         new = estimates.classify(board, _of(board, theirs, {other}), new_wires)
         if sum(pour.islands for pour in new) > sum(pour.islands for pour in old):
             return None
-        if _starved(board, new, new_wires, joins, other, near, old) > _starved(work, old, wires, traces, other, near, new):
+        if _starved(board, new, new_wires, joins, other, near) > _starved(work, old, wires, traces, other, near):
             return None
         if other in reach:
             changed[other] = _reach(board, new, new_wires, other)
@@ -429,23 +429,16 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
     return board, {**fill_of, **mine, **theirs}, new_wires, {**reach, **changed}
 
 
-def _starved(board: Board, pours: list, wires: list, traces: list, net: int, near, also=()) -> int:
+def _starved(board: Board, pours: list, wires: list, traces: list, net: int, near) -> int:
     """How many (pad, pour) of ``net`` KiCad's check finds starved of thermal spokes (``pours.starved``) in ``pours``,
-    of those a change at ``near`` (a shape) may touch: pads within ``STARVED`` of it, or in a piece that meets it, in
-    ``pours`` or in ``also`` (the same pours another way, so that both count the same pads)."""
+    of those a change at ``near`` (a shape) may touch: pads within ``STARVED`` of it (their spokes, or fill round them
+    that met nothing else, ``pours.LONE``)."""
     from weaveengine import pours as estimates
     mine = [(layer, pts) for other, layer, pts in traces if other == net]
     by_id = {p.pad_id: p for p in board.pads if p.net_id == net}
-    pads = [p for p in by_id.values() if not p.is_via]
-    count = 0
-    for pour in pours:
-        if pour.net != net:
-            continue
-        ids = {i for x in [*pour.pieces, *(y for twin in also if twin.layer == pour.layer and twin.outline is pour.outline
-                                          for y in twin.pieces)] if x.shape.intersects(near) for i in x.pad_ids}
-        count += sum(estimates.starved(board, pour, p, wires, mine, by_id) for p in pads
-                     if p.on(pour.layer) and (p.pad_id in ids or p.shape.distance(near) < STARVED))
-    return count
+    pads = [p for p in by_id.values() if not p.is_via and p.shape.distance(near) < STARVED]
+    return sum(estimates.starved(board, pour, p, wires, mine, by_id) for pour in pours if pour.net == net
+               for p in pads if p.on(pour.layer) and p.shape.intersects(pour.outline))
 
 
 def _reach_of(board: Board, net: int) -> float:

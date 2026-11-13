@@ -380,6 +380,7 @@ def _prune(fill, least: float):
 GAP, SPOKE = 0.5, 0.5  # mm: KiCad's default thermal relief gap and spoke width
 ERROR = 0.005          # mm: KiCad's default maximum error, which its spokes reach past the gap
 EPSILON = 0.001        # mm: what KiCad's fill leaves of the least width, so that copper just that wide stays
+LONE = 3.0            # mm round a pad within which fill that meets nothing but the pad is looked for (``starved``)
 HELD = 0.65           # of a spoke beyond its pad in a piece of fill: it joins the pad to that piece (fills cut some spokes short)
 
 
@@ -411,23 +412,27 @@ def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = 
     if pad.net_id != pour.net or pad.is_via or not pad.on(pour.layer) or joined(pad, zone) != "thermal":
         return False
     pads = pads if pads is not None else {p.pad_id: p for p in board.pads}
+    # (fill that meets nothing else is small, round its pad: what reaches out of ``LONE`` round the pad meets more)
+    near = shapely.box(*pad.shape.buffer(LONE).bounds)
+    mine = [shape_ for shape_, net, at in wires if net == pour.net and at == pour.layer and shape_.intersects(near)]
     real = alone = 0
-    cut: dict = {}  # piece -> its stretches
+    cut: dict = {}  # piece -> its stretches round the pad
     for shape, _ in spokes(pad, zone, board.pour_width(pour.net, pour.layer)):
         out = shape.difference(pad.shape)
         if out.area <= 0:
             continue
-        piece = next((x for x in pour.pieces if x.shape.intersection(out).area >= HELD * out.area), None)
+        piece = next((x for x in pour.pieces if x.shape.intersects(out) and x.shape.intersection(out).area >= HELD * out.area), None)
         if piece is None:
             continue
         if id(piece) not in cut:
-            rest = piece.shape.difference(pad.shape)
+            rest = piece.shape.intersection(near).difference(pad.shape)
             cut[id(piece)] = [g for g in getattr(rest, "geoms", [rest]) if g.area > 0]
         stretch = max(cut[id(piece)], key=lambda g: g.intersection(out).area, default=None)
         if stretch is None:
             continue
-        lone = not any(i != pad.pad_id and i in pads and stretch.intersects(pads[i].shape) for i in piece.pad_ids) and not any(
-            net == pour.net and at == pour.layer and stretch.intersects(shape_) for shape_, net, at in wires)
+        lone = not stretch.intersects(near.exterior) and not any(
+            i != pad.pad_id and i in pads and stretch.intersects(pads[i].shape) for i in piece.pad_ids) and not any(
+            stretch.intersects(shape_) for shape_ in mine)
         alone += lone
         real += not lone
     if real == alone == 0 or real >= board.min_spokes:
