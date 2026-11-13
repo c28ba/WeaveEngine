@@ -191,6 +191,15 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             return False
         return within.contains(stub) and clear(stub, net, layer, rules.clearance)
 
+    seen: dict = {}  # id of a via added -> (it, its centre, its net)
+
+    def placed() -> list:
+        """(centre, net) of each via added (its centre is measured once)."""
+        for v in out.vias:
+            if seen.get(id(v), (None,))[0] is not v:
+                seen[id(v)] = (v, v.centre, v.net_id)
+        return [seen[id(v)][1:] for v in out.vias]
+
     def via_ok(net: int, x: float, y: float) -> bool:
         """Whether a via of ``net`` may stand at (x, y) among everything there and the vias added."""
         if not inside_via.contains(Point(x, y)):
@@ -201,7 +210,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         if no_via is not None and disc.intersects(no_via):
             return False
         # (two vias of the net may touch, but their holes keep ``HOLES`` apart: KiCad's hole to hole)
-        if any(math.dist((x, y), v.centre) < max(2 * r + (0.0 if v.net_id == net else keep), rules.via_drill + HOLES) - 1e-9 for v in out.vias):
+        if any(math.dist((x, y), at) < max(2 * r + (0.0 if other == net else keep), rules.via_drill + HOLES) - 1e-9 for at, other in placed()):
             return False
         return all(clear(disc, net, i, keep, drilled=True) for i in range(every))
 
@@ -631,6 +640,12 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
         kept.sort(key=lambda j: j.cost)
         del kept[KEPT:]
 
+    def dead(kind: str, group, cost: float) -> bool:
+        """Whether ``offer`` would keep nothing of a join of ``kind`` to ``group`` that costs ``cost`` or more (so it
+        need not be checked)."""
+        kept = best.get((kind, group))
+        return kept is not None and len(kept) >= KEPT and cost >= kept[-1].cost
+
     for (at, group), aim in into.items():  # into another group's fill on this layer: a little past its edge, where the ray stays clear
         if at != layer:
             continue
@@ -641,17 +656,21 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
                 i = min(got[0] + int(round(SURE / STEP)), stop[k] - 1)
                 i = i if hit[k, i] else got[0]
                 x, y, length = float(xs[k, i]), float(ys[k, i]), float(beyond[k, i])
-                if trace_ok(net, layer, start, (x, y), pad):
+                if not dead(kind, group, base + length + ROOM * s.trace_room(length)) and trace_ok(net, layer, start, (x, y), pad):
                     offer(Join(base + length + ROOM * s.trace_room(length) + UNSURE * max(0.0, SURE - _depth(aim, x, y)),
                                kind, vias=list(first), traces=[(layer, [start, (x, y)])]), group)
     # To a via that lands in the main fill on another layer: beside the pad, or clear of the jumper's first via.
     vhit = shapely.contains_xy(vland, xs, ys) & (beyond >= (s.r + GAP if pad is not None else 2.0 * s.r + HOLES))
     skip = [layer] + ([at for at, _ in land if pad.on(at)] if pad is not None else [])
     masks = {key: shapely.contains_xy(g, xs, ys) & vhit for key, g in land.items() if key[0] not in skip}
+    least = np.minimum.accumulate(beyond[:, ::-1], axis=1)[:, ::-1]  # (the least length of a trace from here on, along each ray)
+    vkind = "via" if via_start is None else kind
     for k in range(len(a)):
         for key, mask in masks.items():  # (along this ray, the first good place that lands in each group, and others further)
             last = -math.inf
             for i in np.nonzero(mask[k, :stop[k]])[0]:
+                if dead(vkind, key[1], base + least[k, i] + ROOM * s.trace_room(least[k, i]) + VIA + ROOM * s.via_room):
+                    break  # (nothing further along it can be kept)
                 if t[i] - last < APART:
                     continue
                 x, y = float(xs[k, i]), float(ys[k, i])
@@ -659,14 +678,15 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
                     continue
                 last = t[i]
                 length = float(beyond[k, i])
-                offer(Join(base + length + ROOM * s.trace_room(length) + via_cost(x, y, key), "via" if via_start is None else kind,
+                offer(Join(base + length + ROOM * s.trace_room(length) + via_cost(x, y, key), vkind,
                            vias=first + [(x, y)], traces=[(layer, [start, (x, y)])]), key[1])
     for thing, (x, y), group in ends:  # to a pad or via of another group
         if not thing.on(layer):
             continue
         length = pad.shape.distance(Point(x, y)) if pad is not None else math.dist(start, (x, y))
-        if 1e-9 < length <= FAR and trace_ok(net, layer, start, (x, y), pad):
-            offer(Join(base + length + ROOM * s.trace_room(length), kind + " to pad" if via_start is None else kind,
+        tkind = kind + " to pad" if via_start is None else kind
+        if 1e-9 < length <= FAR and not dead(tkind, group, base + length + ROOM * s.trace_room(length))                 and trace_ok(net, layer, start, (x, y), pad):
+            offer(Join(base + length + ROOM * s.trace_room(length), tkind,
                        vias=list(first), traces=[(layer, [start, (x, y)])]), group)
     return [join for kept in best.values() for join in kept]
 
