@@ -96,8 +96,10 @@ def by_cause(ctx, result, pulled: dict) -> dict:
     drawn = set(result.polylines)
     used = {p for w in drawn if w in ctx.conns for p in (ctx.conns[w].src, ctx.conns[w].dst)}
     board = ctx.board_with_vias()
-    # (In the order the router takes them out, ``router._taut``: what it keeps
-    # should show no slack here, but for the bends round own vias it keeps for the pours.)
+    # (In the order the router takes them out, ``router._taut``: its traces
+    # show no slack by the first three, but for a layer that kept its traces
+    # because the check found more on the new ones, and the bends round own
+    # vias kept for the pours.)
     kinds = ("redundant", "asleep", "own via", "unused via", "skeleton")
     out = {kind: [0, 0.0, 0.0, 0, 0] for kind in kinds}
     for layer in ctx.layers:
@@ -135,7 +137,9 @@ def by_cause(ctx, result, pulled: dict) -> dict:
                     row[1] += d
                     row[2] = max(row[2], d)
             row[3] += len(drc.check(board, {w: lines[w] for w in mine if w in lines}, wire_net, layer.index))
-            before = after
+            # (Each kind against the trace as drawn, or as the kinds before left it if that is shorter:
+            # what the router has pulled out itself is no slack, and nothing is counted twice.)
+            before = {w: min(before[w], after.get(w, before[w])) for w in mine}
     return out
 
 

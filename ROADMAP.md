@@ -102,8 +102,12 @@ To do, in order:
      `router._over_own_vias` keeps each straightened trace only where the pour
      estimate cuts off no new pad and fan-out still finds every via it did;
      the traces near any new trouble get their bends back. lumen-blade13:
-     own-via bends 7 to 1, 8.7 mm shorter, 5 pads cut off as before; a user's
-     board: 9 to 4.
+     own-via bends 7 to 1 (of 8.7 mm of such slack in 6 traces, 4.5 mm is
+     left, in the one that keeps its bend), 5 pads cut off as before; a
+     user's board: 9 to 2, 78 bends with nothing near them to 63, on the
+     routing main gives it. (`bench/slack.py` now takes each cause's slack
+     from the trace as drawn: it used to show what the router had already
+     pulled out.)
 2. [x] Pours that stay whole by default (done above; what is left is below).
 3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
