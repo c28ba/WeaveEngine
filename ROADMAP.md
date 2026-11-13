@@ -81,11 +81,19 @@ To do, in order:
      others. Cause: `sites.delete` filled the hole's polygon with the first
      ears it found; where a wire passes the site on both sides, that fill had
      an edge the wire would cross twice, so the site was refused and stayed.
-     Now the fill has no such edge (every refusal in the random-operations
-     test now deletes, the invariant holding), and the last pull also takes
-     out the sleeping sites it can (`router._taut`). Not reproduced on
-     Windows: the board routes otherwise there; 4 sleeping sites were left on
-     it, now none.
+     Now the last pull takes out the sleeping sites (`router._taut`), filling
+     so that there is no such edge (`sites.delete`'s `both_sides`: every
+     refusal in the random-operations test then deletes, the invariant
+     holding), and puts the map back. Only the last pull: with that fill
+     while routing too (`taut2` at b3b120d), every site taken out where it
+     used to stay left another map, and the routing went another way from
+     there on. No better: the sweep of tiers 1 to 3 routed fewer on solo-a
+     (132 to 127), solo-c (121 to 120) and lumen-mobo (332 to 331), more on
+     olimex-poe-c (201 to 206) and upduino (122 to 123), and left 880 to 900
+     open in KiCad. With it in the last pull alone the routing is main's
+     (solo-a 132 again, the same vias; kicad-stickhub the same file, byte for
+     byte). Not reproduced on Windows: the board routes otherwise there; of
+     its 4 sleeping sites none holds a trace.
    - Traces bent through vias of their own net that they pass but do not end
      on (lumen-blade13, corners up to 2.3 mm from foreign copper). Letting
      every such trace pass straight cost the pours room (tier 1: lumen-blade13
@@ -130,8 +138,9 @@ new example (a board and where on it); then it moves up to be fixed.
   could run along the clearance edge (branches `taut`, `taut2`): relaxation
   does not go round a sleeping via site unless a wire of another net there
   needs it to; the traces are pulled once more without the wires that are
-  not drawn and the sleeping sites that can be deleted, which a wire passing
-  on both sides no longer stops (`router._taut`); and a trace is drawn
+  not drawn and the sleeping sites that can be deleted, which in that pull
+  a wire passing on both sides does not stop (`router._taut`; while routing
+  it does, as before: the routing is not changed by it); and a trace is drawn
   straight over a via of its own net where the pours keep their room
   (`router._over_own_vias`; design 13.1). `bench/slack.py` checks a board for
   slack left in drawn traces. Seen too, not yet looked into: a trace bending

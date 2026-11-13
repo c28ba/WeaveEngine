@@ -629,19 +629,19 @@ def test_a_trace_goes_round_a_via_site_only_where_it_is_copper(off, net):
         assert realize(state, with_via, own_vias=True)[0][1] == planned
 
 
-def test_a_site_a_wire_passes_on_both_sides_is_deleted(monkeypatch):
+def test_a_site_a_wire_passes_on_both_sides_is_deleted():
     """ROADMAP 1.1, traces pulled fully taut: a sleeping site that a wire
     passes on both sides (a U-turn round something of another net beside the
-    site) can be taken out. Its polygon is filled so that no wire crosses a new
-    edge twice; the first ears found, as before, would have such an edge, and
-    the site would stay, holding the U-turn round nothing."""
+    site) can be taken out (``both_sides``, as the last pull asks). Its polygon
+    is filled so that no wire crosses a new edge twice; the first ears found,
+    as while routing, have such an edge, and the site stays."""
     board = grid_board(6, 10.0, seed=3)
     pmap = planar_map.build(board)
     state = TopoState(pmap)
     rng = random.Random(12)
     keep = sites.keep_off(board.rules)
     pads = sorted(pmap.pad_edges)
-    live, made, wire, fill = {}, [], 0, sites._fill
+    live, made, wire = {}, [], 0
     for _ in range(2000):
         roll = rng.random()
         if roll < 0.40 or not live:
@@ -663,14 +663,12 @@ def test_a_site_a_wire_passes_on_both_sides_is_deleted(monkeypatch):
             if not asleep:
                 continue
             site = rng.choice(asleep)
-            monkeypatch.setattr(sites, "_fill", lambda pmap, ring, allowed=None: fill(pmap, ring))  # the first ears found
-            first = sites.delete(pmap, state, site)
-            monkeypatch.setattr(sites, "_fill", fill)
+            first = sites.delete(pmap, state, site)  # the first ears found
             if not first:
                 around = sites._ring(pmap, site)[2]  # the triangles round the hole
                 assert any(sum(steps[i][1] in around and steps[i - 1][1] not in around for i in range(1, len(steps))) > 1
                            for steps in state.wire_path.values())  # a wire passes the site twice
-                assert sites.delete(pmap, state, site) and site.pad not in pmap.sites
+                assert sites.delete(pmap, state, site, both_sides=True) and site.pad not in pmap.sites
                 assert state.invariant_errors() == [] and map_errors(pmap) == []
                 copy_of = planar_map.build(board)
                 sites.replay(copy_of, sites.log(pmap))  # (filled the same way again)

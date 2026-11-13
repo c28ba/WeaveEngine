@@ -932,7 +932,7 @@ def _delete_map(pmap: PlanarMap, site: Site, plan=None) -> None:
     log(pmap).append(entry)
 
 
-def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
+def delete(pmap: PlanarMap, state: TopoState, site: Site, both_sides: bool = False) -> bool:
     """Takes a sleeping site out of the map, wherever it is and whenever it was
     made. The triangles round the hole form a polygon; it is filled with
     triangles again, without the hole. Every wire that crossed the polygon
@@ -941,10 +941,18 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
     polygon's boundary. With the hole gone, which way round it a wire went no
     longer matters.
 
-    The polygon is filled so that no wire crosses one of the new edges twice
-    (a wire that passes the hole on both sides, round something of another
-    net between: a U-turn round it). Returns False, changing nothing, if the
-    site is a via, has a trace on it, or the polygon cannot be filled so.
+    No wire may cross one of the new edges twice, as one that passes the hole
+    on both sides (round something of another net between: a U-turn round it)
+    does where the polygon is filled with the first ears found: such a site
+    stays. With ``both_sides`` the polygon is filled so that there is no such
+    edge. Only the last pull asks for that (``router._taut``, which puts the
+    map back afterwards): while routing, a site taken out where it would have
+    stayed leaves another map behind it, and the routing goes another way
+    from there on, no better for it (the sweep of 2026-11: 3 boards routed
+    fewer connections, 7 in all, and 2 more, 6 in all).
+
+    Returns False, changing nothing, if the site is a via, has a trace on it,
+    or the polygon cannot be filled so.
     """
     if site.active or any(state.gate_order[e] for e in site.hole):
         return False
@@ -984,7 +992,7 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
         row = [run[0] for run in across(i, j)]
         return len(set(row)) == len(row) and len(row) < 15  # (no wire twice; and slots for them all)
 
-    plan = _plan_delete(pmap, site, allowed, found)
+    plan = _plan_delete(pmap, site, allowed if both_sides else None, found)
     if plan is None:
         return False
     _, _, _, triangles, side, diagonals, slot = plan

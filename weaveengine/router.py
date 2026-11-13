@@ -284,8 +284,8 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
     """The traces pulled once more as they will be drawn (13.1): a trace is
     held away only from what is copper to it. So without the wires that will
     not be drawn (``loops``, from ``_redundant``) and without the sleeping via
-    sites that can be taken out now (``sites.delete``: a site that could not
-    be when its via was taken out may be by now); a layer keeps those traces
+    sites that can be taken out now (``sites.delete``, here also those a wire
+    passes on both sides, which stay in the map while routing); a layer keeps those traces
     only if the check finds no more on it than before. Returns them, the
     violations, and the traces as they would be if also not bent round a via
     of their own net that they pass (``relax``'s ``own_vias``), where they
@@ -307,7 +307,7 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
         snap, mark, moved = state.snapshot(), (len(sites.log(pmap)), len(sites.journal(state))), pmap.__dict__.get("_moved_wires")
         for w in gone:
             state.remove(w)
-        deleted = sum(sites.delete(pmap, state, site) for site in asleep)
+        deleted = sum(sites.delete(pmap, state, site, both_sides=True) for site in asleep)
         before = [v for v in violations if v.layer == layer.index and not loops.intersection(v.wires) and not skeleton(v)]
         if gone or deleted:
             new, found, _ = realize(state, board)

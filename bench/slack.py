@@ -113,13 +113,13 @@ def by_cause(ctx, result, pulled: dict) -> dict:
                 row[4] += sum(s.active for s in pmap.sites.values())
             elif kind == "asleep":
                 for site in [s for s in pmap.sites.values() if not s.active]:
-                    row[4] += sites.delete(pmap, state, site)
+                    row[4] += sites.delete(pmap, state, site, both_sides=True)
             elif kind == "unused via":
                 for site in [s for s in pmap.sites.values() if s.active and s.pad not in used]:
                     for w in {w for e in site.hole for w in state.gate_order[e]}:
                         state.remove(w)
                     sites.set_net(pmap, state, site, -1)
-                    row[4] += sites.delete(pmap, state, site)
+                    row[4] += sites.delete(pmap, state, site, both_sides=True)
             else:
                 for w in list(state.wire_path):
                     c = ctx.conns.get(w)
