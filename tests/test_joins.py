@@ -102,3 +102,19 @@ def test_a_starved_relief_is_changed_only_when_asked():
     assert list(done.reliefs) == [10] and done.reliefs[10] in ({"zone_connect": "solid"}, {"spoke_angle": 45.0})
     plain = join(board, {}, {}, {})
     assert not plain.reliefs and "relief" not in plain.kinds
+
+
+def test_an_island_its_zone_keeps_is_stitched_and_a_via_its_import_would_give_another_net_is_not_made():
+    """Ground on both layers; a ring of trace on the back walls off a piece with no pad. Its zone keeps islands (read
+    from the .kicad_pcb), so KiCad would report it: a via in it joins it. Where the board's saved fills put another
+    net's copper there and none of ground, KiCad's import would give that via the other net: none is made."""
+    from weaveengine.board import Zone
+    board = poured(0, 1)
+    board.pour_zone[(GND, 0)] = board.pour_zone[(GND, 1)] = Zone(islands=1)
+    lines, nets, layers = {0: ring(20, 15, 3.0)}, {0: SIG}, {0: 1}
+    done = join(board, lines, nets, layers)
+    assert done.kinds == {"stitch": 1} and math.dist(done.vias[0].centre, (20, 15)) < 3.0
+    board.saved_fills = [(VCC, 0, box(15, 10, 25, 20))]  # (another net's old fill where the via would go, on the front)
+    assert join(board, lines, nets, layers).kinds == {}
+    board.saved_fills.append((GND, 1, box(15, 10, 25, 20)))  # (and ground's own there too: the import keeps it ground)
+    assert join(board, lines, nets, layers).kinds == {"stitch": 1}

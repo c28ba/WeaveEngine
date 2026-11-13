@@ -55,6 +55,8 @@ IN_PAD = 1.0       # more, for a via in a pad (solder runs down it)
 RELIEF = 0.5       # a pad's thermal relief changed (no copper, but not as the zone asks)
 NARROWED = 1.0     # a pad's relief gap and spokes narrowed
 ROOM = 0.5         # each mm2 of a layer its copper takes, with the clearance round it
+SQUARE = 1.0       # a trace that leaves a pad (not a round one) at a slant to its side: an acute meeting (``realize.acute``)
+TURN = 0.5         # degrees off square that is square
 SURE = 0.25        # mm: an end this far into the fill (past a via's radius, or past where a trace may end) is sure to be reached
 UNSURE = 4.0       # each mm an end falls short of that
 TRIES = 8          # joins checked against the estimate for one group, cheapest first
@@ -129,8 +131,6 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     wires = estimates.copper_of(board, lines, wire_net, wire_layer, teardrops, widths)
     fill_of, _ = estimates.fills(work, lines, wire_net, wire_layer, wires=wires)
     reach = {net: _reach(work, estimates.classify(work, _of(work, fill_of, {net}), wires), wires, net) for net in nets}
-    if not any(lost for _, lost, _ in reach.values()):
-        return out
     r = rules.via_diameter / 2.0
     keep = rules.apart(rules.via_clearance)  # what a via keeps from foreign copper
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance)
@@ -162,6 +162,11 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     through = {p.shape for p in board.pads if not p.is_via and (p.layers is None or len(p.layers) == nlayers > 1)}
     through |= {o.shape for o in board.obstacles if o.via}
     trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
+    saved: list[list] = [[] for _ in range(every)]  # (shape, net) of the zones' fills as saved, on each layer
+    for other, at, shape in board.saved_fills:
+        if 0 <= at < every:
+            saved[at].append((shape, other))
+    saved_trees = [shapely.STRtree([s for s, _ in ss]) if ss else None for ss in saved]
     widest = max([keep, rules.clearance] + [t[2] for ts in things for t in ts])
     within = board.outline.buffer(-edge)
 
@@ -213,6 +218,26 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         if any(math.dist((x, y), at) < max(2 * r + (0.0 if other == net else keep), rules.via_drill + HOLES) - 1e-9 for at, other in placed()):
             return False
         return all(clear(disc, net, i, keep, drilled=True) for i in range(every))
+
+    def stays(net: int, way: Join, work: Board) -> bool:
+        """Whether KiCad's import of the session leaves the copper of ``way`` in ``net``: in the board as it comes,
+        with the zones' fills of before the routing still in (``Board.saved_fills``), copper that touches another
+        net's fill there and nothing of its own net (a pad, a via, its fill) is given that net (a via with no trace,
+        in another net's plane)."""
+        half = rules.drawn(net) / 2.0
+        shapes = [(circle_polygon(x, y, r), None) for x, y in way.vias]
+        shapes += [(LineString(pts).buffer(half, quad_segs=4), layer) for layer, pts in way.traces]
+        foreign = False
+        for shape, layer in shapes:
+            for i in range(every) if layer is None else [layer]:
+                if saved_trees[i] is None:
+                    continue
+                for k in saved_trees[i].query(shape, predicate="intersects").tolist():
+                    if saved[i][k][1] == net:
+                        return True
+                    foreign = True
+        return not foreign or any(p.net_id == net and shape.intersects(p.shape) and (layer is None or p.on(layer))
+                                  for shape, layer in shapes for p in work.pads)
 
     def free(net: int, window, grow: float, need: float, layers) -> object:
         """Where the middle of copper of ``net`` reaching ``grow`` round it keeps ``need`` (or what each thing asks, if
@@ -274,6 +299,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         before = _groups(work, reach[net][0], net)
         direct, through = None, []  # the cheapest join that does it; cheaper ones to a plane joined to nothing
         for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
+            if not stays(net, way, work):
+                continue
             done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
             if done is None:
                 continue
@@ -369,6 +396,61 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             else:
                 break
         restore(kept)
+
+    def island(net: int, layer: int, shape) -> None:
+        """Joins ``shape``, an island of ``net``'s pour on ``layer`` that its zone keeps (KiCad reports it), to the
+        net's main group: a via in it or a trace from it (a stitch, a jumper, a trace over a gap), the cheapest the
+        estimate finds does so and splits nothing; none if none does."""
+        work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
+        comp, _, main = reach[net]
+        half = rules.drawn(net) / 2.0
+        now = estimates.classify(work, _of(work, fill_of, {net}), wires)
+        window = shapely.box(*shape.bounds).buffer(FAR + r + 1.0, join_style="mitre")
+        target: dict = {}
+        for pour in now:
+            for x in pour.pieces:
+                if comp.get(estimates.piece_key(pour, x)) == main and x.shape.intersects(window):
+                    key = (pour.layer, main)
+                    target[key] = shapely.union_all([x.shape.intersection(window)] + ([target[key]] if key in target else []))
+        if not target:
+            return
+        tfree = {}
+        for i in range(nlayers):
+            g = free(net, window, half, rules.clearance, [i]).intersection(within.buffer(-half).intersection(window))
+            tfree[i] = g.difference(margin.buffer(half)) if margin is not None else g
+        vfree = free(net, window, r, keep, range(every)).intersection(inside_via.intersection(window))
+        if no_via is not None:
+            vfree = vfree.difference(no_via.buffer(r))
+        if margin is not None:
+            vfree = vfree.difference(margin.buffer(r))
+        land = {key: t.buffer(-(r - LANDING)) for key, t in target.items()}
+        into = {key: t.buffer(-(half + GAP)) for key, t in target.items() if key[0] < nlayers}
+        ways = _candidates(work, net, [], [(layer, shape)], target, land, into, [], tfree, vfree, r, keep, half, nlayers,
+                           False, False, trace_ok, via_ok)
+        spot = shape.representative_point()
+        before = _groups(work, comp, net)
+        for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
+            if not stays(net, way, work):
+                continue
+            done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
+            if done is None or not _coarser(before, _groups(done[0], done[3][net][0], net)):
+                continue
+            after = estimates.classify(done[0], _of(done[0], done[1], {net}), done[2])
+            if any(pour.layer == layer and x.shape.contains(spot) and done[3][net][0].get(estimates.piece_key(pour, x)) == done[3][net][2]
+                   for pour in after for x in pour.pieces):
+                make(net, way, done)
+                return
+
+    # Islands of a pour that its zone keeps, and KiCad reports as isolated copper: joined to the net where that can be.
+    # (Only where the zone is known, from the .kicad_pcb: else they are shown, but KiCad's default removes them.)
+    for net in nets:
+        if state["reach"][net][2] is None:
+            continue
+        lone = [(pour.layer, x.shape) for pour in estimates.classify(state["work"], _of(state["work"], state["fill_of"], {net}),
+                                                                      state["wires"]) if (net, pour.layer) in board.pour_zone
+                for x in pour.pieces if x.kind == "island"]
+        for layer, shape in lone:
+            island(net, layer, shape)
 
     # Pads joined with fewer spokes than KiCad asks (a join may have joined them, through fill that met nothing else):
     # a trace into the fill counts as one.
@@ -657,6 +739,9 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
     x0, y0 = start
     t = np.arange(0.0, FAR + (_extent(pad) if pad is not None else 0.0) + 1e-9, STEP)
     a = 2.0 * np.pi * np.arange(DIRECTIONS) / DIRECTIONS
+    if pad is not None and pad.radius is None:  # (and square off each side of a pad that is not round)
+        a = np.concatenate([a, np.radians(_turn(pad) + 90.0 * np.arange(4)) % (2.0 * np.pi)])
+    aslant = np.array([_aslant(pad, math.degrees(d)) for d in a]) * SQUARE  # (what a trace leaving the pad there costs more)
     xs, ys = x0 + np.outer(np.cos(a), t), y0 + np.outer(np.sin(a), t)
     clear = shapely.contains_xy(free, xs, ys)
     beyond = np.zeros_like(xs)  # (how far each place is beyond the pad: the trace's length that counts)
@@ -698,8 +783,8 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
                 i = min(got[0] + int(round(SURE / STEP)), stop[k] - 1)
                 i = i if hit[k, i] else got[0]
                 x, y, length = float(xs[k, i]), float(ys[k, i]), float(beyond[k, i])
-                if not dead(kind, group, base + length + ROOM * s.trace_room(length)) and trace_ok(net, layer, start, (x, y), pad):
-                    offer(Join(base + length + ROOM * s.trace_room(length) + UNSURE * max(0.0, SURE - _depth(aim, x, y)),
+                if not dead(kind, group, base + aslant[k] + length + ROOM * s.trace_room(length)) and trace_ok(net, layer, start, (x, y), pad):
+                    offer(Join(base + aslant[k] + length + ROOM * s.trace_room(length) + UNSURE * max(0.0, SURE - _depth(aim, x, y)),
                                kind, vias=list(first), traces=[(layer, [start, (x, y)])]), group)
     # To a via that lands in the main fill on another layer: beside the pad, or clear of the jumper's first via.
     vhit = shapely.contains_xy(vland, xs, ys) & (beyond >= (s.r + GAP if pad is not None else 2.0 * s.r + HOLES))
@@ -711,7 +796,7 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
         for key, mask in masks.items():  # (along this ray, the first good place that lands in each group, and others further)
             last = -math.inf
             for i in np.nonzero(mask[k, :stop[k]])[0]:
-                if dead(vkind, key[1], base + least[k, i] + ROOM * s.trace_room(least[k, i]) + VIA + ROOM * s.via_room):
+                if dead(vkind, key[1], base + aslant[k] + least[k, i] + ROOM * s.trace_room(least[k, i]) + VIA + ROOM * s.via_room):
                     break  # (nothing further along it can be kept)
                 if t[i] - last < APART:
                     continue
@@ -720,17 +805,33 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
                     continue
                 last = t[i]
                 length = float(beyond[k, i])
-                offer(Join(base + length + ROOM * s.trace_room(length) + via_cost(x, y, key), vkind,
+                offer(Join(base + aslant[k] + length + ROOM * s.trace_room(length) + via_cost(x, y, key), vkind,
                            vias=first + [(x, y)], traces=[(layer, [start, (x, y)])]), key[1])
     for thing, (x, y), group in ends:  # to a pad or via of another group
         if not thing.on(layer):
             continue
         length = pad.shape.distance(Point(x, y)) if pad is not None else math.dist(start, (x, y))
         tkind = kind + " to pad" if via_start is None else kind
-        if 1e-9 < length <= FAR and not dead(tkind, group, base + length + ROOM * s.trace_room(length))                 and trace_ok(net, layer, start, (x, y), pad):
-            offer(Join(base + length + ROOM * s.trace_room(length), tkind,
+        way = math.degrees(math.atan2(y - start[1], x - start[0]))
+        cost = base + length + ROOM * s.trace_room(length) + SQUARE * (_aslant(pad, way) + _aslant(thing, way + 180.0))
+        if 1e-9 < length <= FAR and not dead(tkind, group, cost) and trace_ok(net, layer, start, (x, y), pad):
+            offer(Join(cost, tkind,
                        vias=list(first), traces=[(layer, [start, (x, y)])]), group)
     return [join for kept in best.values() for join in kept]
+
+
+def _aslant(pad, angle: float) -> bool:
+    """Whether a straight trace leaving ``pad`` (not a round one) at ``angle`` (degrees) meets its side at a slant,
+    which is an acute meeting of the net's copper (``realize.acute``): not square to one of its sides."""
+    if not isinstance(pad, Pad) or pad.radius is not None or pad.is_via:
+        return False
+    off = (angle - _turn(pad)) % 90.0
+    return min(off, 90.0 - off) > TURN
+
+
+def _turn(pad) -> float:
+    from weaveengine.pours import _turn as turn
+    return turn(pad)
 
 
 def _extent(pad) -> float:

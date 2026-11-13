@@ -77,6 +77,7 @@ class KicadBoard:
     courtyards: dict = field(default_factory=dict)                    # footprint reference -> its courtyard
     thickness: list[tuple] = field(default_factory=list)              # (net name, canonical copper layer, outline, min_thickness) of each copper zone
     zones: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, outline, ``Zone``) of each copper zone
+    fills: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, shape) of each zone's fill as saved
     areas: dict = field(default_factory=dict)                         # name -> outline of a named zone or rule area
 
 
@@ -149,6 +150,17 @@ def read_kicad(dsn_path: str, notes: list[str] | None = None) -> KicadBoard | No
         elif kind.startswith("gr_"):
             _drawing(item, _place(0.0, 0.0, 0.0), out, kind)
     return out
+
+
+def _fills(item, out: KicadBoard) -> None:
+    """A copper zone's fill as the board was saved (``filled_polygon``: one outline each, holes cut in)."""
+    net = _child(item, "net_name") or _child(item, "net")
+    name = net[1] if net and len(net) > 1 and isinstance(net[1], str) and not _is_number(net[1]) else ""
+    for polygon in _children(item, "filled_polygon"):
+        layer = _child(polygon, "layer")
+        pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+        if layer and len(layer) > 1 and str(layer[1]).endswith(".Cu") and len(pts) >= 3:
+            out.fills.append((name, layer[1], Polygon(pts).buffer(0)))
 
 
 def _thickness(item, out: KicadBoard) -> None:
@@ -580,6 +592,7 @@ def _rule_area(item, out: KicadBoard) -> None:
     keepout = _child(item, "keepout")
     if keepout is None:
         _zone(item, out)
+        _fills(item, out)
         _thickness(item, out)
         _settings(item, out)
         return  # a copper zone, not a rule area
@@ -814,6 +827,9 @@ def apply(design, kicad: KicadBoard) -> str:
     if any(z.clearance and z.clearance > rules.clearance - rules.margin + 1e-9 for key, z in board.pour_zone.items()
            if key in {(net, at) for net, at, _ in board.pours}):
         said.append("the zones' own clearances")
+    # The zones' fills as saved, from before the routing (``Board.saved_fills``).
+    board.saved_fills = [(design.net_ids[name], on(layer), shape) for name, layer, shape in kicad.fills
+                         if name in design.net_ids and on(layer) is not None and not shape.is_empty]
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
         for name, layer, outline, radius, chamfer in kicad.rounded:
