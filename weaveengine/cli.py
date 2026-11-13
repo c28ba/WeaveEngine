@@ -10,7 +10,7 @@ from weaveengine.io.check import kicad_project_rules, measure
 from weaveengine.io.dsn import read_dsn, walled_note
 from weaveengine.io.kicad_board import TEARDROP_STYLES, routed_board_path, source_board, write_routed_board
 from weaveengine.io.ses import write_ses
-from weaveengine.pours import note as pour_note, of_result as estimate_pours
+from weaveengine.pours import note as pour_note, of_result as estimate_pours, unjoined as unjoined_pads
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
 from weaveengine.router import route_board
@@ -396,11 +396,9 @@ def main(argv: list[str] | None = None) -> int:
     found = estimate_pours(result)
     for pour in found:
         print(f"  pours: {pour_note(pour, result.board)}")
-    if found:  # (what KiCad's check should find open: connections not routed, pads no pour or via joins)
-        lost = {p for pour in found for piece in pour.pieces if piece.kind == "cut" for p in piece.pad_ids} | set(stats["plane_left"] or ())
-        # (a pad drawn in several pieces, its name then ``@1``, ``@2``..., is one pad to KiCad)
-        left = {pads[i].name.split("@")[0] if pads[i].name else i for i in lost}
-        print(f"  estimate: {stats['connections'] - stats['routed'] + len(left)} items left unconnected in KiCad")
+    if found:  # (what KiCad's check should find open: connections not routed, and each group of a plane net's pads
+        # that its pours, vias and traces do not join to the rest of it)
+        print(f"  estimate: {stats['connections'] - stats['routed'] + len(unjoined_pads(found))} items left unconnected in KiCad")
     m = measure(design, out, want_clearance, want_edge)
     print(f"measured from {os.path.basename(out)}: smallest gap trace-pad {m.track_to_pad:.4f}, trace-trace {m.track_to_track:.4f} "
           f"(rule {m.required_clearance:g}), trace-edge {m.track_to_edge:.4f} (rule {m.required_edge:g})"

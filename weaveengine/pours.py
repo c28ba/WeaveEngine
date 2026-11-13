@@ -26,6 +26,8 @@ class Pour:
     layer: int
     outline: object
     pieces: list[Piece] = field(default_factory=list)
+    reach: tuple | None = None                      # how the copper of its net hangs together (``reach``)
+    left: list = field(default_factory=list)        # the groups of its net's pads (ids) not joined to the rest: the same on each pour of the net
 
     @property
     def cut_off(self) -> list[str]:
@@ -34,6 +36,15 @@ class Pour:
     @property
     def islands(self) -> int:
         return sum(1 for piece in self.pieces if piece.kind == "island")
+
+
+def unjoined(pours: list[Pour]) -> list[list[int]]:
+    """The groups of pads (their ids) of the pours' nets not joined to the rest of their net: one item each that
+    KiCad finds left unconnected (``Pour.left``)."""
+    seen = {}
+    for pour in pours:
+        seen.setdefault(pour.net, pour.left)
+    return [group for net in sorted(seen) for group in seen[net]]
 
 
 def estimate(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict | None = None,
@@ -71,22 +82,24 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
     """The fill of each pour (its index in ``board.pours`` -> its copper, with the net's own pads and traces in it, as
     one shape: ``estimate``), and the routing's copper (``copper_of``). ``nets``: only the pours of these nets (the
     zones of other nets that fill before them, which they keep clear of, are filled but not returned); ``wires``: the
-    routing's copper, if known already; ``window``: only the fill within this shape (``refill``)."""
+    routing's copper, if known already; ``window``: only the fill within this shape (``refill``). The other zones
+    (``Board.areas``: teardrops, copper on one pad) are filled as KiCad fills them, and not returned."""
     rules = board.rules
     base = rules.clearance - rules.margin if clearance is None else clearance
     inside = pour_area(board, clearance)
+    zones = board.pours + board.areas  # (the pours first: their index is theirs in ``board.pours``)
     # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
-    rank = lambda k: board.zone(*board.pours[k][:2]).priority
-    order = sorted(range(len(board.pours)), key=lambda k: (-rank(k), k))
+    rank = lambda k: board.zone(*zones[k][:2]).priority
+    order = sorted(range(len(zones)), key=lambda k: (-rank(k), k))
     if nets is not None:
-        want = {k for k in order if board.pours[k][0] in nets}
+        want = {k for k in order if k < len(board.pours) and zones[k][0] in nets}
         more = want
         while more:
             more = {j for j in order if j not in want for k in more
-                    if board.pours[j][1] == board.pours[k][1] and board.pours[j][0] != board.pours[k][0] and rank(j) > rank(k)}
+                    if zones[j][1] == zones[k][1] and zones[j][0] != zones[k][0] and rank(j) > rank(k)}
             want |= more
         order = [k for k in order if k in want]
-    layers = {board.pours[k][1] for k in order}
+    layers = {zones[k][1] for k in order}
     def asks(net: int) -> float:  # (what a net's class asks, the board's if it is not known, never more than the board's)
         if clearance is not None or not (board.net_clearance or board.default_clearance):
             return base
@@ -111,10 +124,30 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         if at in layers:
             copper[at].append((shape, net, 0.0))
     trees = {at: shapely.STRtree([c[0] for c in cs]) for at, cs in copper.items() if cs}
-    filled: dict[int, list] = {}  # layer -> (net, priority, fill) of the pours done
+    pads_of: dict[int, list] = {}
+    for p in board.pads:
+        pads_of.setdefault(p.net_id, []).append(p)
+    wires_of: dict[tuple, list] = {}
+    for shape, net, at in wires:
+        wires_of.setdefault((net, at), []).append(shape)
+    filled: dict[int, list] = {}  # layer -> (net, priority, fill, its bounds) of the zones done
+    made: dict = {}  # (what, by how much) -> it grown so: a thing near many zones is grown once
+
+    def grow(key, shape, by: float, bounds):
+        """``shape`` grown by ``by``, where it matters to an area within ``bounds``: a long trace or a large fill
+        is cut to them first (a board may have hundreds of small zones, teardrops, each beside it)."""
+        x0, y0, x1, y1 = bounds
+        a0, b0, a1, b1 = shape.bounds
+        if a0 < x0 - by - 1.0 or b0 < y0 - by - 1.0 or a1 > x1 + by + 1.0 or b1 > y1 + by + 1.0:
+            return shape.intersection(shapely.box(x0 - by - 0.1, y0 - by - 0.1, x1 + by + 0.1, y1 + by + 0.1)).buffer(by, quad_segs=4)
+        key = (key, round(by, 9))
+        if key not in made:
+            made[key] = shape.buffer(by, quad_segs=4)
+        return made[key]
+
     found: dict[int, object] = {}
     for k in order:
-        net, at, outline = board.pours[k]
+        net, at, outline = zones[k]
         zone = board.zone(net, at)
         own_zone = (board.zone(net, at).clearance or 0.0) if clearance is None else 0.0
         keep = max(asks(net), own_zone)  # (and from another net's copper, the more of the two classes)
@@ -122,19 +155,28 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         area = outline.intersection(inside)
         if window is not None:
             area = area.intersection(window)
+        if k >= len(board.pours) and area.is_empty:
+            continue
         fill = area
         tree = trees.get(at)
         # What other nets' copper and zones take, which the spokes keep clear of too (KiCad's order: the reliefs out, the
         # clearances out, the spokes in, the clearances out again, then what is narrower than the least width).
         blocked = []
+        reach = max(base, keep) + own_zone + 1.0
+        bounds = area.bounds
         if tree is not None:
-            near = [copper[at][i] for i in tree.query(area, predicate="dwithin", distance=max(base, keep) + own_zone + 1.0).tolist()]
-            blocked += [s.buffer(max(ask, pair(other)) if ask is not None else 0.0, quad_segs=4) for s, other, ask in near if other != net]
-        blocked += [f.buffer(pair(other), quad_segs=4) for other, rank_, f in filled.get(at, ()) if other != net and rank_ > zone.priority]
-        blocked = shapely.union_all(blocked) if blocked else None
+            for i in tree.query(area, predicate="dwithin", distance=reach).tolist():
+                s, other, ask = copper[at][i]
+                if other != net:
+                    blocked.append(grow(("copper", at, i), s, max(ask, pair(other)) if ask is not None else 0.0, bounds))
+        x0, y0, x1, y1 = bounds
+        blocked += [grow(("zone", at, j), f, pair(other), bounds) for j, (other, rank_, f, (a0, b0, a1, b1)) in enumerate(filled.get(at, ()))
+                    if other != net and rank_ > zone.priority and a0 < x1 + reach and x0 < a1 + reach and b0 < y1 + reach and y0 < b1 + reach]
+        # (what lies beyond the area's box takes nothing from it: cut there first, then joined, the cheaper)
+        blocked = shapely.union_all(shapely.intersection(blocked, shapely.box(x0 - EPSILON, y0 - EPSILON, x1 + EPSILON, y1 + EPSILON)))             if blocked else None
         if blocked is not None:
             fill = fill.difference(blocked)
-        own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline)
+        own = [p for p in pads_of.get(net, ()) if p.on(at) and p.shape.intersects(outline)
                and (window is None or p.shape.intersects(window))]
         how = {p.pad_id: joined(p, zone) for p in own}
         relieved = [p for p in own if how[p.pad_id] in ("thermal", "none")]
@@ -161,11 +203,12 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         fill = _prune(grown, least)
         # The net's own pads are copper whatever their width, and its traces join what they touch.
         joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] in ("solid", "thermal")]
-        joins += [shape for shape, other, at_ in wires if other == net and at_ == at and shape.intersects(outline)
+        joins += [shape for shape in wires_of.get((net, at), ()) if shape.intersects(outline)
                   and (window is None or shape.intersects(window))]
         fill = shapely.union_all([fill, *joins])
-        filled.setdefault(at, []).append((net, zone.priority, fill))
-        found[k] = fill
+        filled.setdefault(at, []).append((net, zone.priority, fill, fill.bounds))
+        if k < len(board.pours):
+            found[k] = fill
     if nets is not None:
         found = {k: fill for k, fill in found.items() if board.pours[k][0] in nets}
     return found, wires
@@ -209,6 +252,72 @@ def with_copper(board, fill_of: dict, shapes) -> dict:
     return out
 
 
+def piece_key(pour, piece) -> tuple:
+    """A piece's name in ``reach``'s groups."""
+    return ("piece", pour.layer) + tuple(round(v, 6) for v in piece.shape.bounds) + (round(piece.shape.area, 6),)
+
+
+def reach(board, pours: list, wires: list, net: int) -> tuple[dict, list, object]:
+    """How the copper of ``net`` hangs together, as KiCad sees it: its pads and vias, the pieces of its pours' fill
+    (``pours``), its traces and teardrops (``wires``: shape, net, layer) and its fixed copper, joined where they meet
+    on a layer they share. Returns each thing's group (("pad", id), ``_piece``, ("fixed", id) -> its root), the pads
+    (not vias) not in the main group, and the main group's root: of the groups with fill in them, the one with most
+    pads (None if the net has no fill at all: every pad is left)."""
+    pads = [p for p in board.pads if p.net_id == net]
+    items = [(("pad", p.pad_id), p.shape, p.layers, 0 if p.is_via else 1) for p in pads]
+    items += [(("wire", k), shape, frozenset({layer}), 0) for k, (shape, other, layer) in enumerate(wires) if other == net]
+    items += [(("fixed", id(o)), o.shape, o.layers, 0) for o in board.obstacles if o.net_id == net and not o.copper]
+    small = len(items)  # (pads, traces and fixed copper: what meets is found by shape; the pieces of fill, by what is in them)
+    items += [(piece_key(pour, x), x.shape, frozenset({pour.layer}), 0) for pour in pours if pour.net == net for x in pour.pieces]
+    group = list(range(len(items)))
+
+    def find(i: int) -> int:
+        while group[i] != i:
+            group[i] = group[group[i]]
+            i = group[i]
+        return i
+
+    if small:
+        a, b = shapely.STRtree([it[1] for it in items[:small]]).query([it[1] for it in items[:small]], predicate="intersects")
+        for i, j in zip(a.tolist(), b.tolist()):
+            la, lb = items[i][2], items[j][2]
+            if i < j and (la is None or lb is None or la & lb):
+                group[find(i)] = find(j)
+    # A piece holds the pads its pour joins (``Piece.pad_ids``), and the traces and fixed copper of the net in its pour,
+    # which the fill takes in whole (a point of each tells which piece).
+    index = {it[0]: i for i, it in enumerate(items[:small])}
+    by_layer: dict = {}
+    for i in range(small, len(items)):
+        by_layer.setdefault(next(iter(items[i][2])), []).append(i)
+    i = small
+    for pour in pours:
+        if pour.net != net:
+            continue
+        for x in pour.pieces:
+            for pad in x.pad_ids:
+                if ("pad", pad) in index:
+                    group[find(i)] = find(index["pad", pad])
+            i += 1
+    for at, rows in by_layer.items():
+        tree = shapely.STRtree([items[i][1] for i in rows])
+        inner = [k for k in range(small) if items[k][0][0] != "pad" and (items[k][2] is None or at in items[k][2])]
+        if not inner:
+            continue
+        spots = shapely.points([items[k][1].representative_point().coords[0] for k in inner])
+        found, hit = tree.query(spots, predicate="intersects")
+        for f, h in zip(found.tolist(), hit.tolist()):
+            group[find(inner[f])] = find(rows[h])
+    held: dict = {}  # root -> (pads, fill)
+    for i, it in enumerate(items):
+        count, fill = held.get(find(i), (0, 0.0))
+        held[find(i)] = (count + it[3], fill + (it[1].area + 1e-9 if it[0][0] == "piece" else 0.0))
+    filled = [root for root, (_, fill) in held.items() if fill > 0]
+    main = max(filled, key=lambda root: (held[root][0], held[root][1], -root)) if filled else None
+    comp = {it[0]: find(i) for i, it in enumerate(items)}
+    lost = [p for p in pads if not p.is_via and (main is None or comp[("pad", p.pad_id)] != main)]
+    return comp, lost, main
+
+
 def classify(board, fill_of: dict, wires: list) -> list[Pour]:
     """The pieces of each pour's fill (``fills``: pour index -> fill, with all the pours of each net in it) and their
     kinds; the pours in the order of ``board.pours``."""
@@ -227,7 +336,24 @@ def classify(board, fill_of: dict, wires: list) -> list[Pour]:
                 names = [p.name or str(p.pad_id) for p in has[j] if not p.is_via]
                 pour.pieces.append(Piece(g, "main" if j == main and names else "", names, {p.pad_id for p in has[j]}))
         pours.append(pour)
-    _join(pours, _touching(board, {pour.net for pour in pours}, wires))
+    # A piece is joined if it hangs together with the net's main group (``reach``): through pads and vias, the net's
+    # traces, fixed copper, and the pieces of its other pours.
+    for net in {pour.net for pour in pours}:
+        mine = [pour for pour in pours if pour.net == net]
+        found = reach(board, mine, wires, net)
+        comp, _, main = found
+        padded = {comp["pad", p.pad_id] for p in board.pads if p.net_id == net and not p.is_via}
+        if main not in padded:
+            main = None  # (a plane no pad is joined to: islands, to KiCad)
+        groups: dict = {}
+        for p in found[1]:
+            groups.setdefault(comp["pad", p.pad_id], []).append(p.pad_id)
+        left = sorted(groups.values(), key=lambda g: (-len(g), min(g)))
+        for pour in mine:
+            pour.reach, pour.left = found, left if main is not None else left[1:]  # (no main group: all but one need joining)
+            for x in pour.pieces:
+                group = comp[piece_key(pour, x)]
+                x.kind = ("main" if x.kind == "main" else "via") if group == main else "cut" if group in padded else "island"
     # The islands KiCad removes, by the zone's island removal, are not there; but a zone that is islands on every
     # layer it fills (joined to nothing at all) is left whole. (One zone over several layers: one ``Zone``.)
     zones: dict[int, list] = {}
@@ -251,36 +377,10 @@ def _prune(fill, least: float):
     return shapely.union_all(parts).buffer(least / 2.0 - EPSILON) if parts else shapely.Polygon()
 
 
-def _touching(board, nets: set, wires=()) -> dict:
-    """Pad id -> one pad of the group of the net's pads whose copper meets on a layer they share (a pad through
-    the board inside a part's surface pad, say), or that a trace of the net joins (``wires``: shape, net, layer):
-    KiCad sees them joined, on any layer."""
-    pads = [p for p in board.pads if p.net_id in nets]
-    group = {p.pad_id: p.pad_id for p in pads}
-
-    def root(a: int) -> int:
-        while group[a] != a:
-            group[a] = a = group[group[a]]
-        return a
-
-    if pads:
-        a, b = shapely.STRtree([p.shape for p in pads]).query([p.shape for p in pads], predicate="intersects")
-        for i, j in zip(a.tolist(), b.tolist()):
-            p, q = pads[i], pads[j]
-            if i < j and p.net_id == q.net_id and (p.layers is None or q.layers is None or p.layers & q.layers):
-                group[root(p.pad_id)] = root(q.pad_id)
-        tree = shapely.STRtree([p.shape for p in pads])
-        for shape, net, at in wires:
-            if net in nets:
-                ends = [pads[i] for i in tree.query(shape, predicate="intersects").tolist() if pads[i].net_id == net and pads[i].on(at)]
-                for q in ends[1:]:
-                    group[root(q.pad_id)] = root(ends[0].pad_id)
-    return {k: root(k) for k in group}
-
-
 GAP, SPOKE = 0.5, 0.5  # mm: KiCad's default thermal relief gap and spoke width
 ERROR = 0.005          # mm: KiCad's default maximum error, which its spokes reach past the gap
 EPSILON = 0.001        # mm: what KiCad's fill leaves of the least width, so that copper just that wide stays
+HELD = 0.65           # of a spoke beyond its pad in a piece of fill: it joins the pad to that piece (fills cut some spokes short)
 
 
 def joined(pad, zone) -> str:
@@ -296,6 +396,38 @@ def joined(pad, zone) -> str:
 def relief(pad, zone) -> tuple[float, float]:
     """The thermal relief of ``pad`` in ``zone``: its gap and its spokes' width (the pad's own, else the zone's)."""
     return pad.thermal_gap or zone.gap or GAP, pad.spoke or zone.spoke or SPOKE
+
+
+def starved(board, pour: Pour, pad, wires: list, traces=()) -> bool:
+    """Whether KiCad's check of thermal reliefs finds ``pad`` starved in ``pour`` (its pieces, ``classify``): fewer
+    spokes join it to the fill than the board asks (``Board.min_spokes``). As KiCad counts them
+    (``DRC_TEST_PROVIDER_ZONE_CONNECTIONS``): its spokes that the fill keeps; those into a piece that meets nothing
+    else of the net (``wires``: shape, net, layer) only if there are no others; and, if still too few, the traces of
+    its net on the pour's layer (``traces``: (layer, points)) from inside the pad to a point in the fill. A pad no
+    spoke reaches at all is not checked: it is not joined (or by traces alone)."""
+    zone = board.zone(pour.net, pour.layer)
+    if pad.net_id != pour.net or pad.is_via or not pad.on(pour.layer) or joined(pad, zone) != "thermal":
+        return False
+    real = alone = 0
+    for shape, _ in spokes(pad, zone, board.pour_width(pour.net, pour.layer)):
+        out = shape.difference(pad.shape)
+        if out.area <= 0:
+            continue
+        piece = next((x for x in pour.pieces if x.shape.intersection(out).area >= HELD * out.area), None)
+        if piece is None:
+            continue
+        lone = piece.pad_ids <= {pad.pad_id} and not any(
+            net == pour.net and at == pour.layer and piece.shape.intersects(shape_) for shape_, net, at in wires)
+        alone += lone
+        real += not lone
+    if real == alone == 0 or real >= board.min_spokes:
+        return False
+    fill = shapely.union_all([x.shape for x in pour.pieces]) if traces else None
+    for layer, pts in traces:
+        if layer == pour.layer:
+            a, b = Point(pts[0]), Point(pts[-1])
+            real += (pad.shape.contains(a) and fill.contains(b)) or (pad.shape.contains(b) and fill.contains(a))
+    return (real or alone) < board.min_spokes
 
 
 def _turn(pad) -> float:
@@ -341,30 +473,6 @@ def spokes(pad, zone, least: float) -> list[tuple[object, Point]]:
         ex, ey = cx + reach * (dx * c - dy * s), cy + reach * (dx * s + dy * c)
         out.append((LineString([(cx, cy), (ex, ey)]).buffer(width / 2.0, cap_style="flat"), Point(ex, ey)))
     return out
-
-
-def _join(pours: list[Pour], same: dict | None = None) -> None:
-    """Gives the pieces their kind. A pad through the board or a via is in a piece of each layer's pour of its net:
-    pieces that share one (or pads whose copper meets: ``same``) are joined, and the joined pieces that hold a main piece are connected (KiCad sees the
-    pad connect them); the rest hold pads that are cut off, or none."""
-    for net in {pour.net for pour in pours}:
-        pieces = [piece for pour in pours if pour.net == net for piece in pour.pieces]
-        group = list(range(len(pieces)))
-
-        def find(i: int) -> int:
-            while group[i] != i:
-                group[i] = group[group[i]]
-                i = group[i]
-            return i
-
-        first: dict[int, int] = {}
-        for i, piece in enumerate(pieces):
-            for pad in {(same or {}).get(x, x) for x in piece.pad_ids}:
-                group[find(i)] = find(first.setdefault(pad, i))
-        joined = {find(i) for i, piece in enumerate(pieces) if piece.kind == "main"}
-        for i, piece in enumerate(pieces):
-            if piece.kind != "main":
-                piece.kind = "via" if find(i) in joined and piece.pad_ids else "cut" if piece.pads else "island"
 
 
 def of_result(result) -> list[Pour]:

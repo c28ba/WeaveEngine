@@ -61,6 +61,7 @@ TRIES = 8          # joins checked against the estimate for one group, cheapest 
 SAMPLES = 12       # places in a cut-off piece a via (a jumper's, or a bridge's start) is tried at
 KEPT = 6           # joins of each kind to each group kept from one place, the cheapest, ending ``APART``
 APART = 1.0        # mm
+STARVED = 2.0      # mm round a join within which a pad's spokes may change (``_starved``)
 INSET = 0.03       # mm a place is taken inside a region where copper may stand (its edge is drawn with polygons: the check is exact)
 
 
@@ -94,7 +95,7 @@ def covered(board: Board, pad: Pad, cut=frozenset()) -> bool:
 
 def unjoined(board: Board, lines: dict | None = None, wire_net: dict | None = None, wire_layer: dict | None = None,
              teardrops=None, widths: dict | None = None) -> list[Pad]:
-    """The pads of plane nets not joined to the rest of their net (``_reach``), with the routing ``lines``."""
+    """The pads of plane nets not joined to the rest of their net (``pours.reach``), with the routing ``lines``."""
     from weaveengine import pours as estimates
     wires = estimates.copper_of(board, lines or {}, wire_net or {}, wire_layer or {}, teardrops, widths)
     fill_of, _ = estimates.fills(board, {}, {}, {}, wires=wires)
@@ -234,13 +235,13 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         comp = reach[net][0]
         root = comp[("pad", unit[0].pad_id)]
         now = estimates.classify(work, _of(work, fill_of, {net}), wires)
-        pieces = [(pour.layer, x.shape) for pour in now for x in pour.pieces if comp.get(_piece(pour, x)) == root]
+        pieces = [(pour.layer, x.shape) for pour in now for x in pour.pieces if comp.get(estimates.piece_key(pour, x)) == root]
         # Everything near enough to matter: the group and its pieces, and as far round them as a join reaches.
         window = shapely.box(*shapely.union_all([p.shape for p in unit] + [s for _, s in pieces]).bounds).buffer(FAR + r + 1.0, join_style="mitre")
         target: dict = {}  # (layer, group) -> the fill of each other group of the net there (within the window)
         for pour in now:
             for x in pour.pieces:
-                group = comp.get(_piece(pour, x))
+                group = comp.get(estimates.piece_key(pour, x))
                 if group is not None and group != root and x.shape.intersects(window):
                     key = (pour.layer, group)
                     target[key] = shapely.union_all([x.shape.intersection(window)] + ([target[key]] if key in target else []))
@@ -264,7 +265,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         before = _groups(work, reach[net][0], net)
         direct, through = None, []  # the cheapest join that does it; cheaper ones to a plane joined to nothing
         for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
-            done = _apply(work, way, net, fill_of, wires, reach, area, r, half)
+            done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
             if done is None:
                 continue
             after = _groups(done[0], done[3][net][0], net)
@@ -334,7 +335,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
 
 
 def _groups(board: Board, comp: dict, net: int) -> dict:
-    """Pad id -> its group (``_reach``), for the pads (not vias) of ``net``."""
+    """Pad id -> its group (``pours.reach``), for the pads (not vias) of ``net``."""
     return {p.pad_id: comp[("pad", p.pad_id)] for p in board.pads if p.net_id == net and not p.is_via}
 
 
@@ -362,79 +363,23 @@ def _keep(board: Board, way: Join, net: int, out: Joined) -> None:
         out.reliefs.setdefault(pad_id, {}).update(change)
 
 
-def _piece(pour, piece) -> tuple:
-    """A piece's name in ``_reach``'s groups."""
-    return ("piece", pour.layer) + tuple(round(v, 6) for v in piece.shape.bounds) + (round(piece.shape.area, 6),)
+def _reach(board: Board, pours: list, wires: list, net: int) -> tuple[dict, list, object]:
+    """How the copper of ``net`` hangs together (``pours.reach``), as ``pours.classify`` found it for its ``pours``."""
+    from weaveengine import pours as estimates
+    return next((pour.reach for pour in pours if pour.net == net), None) or estimates.reach(board, pours, wires, net)
 
 
 def _of(board: Board, fill_of: dict, nets: set) -> dict:
     return {k: f for k, f in fill_of.items() if board.pours[k][0] in nets}
 
 
-def _reach(board: Board, pours: list, wires: list, net: int) -> tuple[dict, list, object]:
-    """How the copper of ``net`` hangs together, as KiCad sees it: its pads and vias, the pieces of its pours' fill
-    (``pours``), its traces and teardrops (``wires``: shape, net, layer) and its fixed copper, joined where they meet
-    on a layer they share. Returns each thing's group (("pad", id), ``_piece``, ("fixed", id) -> its root), the pads
-    (not vias) not in the main group, and the main group's root: of the groups with fill in them, the one with most
-    pads (None if the net has no fill at all: every pad is left)."""
-    pads = [p for p in board.pads if p.net_id == net]
-    items = [(("pad", p.pad_id), p.shape, p.layers, 0 if p.is_via else 1) for p in pads]
-    items += [(("wire", k), shape, frozenset({layer}), 0) for k, (shape, other, layer) in enumerate(wires) if other == net]
-    items += [(("fixed", id(o)), o.shape, o.layers, 0) for o in board.obstacles if o.net_id == net and not o.copper]
-    small = len(items)  # (pads, traces and fixed copper: what meets is found by shape; the pieces of fill, by what is in them)
-    items += [(_piece(pour, x), x.shape, frozenset({pour.layer}), 0) for pour in pours if pour.net == net for x in pour.pieces]
-    group = list(range(len(items)))
-
-    def find(i: int) -> int:
-        while group[i] != i:
-            group[i] = group[group[i]]
-            i = group[i]
-        return i
-
-    if small:
-        a, b = shapely.STRtree([it[1] for it in items[:small]]).query([it[1] for it in items[:small]], predicate="intersects")
-        for i, j in zip(a.tolist(), b.tolist()):
-            la, lb = items[i][2], items[j][2]
-            if i < j and (la is None or lb is None or la & lb):
-                group[find(i)] = find(j)
-    # A piece holds the pads its pour joins (``Piece.pad_ids``), and the traces and fixed copper of the net in its pour,
-    # which the fill takes in whole (a point of each tells which piece).
-    index = {it[0]: i for i, it in enumerate(items[:small])}
-    by_layer: dict = {}
-    for i in range(small, len(items)):
-        by_layer.setdefault(next(iter(items[i][2])), []).append(i)
-    i = small
-    for pour in pours:
-        if pour.net != net:
-            continue
-        for x in pour.pieces:
-            for pad in x.pad_ids:
-                if ("pad", pad) in index:
-                    group[find(i)] = find(index["pad", pad])
-            i += 1
-    for at, rows in by_layer.items():
-        tree = shapely.STRtree([items[i][1] for i in rows])
-        inner = [k for k in range(small) if items[k][0][0] != "pad" and (items[k][2] is None or at in items[k][2])]
-        if not inner:
-            continue
-        spots = shapely.points([items[k][1].representative_point().coords[0] for k in inner])
-        found, hit = tree.query(spots, predicate="intersects")
-        for f, h in zip(found.tolist(), hit.tolist()):
-            group[find(inner[f])] = find(rows[h])
-    held: dict = {}  # root -> (pads, fill)
-    for i, it in enumerate(items):
-        count, fill = held.get(find(i), (0, 0.0))
-        held[find(i)] = (count + it[3], fill + (it[1].area + 1e-9 if it[0][0] == "piece" else 0.0))
-    filled = [root for root, (_, fill) in held.items() if fill > 0]
-    main = max(filled, key=lambda root: (held[root][0], held[root][1], -root)) if filled else None
-    comp = {it[0]: find(i) for i, it in enumerate(items)}
-    lost = [p for p in pads if not p.is_via and (main is None or comp[("pad", p.pad_id)] != main)]
-    return comp, lost, main
-
-
-def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: dict, area, r: float, half: float):
-    """The board, fills, routing copper and groups (``_reach``) with ``way`` made, if the estimate finds that it
-    leaves every pad of every other net as joined as it was, and no more islands in their pours; else None."""
+def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: dict, area, r: float, half: float,
+           now: list, traces: list):
+    """The board, fills, routing copper and groups (``pours.reach``) with ``way`` made, if the estimate finds that it
+    leaves every pad of every other net as joined as it was, no more islands in their pours, and no more pads starved
+    of thermal spokes (``pours.starved``: KiCad finds a pad whose spokes reach only a piece that meets nothing else
+    starved once that piece is joined, so a join may trade a pad left unconnected for one starved); else None.
+    ``now``: the pours of ``net`` as they are (``pours.classify``); ``traces``: (net, layer, points) of the joins made."""
     from weaveengine import pours as estimates
     board = copy.copy(work)
     board.pads = list(work.pads)
@@ -464,17 +409,42 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
               and any((layer is None or layer == at) and fill_of[k].distance(shape) < _reach_of(board, other) for shape, layer in copper)}
     theirs = estimates.refill(board, _of(board, fill_of, others), others, new_wires, shapely.union_all([c for c, _ in copper]),
                               max(_reach_of(board, other) for other in others)) if others else {}
-    changed = {net: _reach(board, estimates.classify(board, mine, new_wires), new_wires, net)}
+    near = shapely.union_all([c for c, _ in copper] + [p.shape for p in board.pads if p.pad_id in way.relief])
+    joins = traces + [(net, layer, pts) for layer, pts in way.traces]
+    after = estimates.classify(board, mine, new_wires)
+    if _starved(board, after, new_wires, joins, net, near, now) > _starved(work, now, wires, traces, net, near, after):
+        return None
+    changed = {net: _reach(board, after, new_wires, net)}
     for other in sorted(others):
         old = estimates.classify(work, _of(work, fill_of, {other}), wires)
         new = estimates.classify(board, _of(board, theirs, {other}), new_wires)
         if sum(pour.islands for pour in new) > sum(pour.islands for pour in old):
+            return None
+        if _starved(board, new, new_wires, joins, other, near, old) > _starved(work, old, wires, traces, other, near, new):
             return None
         if other in reach:
             changed[other] = _reach(board, new, new_wires, other)
             if not _coarser(_groups(work, reach[other][0], other), _groups(board, changed[other][0], other)):
                 return None
     return board, {**fill_of, **mine, **theirs}, new_wires, {**reach, **changed}
+
+
+def _starved(board: Board, pours: list, wires: list, traces: list, net: int, near, also=()) -> int:
+    """How many (pad, pour) of ``net`` KiCad's check finds starved of thermal spokes (``pours.starved``) in ``pours``,
+    of those a change at ``near`` (a shape) may touch: pads within ``STARVED`` of it, or in a piece that meets it, in
+    ``pours`` or in ``also`` (the same pours another way, so that both count the same pads)."""
+    from weaveengine import pours as estimates
+    mine = [(layer, pts) for other, layer, pts in traces if other == net]
+    pads = [p for p in board.pads if p.net_id == net and not p.is_via]
+    count = 0
+    for pour in pours:
+        if pour.net != net:
+            continue
+        ids = {i for x in [*pour.pieces, *(y for twin in also if twin.layer == pour.layer and twin.outline is pour.outline
+                                          for y in twin.pieces)] if x.shape.intersects(near) for i in x.pad_ids}
+        count += sum(estimates.starved(board, pour, p, wires, mine) for p in pads
+                     if p.on(pour.layer) and (p.pad_id in ids or p.shape.distance(near) < STARVED))
+    return count
 
 
 def _reach_of(board: Board, net: int) -> float:
