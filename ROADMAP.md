@@ -121,7 +121,15 @@ To do, in order:
 2. [x] Pours that stay whole by default (done above; what is left is below).
 3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
-5. [ ] The Margin layer as board edge: a directional rule (below).
+5. [x] The Margin layer as board edge (branch `margin-edge2`; design 5.1).
+   Added copper (teardrops, rounded corners, tapers, blunting, arcs) keeps
+   the edge clearance from Margin drawings, and trace ends on pads within it
+   stop inside the pad where clear: the routing unchanged, our
+   copper_edge_clearance there (uncounted by KiCad past 199; counted
+   directly) solo-a 477 to 146, solo-c 369 to 132, hackrf-lna915 9 to 3. The
+   directional rule, `--margin-drawings edge`, gives 31, 20 and 3, but Solo
+   then routes 28 and 22 connections fewer (its drawings are shield outlines
+   its own routing crosses): a choice, not the default.
 6. [-] No acute angles where copper of one net meets (branch `acute`; design 13.3b).
    Measured (`realize/acute.py`: corners of each net's drawn copper, teardrops
    included, whose empty wedge is under the least angle, by kind; in the stats,
@@ -482,6 +490,20 @@ new example (a board and where on it); then it moves up to be fixed.
   solo-c and hackrf-lna915 unchanged) and still cost Solo about ten
   connections; a tight one removed some but lost connections. Needs a
   directional rule: a trace leaves such a pad only away from the drawing.
+  Built (branch `margin-edge2`, `geom/margin.py`, design 5.1), measured
+  first: most of the errors were teardrops (a fan of tracks each, every one
+  an error) at pads within the edge clearance and at vias placed in it. Now
+  the copper added once the routing is done keeps the edge clearance from the
+  drawings (teardrops, rounded corners, tapers, blunting, arcs), and a trace's
+  end on a pad within it stops inside the pad where it is clear. The
+  directional rule is there too (`--margin-drawings edge`: the drawings edge
+  for traces and vias, each pad within them left only along its shadow away
+  from the drawing, or with room all round where its part shuts that), but
+  not the default: Solo's drawings are shield outlines the designers' own
+  routing crosses (184 tracks and 15 vias in the original solo-A), and held
+  by the routing they wall areas off (solo-a 104 of 155 for 132; held off the
+  vias alone, 129). Left: a price, not a wall, for traces and vias near a
+  drawing.
 
 ## 1.2
 
