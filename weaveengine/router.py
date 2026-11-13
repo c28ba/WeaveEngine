@@ -20,6 +20,7 @@ from weaveengine.plan.path import find
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
+from weaveengine.realize.acute import LEAST, blunt, count as count_acute, meetings as acute_meetings
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.taper import WEDGE as TAPER_WEDGE, taper as make_tapers, with_wedges
@@ -184,6 +185,14 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         for new, rounded, kept in parallel.run(_smooth_task, (work, wire_net), tasks, workers):
             lines.update(new)
             smoothed = (smoothed[0] + rounded, smoothed[1] + kept)
+    blunted = 0
+    if options.least_angle > 0:  # (on the traces as drawn, before the teardrops, which are made round them: design 13.3b)
+        ends = {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}
+        limits = (options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing) if options.teardrops else None
+        new = blunt(work, lines, wire_net, wire_layer, ends, options.least_angle, limits)
+        kept = _over_own_vias(work, lines, new, wire_net, wire_layer)
+        blunted = sum(1 for w in new if kept[w] is new[w])
+        lines = kept
     drops: dict[int, list] = {}
     if options.teardrops:
         tasks = []
@@ -215,6 +224,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
 
     for layer in ctx.layers:
         assert layer.state.check_invariants(), "topological invariant broken"
+    # (copper of one net meeting itself under the least angle, as drawn: design 13.3b)
+    acute = acute_meetings(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns},
+                           with_wedges(drops, wedges), pieces, options.least_angle or LEAST)
     t_end = time.perf_counter()
     routed = sorted(w for w in wire_layer if w in ctx.conns)
     air = sum(ctx.conns[w].air_len for w in routed)
@@ -255,6 +267,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "time_total": t_end - t0,
         "triangles": sum(l.pmap.num_triangles for l in ctx.layers),
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
+        "blunted": blunted,  # traces redrawn so that their net meets itself at no acute angle there (``realize.acute.blunt``)
+        "acute": count_acute(acute),  # kind -> meetings of copper of one net under the least angle (``realize.acute``)
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing)
@@ -337,11 +351,13 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
     """``lines`` with the traces of ``straight`` (``_taut``: not bent round
     vias of their own net) put in where the pours keep their room: no pad is
     cut off from its pour that was not before (``pours.estimate``), nor left
-    with no fill of its net to join it (fan-out's to join, ``plan.fanout``).
-    Where that fails, the traces near the trouble keep their bends, a few
-    times over, and then all do. Likewise the traces the
+    with no fill of its net to join it (fan-out's to join, ``plan.fanout``),
+    and no island of a pour is left where there was none. Where that fails,
+    the traces near the trouble keep their bends, a few times over, and then
+    all do. Likewise the traces the
     check finds more on than before (straightened beside others that keep
-    their bends), and then all on their layer."""
+    their bends), and then all on their layer. (The traces redrawn for acute
+    meetings, ``realize.acute.blunt``, are put in the same way.)"""
     from weaveengine.realize import drc
     straight = {w: line for w, line in straight.items() if w in lines}
     if not straight:
@@ -353,18 +369,29 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
         def trouble(drawn: dict) -> list:
             """(key, shape, layer or None) of each pad cut off from its pour,
             and of each other pad not joined to the rest of its net (no fill
-            of its net reaches it: fan-out's to join, ``plan.fanout``)."""
+            of its net reaches it: fan-out's to join, ``plan.fanout``), and of
+            each island."""
             found = estimate_pours(work, drawn, wire_net, wire_layer)
-            cut = [(piece, pour.layer) for pour in found for piece in pour.pieces if piece.kind == "cut"]
+            pieces = [(piece, pour.layer) for pour in found for piece in pour.pieces]
+            cut = [(piece, at) for piece, at in pieces if piece.kind == "cut"]
             held = {p for piece, _ in cut for p in piece.pad_ids}
             left = [pads[i] for group in unjoined_pads(found) for i in group if i not in held]
             return ([((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids]
-                    + [((p.pad_id, -1), p.shape, None) for p in left])
+                    + [((p.pad_id, -1), p.shape, None) for p in left]
+                    + [(None, piece.shape, at) for piece, at in pieces if piece.kind == "island"])  # (an island: by where it is)
 
-        had = {key for key, _, _ in trouble(lines)}
+        before = trouble(lines)
+        had = {key for key, _, _ in before if key is not None}
+        islands = [(shape, at) for key, shape, at in before if key is None]
+
+        def fresh(found: list) -> list:
+            """(shape, layer) of the trouble that was not there before: an island that overlaps none of before's is new."""
+            return [(shape, at) for key, shape, at in found if (key not in had if key is not None else
+                                                                not any(at == a and shape.intersects(s) for s, a in islands))]
+
         reach = work.rules.via_diameter + 4.0 * work.rules.pitch  # (room for a via and the traces round it)
         for _ in range(OWN_VIA_TRIES):
-            new = [(shape, at) for key, shape, at in trouble(trial) if key not in had]
+            new = fresh(trouble(trial))
             if not new:
                 break
             near = {w for w in straight if trial[w] is straight[w] and any(
@@ -373,7 +400,7 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
                 return lines
             trial.update({w: lines[w] for w in near})
         else:
-            if any(key not in had for key, _, _ in trouble(trial)):
+            if fresh(trouble(trial)):
                 return lines
     for layer in {wire_layer[w] for w in straight}:
         on = [w for w, li in wire_layer.items() if li == layer]

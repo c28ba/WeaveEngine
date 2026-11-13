@@ -206,6 +206,7 @@ class Options:
     teardrop_breathing: float = 1.5    # clearances a teardrop keeps from foreign copper, else it is left out
     portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
     skeleton: bool = True           # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``, design 11.3)
+    least_angle: float = 90.0       # degrees: traces redrawn where copper of one net meets itself under this (``realize.acute``); 0 = not
 
 
 class Context:
