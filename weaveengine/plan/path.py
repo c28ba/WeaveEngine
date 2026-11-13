@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import shapely
 
-from weaveengine.geom.margin import edge_clearance, lines as margin_lines
+from weaveengine.geom.margin import edge_clearance, held
 from weaveengine.topo import kernel, sites
 from weaveengine.topo.planar_map import PlanarMap
 from weaveengine.topo.search import Route, route
@@ -92,7 +92,7 @@ class Legal:
         margin = rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) - rules.base_width / 2.0 + 0.01 + rules.apart(rules.via_clearance) - rules.clearance
         no_via = (shapely.union_all(ctx.board.no_via).buffer(rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + 0.01)
                   if ctx.board.no_via else None)
-        drawn = margin_lines(ctx.board)  # (Margin drawings held as edge: a via keeps the edge clearance from them, every way)
+        drawn = held(ctx.board)  # (Margin drawings held as edge by the routing: a via keeps the edge clearance from them, every way)
         if drawn is not None:
             far = drawn.buffer(edge_clearance(rules) + rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + 0.01, quad_segs=16)
             no_via = far if no_via is None else no_via.union(far)

@@ -82,7 +82,7 @@ DESCRIPTIONS = {
 # A setting that is one of a few choices: name -> {value: label}
 CHOICES = {
     "margin_drawings": {
-        "added": "Kept clear of by vias, teardrops and rounded corners; traces may cross them",
+        "added": "Kept clear of by teardrops, rounded corners and the vias to the planes; traces and their vias may cross them",
         "edge": "Board edge to everything: a pad within it is left only straight away from the drawing",
         "off": "Not kept clear of (only by the vias to the planes)",
     },

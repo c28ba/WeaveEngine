@@ -1,13 +1,14 @@
 """Drawings on KiCad's Margin layer held as board edge (``Board.margin_edge``).
 
 Two ways (``MODES``): ``edge``, as the outline, by everything; and ``added``,
-by the vias and by the copper drawn once the traces are routed (teardrops,
-rounded corners, tapers, blunted meetings, arcs; and trace ends are
-``trim``-med), while the traces themselves may cross the drawings. Boards
-draw there shield-can outlines their own routing crosses (Solo's: 184 tracks
-and 15 vias within the edge clearance of them in the designers' routing),
-and held as edge by the traces those cut the board into pieces. ``added``
-costs no connection.
+by the copper drawn once the routing is done (teardrops, rounded corners,
+tapers, blunted meetings, arcs, the vias and traces to the planes; and trace
+ends are ``trim``-med), while the traces and their vias may cross the
+drawings. Boards draw there shield-can outlines their own routing crosses
+(Solo's: 184 tracks and 15 vias within the edge clearance of them in the
+designers' routing), and held as edge by the routing those cut the board
+into pieces: Solo A routes 104 of 155 connections for 132, and with only the
+vias held 129. ``added`` routes as ``off`` does.
 
 KiCad's check holds copper to the edge clearance from every drawing on the
 Margin layer, as from the outline. Boards draw there nearer their own pads

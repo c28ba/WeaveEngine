@@ -182,7 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ignore-keepouts", action="store_true", help="drop the keepout areas of the DSN")
     ap.add_argument("--margin-drawings", choices=("added", "edge", "off"), default="added",
                     help="drawings on KiCad's Margin layer, which its check holds copper to the edge clearance from: kept clear "
-                         "of by vias, teardrops and rounded corners, traces crossing them as they must (added, the default); "
+                         "of by teardrops, rounded corners and the vias to the planes, traces and their vias crossing them as "
+                         "they must (added, the default); "
                          "board edge to everything, a pad within it left only straight away from the drawing (edge); or "
                          "not (off)")
     ap.add_argument("--margin", type=float, default=0.01, metavar="MM",
