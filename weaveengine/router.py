@@ -20,6 +20,7 @@ from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
 from weaveengine.pours import estimate as estimate_pours
+from weaveengine.realize.acute import LEAST, blunt, count as count_acute, meetings as acute_meetings
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
 from weaveengine.realize.taper import WEDGE as TAPER_WEDGE, taper as make_tapers, with_wedges
@@ -184,6 +185,14 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         for new, rounded, kept in parallel.run(_smooth_task, (work, wire_net), tasks, workers):
             lines.update(new)
             smoothed = (smoothed[0] + rounded, smoothed[1] + kept)
+    blunted = 0
+    if options.least_angle > 0:  # (on the traces as drawn, before the teardrops, which are made round them: design 13.3b)
+        ends = {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}
+        limits = (options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing) if options.teardrops else None
+        new = blunt(work, lines, wire_net, wire_layer, ends, options.least_angle, limits)
+        kept = _over_own_vias(work, lines, new, wire_net, wire_layer)
+        blunted = sum(1 for w in new if kept[w] is new[w])
+        lines = kept
     drops: dict[int, list] = {}
     if options.teardrops:
         tasks = []
@@ -222,6 +231,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
 
     for layer in ctx.layers:
         assert layer.state.check_invariants(), "topological invariant broken"
+    # (copper of one net meeting itself under the least angle, as drawn: design 13.3b)
+    acute = acute_meetings(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns},
+                           with_wedges(drops, wedges), pieces, options.least_angle or LEAST)
     t_end = time.perf_counter()
     routed = sorted(w for w in wire_layer if w in ctx.conns)
     air = sum(ctx.conns[w].air_len for w in routed)
@@ -260,6 +272,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "time_total": t_end - t0,
         "triangles": sum(l.pmap.num_triangles for l in ctx.layers),
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
+        "blunted": blunted,  # traces redrawn so that their net meets itself at no acute angle there (``realize.acute.blunt``)
+        "acute": count_acute(acute),  # kind -> meetings of copper of one net under the least angle (``realize.acute``)
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing)
@@ -346,7 +360,8 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
     (``plan.fanout``). Where that fails, the traces near the trouble keep
     their bends, a few times over, and then all do. Likewise the traces the
     check finds more on than before (straightened beside others that keep
-    their bends), and then all on their layer."""
+    their bends), and then all on their layer. (The traces redrawn for acute
+    meetings, ``realize.acute.blunt``, are put in the same way.)"""
     from weaveengine.realize import drc
     straight = {w: line for w, line in straight.items() if w in lines}
     if not straight:

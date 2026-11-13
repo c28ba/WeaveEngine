@@ -63,6 +63,9 @@ DESCRIPTIONS = {
     "taper_to_pins": ("Taper traces to fine-pitch pins", "A net narrowed to reach fine-pitch pins is drawn at its own width again, "
                       "narrowing (with a wedge) only over the last stretch to each such pin, where there is room", "Routing"),
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
+    "least_angle": ("Least angle where a net meets itself (degrees)", "Where a trace meets its pad, or traces of one net meet at "
+                    "a via, a pad or a branch, at a sharper angle (which traps etchant), it is redrawn where there is room: "
+                    "square into the pad, or along the other before it branches off. 0: not; at most 90", "Routing"),
     "teardrop_style": ("Teardrops", "Where traces meet pads and vias. Can be changed after routing: only the teardrops are made "
                        "again", "Teardrops"),
     "routed_board": ("Routed copy of the board", "Also write the routing straight into a copy of the KiCad board (.kicad_pcb) "
@@ -121,6 +124,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "show_pour_islands": ("zone", "orphan", "dead copper", "isolated", "unconnected", "fill", "display", "remnant"),
     "slide_vias": ("move", "straighten", "bend", "shift", "adjust", "via", "optimise", "optimize", "kink"),
     "taper_to_pins": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "wedge"),
+    "least_angle": ("acute", "acid trap", "angle", "sharp", "junction", "branch", "tee", "pad entry", "etch", "dfm", "wedge"),
     "smooth_corners": ("round", "arc", "curve", "bend", "angle", "45", "90", "chamfer", "radius", "fillet", "acute"),
     "teardrop_style": ("teardrop", "fillet", "pad entry", "tear drop", "reinforce", "annular ring", "junction", "via", "kicad",
                        "zone", "session", "export", "fan", "tracks", "none", "off"),
@@ -215,6 +219,7 @@ class Settings:
     show_pour_islands: bool = False
     skip_nets: str = ""  # comma-separated net names or patterns
     smooth_corners: bool = True
+    least_angle: float = 90.0  # degrees; 0 = traces are not redrawn for acute meetings
     show_outlines: bool = True
     show_names: bool = True
     gpu_drawing: bool = False
@@ -263,7 +268,7 @@ class Settings:
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
                        slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
-                       portfolio=self.portfolio)
+                       least_angle=min(max(self.least_angle, 0.0), 90.0), portfolio=self.portfolio)
 
     def cost_overrides(self) -> dict:
         return {"K": self.candidates, "K_reroute": self.reroute_candidates, "max_rounds": self.max_ripup_rounds,

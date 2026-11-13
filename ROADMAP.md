@@ -122,7 +122,22 @@ To do, in order:
 3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
 5. [ ] The Margin layer as board edge: a directional rule (below).
-6. [ ] No acute angles where copper of one net meets.
+6. [-] No acute angles where copper of one net meets (branch `acute`; design 13.3b).
+   Measured (`realize/acute.py`: corners of each net's drawn copper, teardrops
+   included, whose empty wedge is under the least angle, by kind; in the stats,
+   CLI output and sweep records, and `bench/acute.py` with pictures) and fixed
+   in the drawing (`acute.blunt`, after rounding corners): a trace into its pad
+   at a slant leaves it square; a trace leaving a via, pad or trunk with
+   another of its net at a slant runs along it and squares off; kept only with
+   clearances, nothing foreign passed, fewer meetings and the pours' room.
+   Teardrop pairs keep a waist of 90 degrees or more. Setting "Least angle where
+   a net meets itself", `--least-angle` (90; 0 = off). Tier 1, one run each,
+   all meetings before -> after: blade13 53 -> 36, half-swept 55 -> 34,
+   complex-hierarchy 11 -> 3, sonde 10 -> 4, lna915 13 -> 9, ecc83 4 -> 0,
+   pic-programmer 4 -> 1, sweep-mini 6 -> 2, fomu 6 -> 4, ringlight 8 -> 7,
+   castor-expander 7 -> 7, ftp 0 -> 0. Left: fan-out stubs (made after it, by
+   `plan.fanout`), 13.3a's cross-layer sharp vias, and a junction moved with all
+   its connections.
 7. [-] The 45-degree option: moved to 1.2, with the editor (below).
 8. [ ] A via size per net class.
 9. [x] Most curves still exported as segments, not arcs (branch
