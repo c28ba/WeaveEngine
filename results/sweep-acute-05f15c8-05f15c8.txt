@@ -1,0 +1,35 @@
+castor-expander            routed 6/6 -> 6/6  drc 0 -> 0   islands 0 -> 0  mask/thermal 1 -> 1  open 2 -> 1  cut off None -> 1  acute ? -> 7  14 -> 13 s
+castor-mainboard           routed 297/297 -> 297/297  drc 0 -> 0   islands 0 -> 0  mask/thermal 9 -> 14  open 76 -> 30  cut off None -> 10  acute ? -> 64  150 -> 347 s (slower)
+fomu                       routed 17/37 -> 17/37  drc 0 -> 0   islands 0 -> 0  mask/thermal 3 -> 2  open 66 -> 65  cut off None -> 30  acute ? -> 4  22 -> 18 s
+hackrf-lna915              routed 19/23 -> 19/23  drc 9 -> 9 {'copper_edge_clearance': 9}  islands 0 -> 0  mask/thermal 0 -> 0  open 11 -> 11  cut off None -> 0  tapered/narrow None/None -> 1/0  acute ? -> 9  16 -> 19 s
+hackrf-operacake           routed 172/180 -> 172/180  drc 4 -> 2 {'track_dangling': 2}  islands 0 -> 0  mask/thermal 0 -> 0  open 22 -> 20  cut off None -> 0  acute ? -> 78  101 -> 121 s
+kicad-cm5-minima           routed 156/157 -> 157/157  drc 0 -> 1 {'track_dangling': 1}  islands 9 -> 2  mask/thermal 0 -> 0  open 49 -> 28  cut off None -> 8  acute ? -> 49  204 -> 438 s (slower)  WORSE: more DRC
+kicad-coldfire             routed 313/313 -> 313/313  drc 1 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 67 -> 85  cut off None -> 3  tapered/narrow None/None -> 6/1  acute ? -> 50  386 -> 488 s  WORSE: more open
+kicad-complex-hierarchy    routed 87/87 -> 87/87  drc 0 -> 0   islands 0 -> 0  mask/thermal 1 -> 1  open 0 -> 0  cut off None -> 0  acute ? -> 3  16 -> 12 s
+kicad-ecc83                routed 14/14 -> 14/14  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  cut off None -> 0  acute ? -> 0  9 -> 13 s
+kicad-interf-u             routed 159/159 -> 159/159  drc 0 -> 0   islands 0 -> 0  mask/thermal 5 -> 4  open 19 -> 10  cut off None -> 25  acute ? -> 15  107 -> 147 s (slower)
+kicad-mixer                routed 136/173 -> 136/173  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 1  open 45 -> 40  cut off None -> 0  acute ? -> 20  34 -> 36 s
+kicad-openair              routed 229/230 -> 229/230  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 106 -> 61  cut off None -> 10  acute ? -> 120  89 -> 152 s (slower)
+kicad-pic-programmer       routed 86/86 -> 86/86  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 1 -> 0  cut off None -> 0  tapered/narrow None/None -> 9/1  acute ? -> 1  20 -> 28 s (slower)
+kicad-sonde                routed 44/44 -> 44/44  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 4 -> 3  cut off None -> 1  acute ? -> 4  14 -> 11 s
+kicad-stickhub             routed 97/99 -> 97/99  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 30 -> 27  cut off None -> 2  acute ? -> 45  27 -> 35 s
+kicad-tinytapeout          routed 291/349 -> 291/349  drc 1 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 92 -> 62  cut off None -> 4  tapered/narrow None/None -> 2/0  acute ? -> 34  147 -> 320 s (slower)
+lily58-lite                routed 158/158 -> 158/158  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 2 -> 1  cut off None -> 1  acute ? -> 7  46 -> 68 s (slower)
+lily58-pro                 routed 311/311 -> 311/311  drc 0 -> 0   islands 0 -> 0  mask/thermal 5 -> 6  open 5 -> 4  cut off None -> 6  tapered/narrow None/None -> 5/0  acute ? -> 85  102 -> 144 s (slower)
+lily58-pro-v2              routed 360/444 -> 360/444  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 161 -> 122  cut off None -> 6  acute ? -> 68  176 -> 420 s (slower)
+lumen-blade13              routed 70/70 -> 70/70  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 37 -> 18  cut off None -> 5  acute ? -> 36  41 -> 65 s (slower)
+lumen-ftp                  routed 80/80 -> 80/80  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  cut off None -> 0  acute ? -> 0  14 -> 15 s
+lumen-mobo                 routed 332/332 -> 332/332  drc 0 -> 0   islands 0 -> 0  mask/thermal 7 -> 0  open 119 -> 65  cut off None -> 14  acute ? -> 144  488 -> 631 s
+lumen-pi-interface         routed 6/6 -> 6/6  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  cut off None -> 0  acute ? -> 0  12 -> 12 s
+lumen-ringlight            routed 30/30 -> 30/30  drc 0 -> 0   islands 0 -> 0  mask/thermal 2 -> 1  open 8 -> 1  cut off None -> 0  acute ? -> 7  9 -> 15 s (slower)
+lumen-xy-limit             routed 4/4 -> 4/4  drc 0 -> 0   islands 0 -> 0  mask/thermal 0 -> 0  open 0 -> 0  cut off None -> 0  acute ? -> 0  9 -> 10 s
+olimex-poe-c               routed 209/225 -> 201/225  drc 42 -> 32 {'shorting_items': 12, 'clearance': 20}  islands 0 -> 0  mask/thermal 22 -> 21  open 66 -> 51  cut off None -> 54  acute ? -> 50  314 -> 327 s  WORSE: fewer routed
+olimex-poe-m2              routed 222/227 -> 222/227  drc 1 -> 0   islands 0 -> 2  mask/thermal 13 -> 8  open 67 -> 59  cut off None -> 39  acute ? -> 62  134 -> 188 s (slower)  WORSE: more islands
+solo-a                     routed 132/155 -> 132/155  drc 153 -> 153 {'copper_edge_clearance': 153}  islands 0 -> 0  mask/thermal 0 -> 0  open 20 -> 20  cut off None -> 0  acute ? -> 22  118 -> 113 s
+solo-c                     routed 121/142 -> 121/142  drc 122 -> 122 {'copper_edge_clearance': 122}  islands 0 -> 0  mask/thermal 7 -> 7  open 18 -> 18  cut off None -> 0  acute ? -> 26  89 -> 90 s
+sweep-bling-mx             routed 44/44 -> 44/44  drc 0 -> 0   islands 0 -> 0  mask/thermal 8 -> 6  open 12 -> 4  cut off None -> 9  acute ? -> 40  53 -> 70 s (slower)
+sweep-half-swept           routed 28/28 -> 28/28  drc 0 -> 0   islands 35 -> 34  mask/thermal 4 -> 3  open 5 -> 4  cut off None -> 10  acute ? -> 27  19 -> 42 s (slower)
+sweep-mini                 routed 81/81 -> 81/81  drc 0 -> 0   islands 0 -> 0  mask/thermal 2 -> 2  open 0 -> 0  cut off None -> 0  acute ? -> 2  19 -> 23 s
+sweep-v2                   routed 44/46 -> 44/46  drc 0 -> 0   islands 0 -> 0  mask/thermal 4 -> 4  open 3 -> 3  cut off None -> 0  acute ? -> 1  16 -> 26 s (slower)
+upduino                    routed 126/154 -> 122/154  drc 23 -> 16 {'shorting_items': 1, 'clearance': 15}  islands 0 -> 0  mask/thermal 14 -> 15  open 77 -> 67  cut off None -> 12  acute ? -> 50  274 -> 310 s  WORSE: fewer routed
+TOTAL drc 356 -> 335, islands 44 -> 38, mask/thermal 107 -> 96, open 1190 -> 880, cut off 0 -> 0 (where both have it), routing time 3290 -> 4768 s  (some boards worse)
