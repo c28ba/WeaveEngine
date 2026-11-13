@@ -68,7 +68,7 @@ INSET = 0.03       # mm a place is taken inside a region where copper may stand 
 @dataclass
 class Join:
     cost: float
-    kind: str                                      # "relief", "narrowed", "via in pad", "stitch", "via", "trace", "jumper"
+    kind: str                                      # "relief", "narrowed", "via in pad", "stitch", "via", "trace", "jumper", "spoke"
     vias: list = field(default_factory=list)       # (x, y) of each via it adds
     traces: list = field(default_factory=list)     # (layer, [(x, y), (x, y)]) of each trace it adds
     relief: dict = field(default_factory=dict)     # pad id -> {Pad field: value}: its thermal relief as changed
@@ -339,6 +339,47 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
                 break
             tried.add(frozenset(p.pad_id for p in todo[0]))
             attempt(net, todo[0], True)
+    def spoke(net: int, pad: Pad, layer: int, outline) -> None:
+        """Gives ``pad``, which KiCad's check would find starved of thermal spokes in its pour on ``layer``
+        (``pours.starved``), traces from inside it into the fill of the net's main group there, each a spoke that
+        check counts, the cheapest first, until it is not starved; none if that cannot be done."""
+        half = rules.drawn(net) / 2.0
+        kept = snapshot()
+        for _ in range(rules_spokes + 1):  # (the last round only finds whether the spokes made do)
+            work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
+            now = estimates.classify(work, _of(work, fill_of, {net}), wires)
+            pour = next(x for x in now if x.layer == layer and x.outline is outline)
+            if not estimates.starved(work, pour, pad, wires, [(at, pts) for other, at, pts in out.traces if other == net]):
+                return
+            comp, _, main = reach[net]
+            window = pad.shape.buffer(FAR + 1.0).envelope
+            fill = shapely.union_all([x.shape.intersection(window) for x in pour.pieces
+                                      if comp.get(estimates.piece_key(pour, x)) == main and x.shape.intersects(window)])
+            into = {(layer, main): fill.buffer(-(half + GAP))}
+            room = free(net, window, half, rules.clearance, [layer]).intersection(within.buffer(-half).intersection(window))
+            room = room.difference(margin.buffer(half)) if margin is not None else room
+            s = Sizes(r, half, keep, rules.clearance, every)
+            ways = _rays(net, pad.centre, layer, pad, {layer: room}, into, Polygon(), {}, [], s, None, None, trace_ok, via_ok)
+            for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
+                done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
+                if done is not None and _coarser(_groups(work, reach[net][0], net), _groups(done[0], done[3][net][0], net)):
+                    make(net, dataclasses.replace(way, kind="spoke"), done)
+                    break
+            else:
+                break
+        restore(kept)
+
+    # Pads joined with fewer spokes than KiCad asks (a join may have joined them, through fill that met nothing else):
+    # a trace into the fill counts as one.
+    rules_spokes = max(1, board.min_spokes)
+    for net in nets:
+        for k, (other, layer, outline) in enumerate(board.pours):
+            if other != net or layer >= nlayers or k not in state["fill_of"]:
+                continue
+            zone = board.zone(net, layer)
+            for pad in [p for p in state["work"].pads if p.net_id == net and not p.is_via and p.on(layer)
+                        and estimates.joined(p, zone) == "thermal" and p.shape.intersects(outline)]:
+                spoke(net, pad, layer, outline)
     out.left = [p for net in nets for p in state["reach"][net][1]]
     return out
 

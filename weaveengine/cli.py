@@ -78,7 +78,8 @@ def plane_left_note(left: list[int], board) -> str:
 JOIN_NAMES = {"via": "via beside a pad", "via in pad": "via in a pad", "stitch": "stitching via in a cut-off piece",
               "trace": "trace into the fill", "trace to pad": "trace to a joined pad or via",
               "jumper": "jumper (a via in a cut-off piece and a trace on another layer)",
-              "relief": "thermal relief changed", "narrowed": "relief gap and spokes narrowed"}
+              "relief": "thermal relief changed", "narrowed": "relief gap and spokes narrowed",
+              "spoke": "trace from a pad short of thermal spokes into the fill"}
 
 
 def joins_note(kinds: dict) -> str:
