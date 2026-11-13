@@ -216,7 +216,8 @@ def through(board: Board, lines: dict, wire_layer: dict, ends: dict, least: floa
 
 STEP = 0.01          # mm between the points tried along a trace for the end of its new stretch
 LONGEST = 5.0        # mm along a trace from where it first leaves the other copper to where it may be met again
-SLACK = 1e-4         # mm kept beyond each clearance (as ``smooth``)
+SLACK = 1e-4         # mm kept beyond each clearance, as ``smooth`` (on it, as the routing's own traces stand, a
+                     # redrawn trace left an island of pour on sweep-half-swept that the estimate does not see)
 BLUNTED = ("pad", "via", "tee")
 
 

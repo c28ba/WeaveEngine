@@ -355,7 +355,8 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
 def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wire_layer: dict) -> dict:
     """``lines`` with the traces of ``straight`` (``_taut``: not bent round
     vias of their own net) put in where the pours keep their room: no pad is
-    cut off from its pour that was not before (``pours.estimate``), and
+    cut off from its pour that was not before (``pours.estimate``), no island
+    of a pour is left where there was none, and
     fan-out finds a place for a via for every pad it did before
     (``plan.fanout``). Where that fails, the traces near the trouble keep
     their bends, a few times over, and then all do. Likewise the traces the
@@ -371,16 +372,25 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
         def trouble(drawn: dict) -> list:
             """(key, shape, layer or None) of each pad cut off from its pour,
             and of each pad fan-out finds no place for a via for."""
-            cut = [(piece, pour.layer) for pour in estimate_pours(work, drawn, wire_net, wire_layer)
-                   for piece in pour.pieces if piece.kind == "cut"]
+            pieces = [(piece, pour.layer) for pour in estimate_pours(work, drawn, wire_net, wire_layer) for piece in pour.pieces]
+            cut = [(piece, at) for piece, at in pieces if piece.kind == "cut"]
             left = fanout(work, drawn, wire_net, wire_layer, cut={(p, at) for piece, at in cut for p in piece.pad_ids})[2]
             return ([((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids]
-                    + [((p.pad_id, -1), p.shape, None) for p in left])
+                    + [((p.pad_id, -1), p.shape, None) for p in left]
+                    + [(None, piece.shape, at) for piece, at in pieces if piece.kind == "island"])  # (an island: by where it is)
 
-        had = {key for key, _, _ in trouble(lines)}
+        before = trouble(lines)
+        had = {key for key, _, _ in before if key is not None}
+        islands = [(shape, at) for key, shape, at in before if key is None]
+
+        def fresh(found: list) -> list:
+            """(shape, layer) of the trouble that was not there before: an island that overlaps none of before's is new."""
+            return [(shape, at) for key, shape, at in found if (key not in had if key is not None else
+                                                                not any(at == a and shape.intersects(s) for s, a in islands))]
+
         reach = work.rules.via_diameter + 4.0 * work.rules.pitch  # (room for a via and the traces round it)
         for _ in range(OWN_VIA_TRIES):
-            new = [(shape, at) for key, shape, at in trouble(trial) if key not in had]
+            new = fresh(trouble(trial))
             if not new:
                 break
             near = {w for w in straight if trial[w] is straight[w] and any(
@@ -389,7 +399,7 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
                 return lines
             trial.update({w: lines[w] for w in near})
         else:
-            if any(key not in had for key, _, _ in trouble(trial)):
+            if fresh(trouble(trial)):
                 return lines
     for layer in {wire_layer[w] for w in straight}:
         on = [w for w, li in wire_layer.items() if li == layer]

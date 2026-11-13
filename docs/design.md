@@ -1071,6 +1071,12 @@ One setting gives the least angle (90 degrees by default) for all three, and the
 - *Teardrop pairs with no acute waist* (`teardrop.WAIST`): the pair on a short trace is made narrower, as far as need be, so that its waist is no sharper than 90 degrees; failing that, as before.
 - The setting "Least angle where a net meets itself" (`Options.least_angle`, `--least-angle`, 0 to 90, 0 = no blunting; the counts are then taken at 90).
 
+**Measured** (local sweep of tier 1, against taut2 95d67f5, which is main d6d7b1e's code): every board routes as many, with the same KiCad open items (104), cut-off pads (47), DRC the routing causes (9), islands (37) and mask/thermal (12); routing time 152 to 156 s. Meetings of all kinds, before (main) and after: lumen-blade13 53 to 36, sweep-half-swept 55 to 34, kicad-complex-hierarchy 11 to 3, kicad-sonde 10 to 4, hackrf-lna915 13 to 9, kicad-ecc83 4 to 0, kicad-pic-programmer 4 to 1, sweep-mini 6 to 2, fomu 6 to 4, lumen-ringlight 8 to 7, castor-expander 7 to 7, lumen-ftp 0. What is left is mostly fan-out (not blunted), traces in the stacked pads of sweep-half-swept, and pads with no room to be left square.
+
+**Tried: no slack beyond the clearance** for the new stretch (the routing's own traces stand on it; the clearance holds the routing margin already). Most of the tees of a bus that runs beside others then pass (blade13 tees 17 to 2), but sweep-half-swept got one more island of pour in KiCad (37 to 38), which the pour estimate does not see (it is 30 islands off on that board), even with the check below. Not kept; the stretch keeps 0.1 microns beyond, as rounded corners do.
+
+**Islands.** The traces redrawn here, and those straightened over their own vias, now also go back where the estimate shows an island of pour that overlaps none it showed before (`router._over_own_vias`).
+
 Not done: a junction moved with all its connections (the third case above) and 13.3a's `through` vias. Re-planning was tried twice (13.3a); the measure shows those meetings are not acid traps, and the same-layer ones at vias are fixed in the drawing. Fan-out stubs (`fanout`) are made after blunting, by `plan.fanout`, and are not blunted.
 
 ---
