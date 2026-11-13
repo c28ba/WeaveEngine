@@ -219,6 +219,10 @@ def one(bid: str, src: str, path: str, work: str, args) -> dict:
     m = re.search(r"of their traces: (\d+) tapered, (\d+) narrow all along", text)
     if m:
         rec.update(tapered=int(m[1]), narrow=int(m[2]))
+    # Copper of one net meeting itself under the least angle (``realize.acute``), by kind.
+    m = re.search(r"acute meetings of one net's copper: (\d+) \(([^)]*)\)", text)
+    if m:
+        rec["acute"] = {kind: int(n) for kind, n in re.findall(r"(\w+) (\d+)", m[2])}
     if code == "timeout":  # (it may have left the best routing it had in board.ses: that is not this board's result)
         rec.update(stage="route", error=f"no result within {args.limit} s")
         return rec

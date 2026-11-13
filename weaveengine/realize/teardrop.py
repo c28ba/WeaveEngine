@@ -11,6 +11,7 @@ WIDTH = 0.9        # teardrop width at the pad, as a fraction of the pad's width
 MAX_LENGTH = 1.0   # mm: a big pad does not get a teardrop that reaches across the board
 MAX_WIDTH = 2.0    # mm
 BREATHING = 1.5    # a teardrop keeps this many clearances from foreign copper, or is left out
+WAIST = 90.0       # degrees: the least angle at the waist of a pair of teardrops on one trace (no acute notch: design 13.3b)
 
 
 def _point_at(line: list[tuple[float, float]], dist: float):
@@ -98,6 +99,12 @@ def _polygonal(centre, outline: list[tuple[float, float]], p, half_width: float,
     return [centre, best_l[1], _tangent(best_l[1], p, half_width, left), _tangent(best_r[1], p, half_width, right), best_r[1], tuple(p)]
 
 
+def _angle(at, p, q) -> float:
+    """Degrees between at->p and at->q."""
+    ux, uy, vx, vy = p[0] - at[0], p[1] - at[1], q[0] - at[0], q[1] - at[1]
+    return math.degrees(math.atan2(abs(ux * vy - uy * vx), ux * vx + uy * vy))
+
+
 def _written(polys: list, width: float):
     """The copper of teardrops as the session file draws them: each outline and
     the fan of traces that fills it (``ses.teardrop_tracks``), whose round ends
@@ -113,14 +120,15 @@ def _written(polys: list, width: float):
 
 def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wire_net: dict[int, int],
               wire_pads: dict[int, tuple[int, int]], layer: int = 0, max_length: float = MAX_LENGTH,
-              max_width: float = MAX_WIDTH, breathing: float = BREATHING) -> dict[int, list[list[tuple[float, float]]]]:
+              max_width: float = MAX_WIDTH, breathing: float = BREATHING, only: set | None = None) -> dict[int, list[list[tuple[float, float]]]]:
     """wire id -> teardrops, each [pad centre, pad point, track left, track right, pad point, tip]:
     the first five are the outline, the sixth is the centre of the track where the teardrop starts.
 
     Between two pads too close for a teardrop each, the two are made together:
     each takes half of the trace, and they meet in one line across it, their
     "track left" and "track right", so that the pair is an hourglass with no
-    notch at its waist.
+    notch at its waist; and narrower if need be, so that its waist is no
+    sharper than ``WAIST`` (failing that, as wide as there is room for).
 
     Round pads get tangent lines to the pad circle; other convex pads get lines
     to the two pad corners that bound the pad as seen from the trace. Pads that
@@ -133,6 +141,9 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     cramped it is shortened; then it keeps the plain clearance, like a trace;
     then it is made narrower; and only then left out. It always keeps the full
     clearance from the board edge.
+
+    ``only``: the wires to make teardrops for, if not all (the others are
+    still kept clear of).
     """
     roomy = board.rules.clearance * max(1.0, breathing)
     rules = board.rules
@@ -149,6 +160,8 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     out: dict[int, list] = {}
     for w, line in polylines.items():
         net = wire_net[w]
+        if only is not None and w not in only:
+            continue
         if net in rules.net_drawn:  # routed with part of its margin given up: none to spare for a teardrop
             continue
         half = rules.width(net) / 2.0
@@ -208,7 +221,11 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
             # tangent to the trace's round end, and two such ends cross and
             # leave a notch either side.)
             mid = _point_at(pts, reach_a + share)
-            for widest, room in ((max_width, roomy), (max_width, rules.clearance), (min(max_width, 2.0 * min(size_a, size_b)) / 2.0, rules.clearance)):
+            narrow = min(max_width, 2.0 * min(size_a, size_b)) / 2.0
+            tries = [(max_width, roomy), (max_width, rules.clearance), (narrow, rules.clearance)]
+            # (narrower still, for a waist that is no acute notch; failing that, as wide as there is room for)
+            tries = [(widest, room, True) for widest, room in tries + [(narrow / 2.0, rules.clearance), (narrow / 4.0, rules.clearance)]]                 + [(widest, room, False) for widest, room in tries]
+            for widest, room, square in tries:
                 one, two = (shaped(pad_a, mid, widest), shaped(pad_b, mid, widest)) if mid is not None else (None, None)
                 if one is None or two is None:
                     continue
@@ -221,6 +238,8 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
                     if dx * (a[1] - mid[1]) - dy * (a[0] - mid[0]) < dx * (b[1] - mid[1]) - dy * (b[0] - mid[0]):
                         a, b = b, a
                     halves.append([poly[0], a, left, right, b, tuple(mid)])
+                if square and min(_angle(left, halves[0][1], halves[1][1]), _angle(right, halves[0][4], halves[1][4])) < WAIST:
+                    continue
                 if fits(_written(halves, rules.drawn(net)), (pad_a, pad_b), room):
                     out[w] = halves
                     break

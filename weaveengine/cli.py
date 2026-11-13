@@ -118,7 +118,7 @@ OPTION_SWITCHES = {
 }
 OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
                 "skeleton": "--no-skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
-                "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing",
+                "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing", "least_angle": "--least-angle",
                 **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
 COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rounds": "--max-rounds", "h_weight": "--heuristic-weight",
               "layer_cost": "--layer-cost"}
@@ -146,6 +146,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="widest teardrop, across at the pad (default %(default)g)")
     ap.add_argument("--teardrop-breathing", type=float, default=Options.teardrop_breathing, metavar="N",
                     help="clearances a teardrop keeps from foreign copper, else it is left out (default %(default)g)")
+    ap.add_argument("--least-angle", type=float, default=Options.least_angle, metavar="DEG",
+                    help="the least angle at which copper of one net may meet itself (a trace and its pad, traces at a via or "
+                         "pad, a branch off a trunk): sharper meetings, which trap etchant, are redrawn where there is room; "
+                         "0: not (default %(default)g)")
     ap.add_argument("--no-fanout", action="store_true",
                     help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
     ap.add_argument("--no-skeleton", action="store_true",
@@ -203,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
             ap.error(f"{flag}: at least 1")
     if args.heuristic_weight is not None and args.heuristic_weight < 1.0:
         ap.error("--heuristic-weight: 1 or more")
+    if not 0.0 <= args.least_angle <= 90.0:
+        ap.error("--least-angle: 0 to 90 degrees (a branch square to its trunk meets it at 90)")
     if args.drc_rounds < 0:
         ap.error("--drc-rounds: not below 0")
     if args.max_rounds is not None and args.max_rounds < 0:
@@ -287,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     style = "none" if args.no_teardrops or args.no_ses_teardrops else args.teardrops
     options = Options(vias=not args.no_vias, teardrops=style != "none", portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
-                      teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing,
+                      teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing, least_angle=args.least_angle,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
     overrides = {}
@@ -352,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     if stats["narrowed"]:
         print(f"  {narrowed_note(stats['narrowed'], names)}")
         print(f"  of their traces: {stats['tapered']} tapered, {stats['narrow_all_along']} narrow all along")
+    if "acute" in stats:
+        print(f"  acute meetings of one net's copper: {sum(stats['acute'].values())} ("
+              + ", ".join(f"{kind} {n}" for kind, n in stats["acute"].items()) + f"); {stats['blunted']} traces redrawn for them")
     if stats["buried_pads"]:
         print(f"  {unreachable_note(stats['buried_pads'], result.board)}")
     found = estimate_pours(result)

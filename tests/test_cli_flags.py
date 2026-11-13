@@ -40,7 +40,7 @@ def test_every_option_is_a_setting_too():
         t = Settings(**{setting: False})
         assert getattr(t.options(), option) is False, setting
     assert Settings(teardrop_style="none").options().teardrops is False  # (teardrops: a choice of three, one of them none)
-    assert set(flipped.values()) | {"teardrops", "skeleton", "portfolio", "teardrop_max_length", "teardrop_max_width", "teardrop_breathing"} \
+    assert set(flipped.values()) | {"teardrops", "skeleton", "portfolio", "teardrop_max_length", "teardrop_max_width", "teardrop_breathing", "least_angle"} \
         == {f.name for f in dataclasses.fields(Options)}
 
 
