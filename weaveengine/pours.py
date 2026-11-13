@@ -88,6 +88,10 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
     base = rules.clearance - rules.margin if clearance is None else clearance
     inside = pour_area(board, clearance)
     zones = board.pours + board.areas  # (the pours first: their index is theirs in ``board.pours``)
+    barred = {}  # layer -> where rule areas keep fills out
+    for at, shape in board.no_pour:
+        barred.setdefault(at, []).append(shape)
+    barred = {at: shapely.union_all(shapes) for at, shapes in barred.items()}
     # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
     rank = lambda k: board.zone(*zones[k][:2]).priority
     order = sorted(range(len(zones)), key=lambda k: (-rank(k), k))
@@ -153,6 +157,8 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         keep = max(asks(net), own_zone)  # (and from another net's copper, the more of the two classes)
         pair = lambda other: max(keep, asks(other))
         area = outline.intersection(inside)
+        if barred.get(at) is not None:
+            area = area.difference(barred[at])
         if window is not None:
             area = area.intersection(window)
         if k >= len(board.pours) and area.is_empty:

@@ -207,6 +207,7 @@ class Board:
     saved_fills: list = field(default_factory=list)    # (net, layer index, shape) of the zones' fills as the .kicad_pcb has them,
                                                        # from before the routing: KiCad's import of the session gives a via
                                                        # with no trace the net of what it touches there (``plan.fanout``)
+    no_pour: list = field(default_factory=list)        # (layer index, shape) of each rule area that keeps zone fills out
     min_spokes: int = 2                                # thermal spokes KiCad asks of a pad its zone joins (min_resolved_spokes): fewer is a starved thermal
     pour_override: float = 0.0                         # mm: the least width of every pour's fill if set (the user's), else the zones' own
     pour_edge: float | None = None                     # mm: what a pour's fill keeps from the board edge, the board's own rule (the

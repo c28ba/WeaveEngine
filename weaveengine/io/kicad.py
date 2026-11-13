@@ -78,6 +78,7 @@ class KicadBoard:
     thickness: list[tuple] = field(default_factory=list)              # (net name, canonical copper layer, outline, min_thickness) of each copper zone
     zones: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, outline, ``Zone``) of each copper zone
     fills: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, shape) of each zone's fill as saved
+    no_pour: list[tuple] = field(default_factory=list)                # (canonical copper layer, shape) of each rule area that keeps pours out
     areas: dict = field(default_factory=dict)                         # name -> outline of a named zone or rule area
 
 
@@ -293,6 +294,15 @@ def _children(node, name):
 
 def _numbers(node, n: int):
     return [float(v) for v in node[1:1 + n]] if node else []
+
+
+def _copper(layer: str) -> list[str]:
+    """The copper layers a rule area's layer names: itself, or each of "*.Cu", "F&B.Cu"."""
+    if layer == "*.Cu":
+        return ["F.Cu", "B.Cu"] + [f"In{i}.Cu" for i in range(1, 31)]
+    if layer == "F&B.Cu":
+        return ["F.Cu", "B.Cu"]
+    return [layer] if layer.endswith(".Cu") else []
 
 
 def _layers(item) -> list[str]:
@@ -596,6 +606,12 @@ def _rule_area(item, out: KicadBoard) -> None:
         _thickness(item, out)
         _settings(item, out)
         return  # a copper zone, not a rule area
+    if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "copperpour")):
+        for polygon in _children(item, "polygon"):  # (no zone fills there: ``pours.fills``)
+            pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+            if len(pts) >= 3:
+                for layer in _layers(item):
+                    out.no_pour += [(name, Polygon(pts).buffer(0)) for name in _copper(layer)]
     if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
         return  # it does keep traces out
     for polygon in _children(item, "polygon"):
@@ -827,6 +843,8 @@ def apply(design, kicad: KicadBoard) -> str:
     if any(z.clearance and z.clearance > rules.clearance - rules.margin + 1e-9 for key, z in board.pour_zone.items()
            if key in {(net, at) for net, at, _ in board.pours}):
         said.append("the zones' own clearances")
+    # Where rule areas keep pours out (``Board.no_pour``).
+    board.no_pour = [(on(layer), shape) for layer, shape in kicad.no_pour if on(layer) is not None and not shape.is_empty]
     # The zones' fills as saved, from before the routing (``Board.saved_fills``).
     board.saved_fills = [(design.net_ids[name], on(layer), shape) for name, layer, shape in kicad.fills
                          if name in design.net_ids and on(layer) is not None and not shape.is_empty]

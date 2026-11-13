@@ -402,3 +402,13 @@ def test_a_pad_whose_spokes_reach_only_fill_that_meets_nothing_else_is_starved_o
     fill_of, _ = pours.fills(board, {}, {}, {}, wires=joined)
     [pour] = pours.classify(board, fill_of, joined)
     assert pours.starved(board, pour, pad, joined)
+
+
+def test_a_rule_area_that_keeps_pours_out_is_not_filled():
+    """A KiCad rule area that does not allow copper pour (traces and vias allowed): no fill there."""
+    board = board_with_pour()
+    board.no_pour = [(1, box(14, 0, 15, 30))]  # (a strip across the board, on the back)
+    [pour] = pours.estimate(board, {}, {}, {})
+    assert len(pour.pieces) == 2 and not any(p.shape.intersects(box(14.01, 1, 14.99, 29)) for p in pour.pieces)
+    board.no_pour = [(0, box(14, 0, 15, 30))]  # (on the front: the back is whole)
+    assert len(pours.estimate(board, {}, {}, {})[0].pieces) == 1
