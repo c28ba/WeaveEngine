@@ -112,6 +112,12 @@ To do, in order:
      2.2 mm hairpin out to that via and back, which was all that touched it
      on a second layer. Such a via joins nothing and is no longer drawn; the
      traces meet at the point (`router._drawn`).
+   Sweep of tiers 1 to 3 at 95d67f5 against main 3f4f8ad: every board routes
+   as many, with the same open items (880), cut-off pads (250) and islands;
+   DRC the routing causes 342 to 339 (olimex-poe-m2 2 to 0: two dangling
+   tracks; lily58-pro-v2 1 to 0: a one-layer via). Routing time 4289 to
+   4752 s: the last pull is made up to twice more per layer, and the pours
+   are estimated again for the straightened traces.
 2. [x] Pours that stay whole by default (done above; what is left is below).
 3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).
