@@ -351,3 +351,54 @@ def test_a_zones_island_removal_and_a_pads_angle_and_spoke_angle_are_read(tmp_pa
     assert (back[3].islands, back[3].island_area, front[3].islands) == (2, 4.0, 0)  # (KiCad's default: every island removed)
     one, two = kicad.pads
     assert (one.turn, one.spoke_angle, two.turn, two.spoke_angle) == (90.0, 45.0, 120.0, None)
+
+
+def test_one_open_item_for_each_group_of_pads_cut_off_and_pieces_joined_by_any_copper_of_the_net():
+    """The open items are counted as KiCad counts them, one per group of pads cut off together; a trace of the net from
+    a cut-off piece to the main one joins it, as KiCad sees."""
+    board = board_with_pour()
+    board.pads.append(Pad.circle(3, 21.2, 22, 0.4, GND, "C3-1", BACK))  # (two pads in the one ring)
+    lines, nets, layers = {0: ring(20.6, 22, 3)}, {0: SIG}, {0: 1}
+    found = pours.estimate(board, lines, nets, layers)
+    assert sorted(found[0].cut_off) == ["C3-1", "C3-2"] and pours.unjoined(found) == [[2, 3]]
+    board.pours.append((GND, 0, box(1, 1, 39, 29)))  # (a trace of the net on the front, from in the ring to the plane)
+    board.pads += [Pad.circle(4, 20, 22, 0.3, GND, "", None, True), Pad.circle(5, 30, 18, 0.3, GND, "", None, True)]
+    lines, nets, layers = {0: ring(20.6, 22, 3), 1: [(20, 22), (30, 18)]}, {0: SIG, 1: GND}, {0: 1, 1: 1}
+    found = pours.estimate(board, lines, nets, layers)
+    assert not found[0].cut_off and pours.unjoined(found) == []
+
+
+def test_a_zone_that_is_not_a_pour_takes_room_from_the_pours_it_outranks():
+    """A teardrop, or copper on one pad of a routed net, is a zone KiCad fills too: of a higher priority, a pour keeps
+    clear of it."""
+    from weaveengine.board import Zone
+    board = board_with_pour()
+    board.areas.append((SIG, 1, box(14, 1, 15, 29)))  # (a strip across the board, above the ground pour)
+    board.pour_zone[(SIG, 1)] = Zone(priority=5)
+    [pour] = pours.estimate(board, {}, {}, {})
+    assert len(pour.pieces) == 2 and not pour.pieces[0].shape.intersects(box(14, 1, 15, 29))
+    board.pour_zone[(SIG, 1)] = Zone(priority=0)  # (below it: the pour fills first, and the strip keeps clear)
+    [pour] = pours.estimate(board, {}, {}, {})
+    assert len(pour.pieces) == 1
+
+
+def test_a_pad_whose_spokes_reach_only_fill_that_meets_nothing_else_is_starved_once_some_of_it_is_joined():
+    """KiCad's check of thermal reliefs: a spoke into fill that meets nothing but its pad counts only if no other
+    spoke does, so joining one of four such stretches leaves the pad one spoke, and starved."""
+    from weaveengine.board import Zone
+    board = board_with_pour()
+    pad = Pad(1, GND, box(19.5, 14.5, 20.5, 15.5), "C3-2", BACK)  # (square: four spokes, along its sides)
+    board.pads = [Pad.circle(0, 8, 8, 0.6, GND, "U1-1", BACK), pad]
+    board.pour_zone[(GND, 1)] = Zone(gap=0.3, spoke=0.3, connect="thermal")
+    walls = [[(17, 12), (23, 12), (23, 18), (17, 18), (17, 12)]]  # (a box round the pad, cut in four from its corners)
+    walls += [[(20 + 0.65 * dx, 15 + 0.65 * dy), (20 + 3 * dx, 15 + 3 * dy)] for dx in (-1, 1) for dy in (-1, 1)]
+    lines = dict(enumerate(walls))
+    nets, layers = {w: SIG for w in lines}, {w: 1 for w in lines}
+    wires = pours.copper_of(board, lines, nets, layers)
+    fill_of, _ = pours.fills(board, {}, {}, {}, wires=wires)
+    [pour] = pours.classify(board, fill_of, wires)
+    assert not pours.starved(board, pour, pad, wires)  # (four stretches that meet nothing else: all count)
+    joined = wires + [(shapely.LineString([(22, 15), (25, 15)]).buffer(0.1), GND, 1)]  # (a trace from one of them out)
+    fill_of, _ = pours.fills(board, {}, {}, {}, wires=joined)
+    [pour] = pours.classify(board, fill_of, joined)
+    assert pours.starved(board, pour, pad, joined)

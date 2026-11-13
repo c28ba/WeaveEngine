@@ -398,17 +398,21 @@ def relief(pad, zone) -> tuple[float, float]:
     return pad.thermal_gap or zone.gap or GAP, pad.spoke or zone.spoke or SPOKE
 
 
-def starved(board, pour: Pour, pad, wires: list, traces=()) -> bool:
+def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = None) -> bool:
     """Whether KiCad's check of thermal reliefs finds ``pad`` starved in ``pour`` (its pieces, ``classify``): fewer
     spokes join it to the fill than the board asks (``Board.min_spokes``). As KiCad counts them
-    (``DRC_TEST_PROVIDER_ZONE_CONNECTIONS``): its spokes that the fill keeps; those into a piece that meets nothing
-    else of the net (``wires``: shape, net, layer) only if there are no others; and, if still too few, the traces of
-    its net on the pour's layer (``traces``: (layer, points)) from inside the pad to a point in the fill. A pad no
-    spoke reaches at all is not checked: it is not joined (or by traces alone)."""
+    (``DRC_TEST_PROVIDER_ZONE_CONNECTIONS``): its spokes that the fill keeps; those into a stretch of fill that meets
+    nothing else of the net (no other pad or via, nor a trace: ``wires``, shape, net, layer) only if there are no
+    others; and, if still too few, the traces of its net on the pour's layer (``traces``: (layer, points)) from inside
+    the pad to a point in the fill. A stretch of fill is a piece less the pad: KiCad's fill does not hold the pad, so
+    two spokes into one piece only through the pad are two stretches. A pad no spoke reaches at all is not checked:
+    it is not joined (or by traces alone). ``pads``: pad id -> Pad, if known."""
     zone = board.zone(pour.net, pour.layer)
     if pad.net_id != pour.net or pad.is_via or not pad.on(pour.layer) or joined(pad, zone) != "thermal":
         return False
+    pads = pads if pads is not None else {p.pad_id: p for p in board.pads}
     real = alone = 0
+    cut: dict = {}  # piece -> its stretches
     for shape, _ in spokes(pad, zone, board.pour_width(pour.net, pour.layer)):
         out = shape.difference(pad.shape)
         if out.area <= 0:
@@ -416,8 +420,14 @@ def starved(board, pour: Pour, pad, wires: list, traces=()) -> bool:
         piece = next((x for x in pour.pieces if x.shape.intersection(out).area >= HELD * out.area), None)
         if piece is None:
             continue
-        lone = piece.pad_ids <= {pad.pad_id} and not any(
-            net == pour.net and at == pour.layer and piece.shape.intersects(shape_) for shape_, net, at in wires)
+        if id(piece) not in cut:
+            rest = piece.shape.difference(pad.shape)
+            cut[id(piece)] = [g for g in getattr(rest, "geoms", [rest]) if g.area > 0]
+        stretch = max(cut[id(piece)], key=lambda g: g.intersection(out).area, default=None)
+        if stretch is None:
+            continue
+        lone = not any(i != pad.pad_id and i in pads and stretch.intersects(pads[i].shape) for i in piece.pad_ids) and not any(
+            net == pour.net and at == pour.layer and stretch.intersects(shape_) for shape_, net, at in wires)
         alone += lone
         real += not lone
     if real == alone == 0 or real >= board.min_spokes:

@@ -435,14 +435,15 @@ def _starved(board: Board, pours: list, wires: list, traces: list, net: int, nea
     ``pours`` or in ``also`` (the same pours another way, so that both count the same pads)."""
     from weaveengine import pours as estimates
     mine = [(layer, pts) for other, layer, pts in traces if other == net]
-    pads = [p for p in board.pads if p.net_id == net and not p.is_via]
+    by_id = {p.pad_id: p for p in board.pads if p.net_id == net}
+    pads = [p for p in by_id.values() if not p.is_via]
     count = 0
     for pour in pours:
         if pour.net != net:
             continue
         ids = {i for x in [*pour.pieces, *(y for twin in also if twin.layer == pour.layer and twin.outline is pour.outline
                                           for y in twin.pieces)] if x.shape.intersects(near) for i in x.pad_ids}
-        count += sum(estimates.starved(board, pour, p, wires, mine) for p in pads
+        count += sum(estimates.starved(board, pour, p, wires, mine, by_id) for p in pads
                      if p.on(pour.layer) and (p.pad_id in ids or p.shape.distance(near) < STARVED))
     return count
 
