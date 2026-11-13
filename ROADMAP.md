@@ -129,7 +129,12 @@ To do, in order:
    directly) solo-a 477 to 146, solo-c 369 to 132, hackrf-lna915 9 to 3. The
    directional rule, `--margin-drawings edge`, gives 31, 20 and 3, but Solo
    then routes 28 and 22 connections fewer (its drawings are shield outlines
-   its own routing crosses): a choice, not the default.
+   its own routing crosses): a choice, not the default. Sweep of 20e36e9
+   against acute's c9f2d42: every board routes, opens, islands and
+   mask/thermal as before; routing-caused DRC 334 to 321 (KiCad's 199 cap
+   hides most of Solo's); but acute meetings at pads rise (solo-a 8 to 28,
+   solo-c 1 to 24, lna915 4 to 5): a pad or via within the edge clearance
+   gets no teardrop now, and its trace is not blunted there.
 6. [-] No acute angles where copper of one net meets (branch `acute`; design 13.3b).
    Measured (`realize/acute.py`: corners of each net's drawn copper, teardrops
    included, whose empty wedge is under the least angle, by kind; in the stats,
