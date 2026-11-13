@@ -446,6 +446,14 @@ new example (a board and where on it); then it moves up to be fixed.
   change as 1: off by default, behind its own setting and flag. Pin swaps,
   net ties and moved parts change the design, so they are only suggested in
   the Warnings section, never done.
+  Built (2026-11, branch `pour-join`; design 11.3): 1 to 3 and the jumper
+  (a via pair and a trace on another layer), chosen by cost and checked with
+  the estimate; 4 not yet. On the way the estimate was made to see what
+  KiCad sees: the zones that are not pours (teardrops, copper on one pad),
+  the net's copper across layers for what is joined, open items counted per
+  group of pads, and KiCad's rule for starved thermal reliefs (a join is
+  refused if it leaves more). Left: two cases where the estimate's fill
+  differs from KiCad's (cm5-minima, one island; olimex-poe-m2, one via).
 
 ### Rules
 

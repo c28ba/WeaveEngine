@@ -15,6 +15,7 @@ from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
 from weaveengine.plan import skeleton
 from weaveengine.plan.fanout import join as join_pours
+from weaveengine.pours import estimate as estimate_pours, unjoined as unjoined_pads
 from weaveengine.plan.path import find
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
@@ -335,10 +336,10 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
 def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wire_layer: dict) -> dict:
     """``lines`` with the traces of ``straight`` (``_taut``: not bent round
     vias of their own net) put in where the pours keep their room: no pad is
-    cut off from its pour that was not before (``pours.estimate``), and
-    fan-out finds a place for a via for every pad it did before
-    (``plan.fanout``). Where that fails, the traces near the trouble keep
-    their bends, a few times over, and then all do. Likewise the traces the
+    cut off from its pour that was not before (``pours.estimate``), nor left
+    with no fill of its net to join it (fan-out's to join, ``plan.fanout``).
+    Where that fails, the traces near the trouble keep their bends, a few
+    times over, and then all do. Likewise the traces the
     check finds more on than before (straightened beside others that keep
     their bends), and then all on their layer."""
     from weaveengine.realize import drc
@@ -347,12 +348,16 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
         return lines
     trial = {**lines, **straight}
     if work.pours:
+        pads = {p.pad_id: p for p in work.pads}
+
         def trouble(drawn: dict) -> list:
             """(key, shape, layer or None) of each pad cut off from its pour,
-            and of each pad fan-out finds no place for a via for."""
-            cut = [(piece, pour.layer) for pour in estimate_pours(work, drawn, wire_net, wire_layer)
-                   for piece in pour.pieces if piece.kind == "cut"]
-            left = fanout(work, drawn, wire_net, wire_layer, cut={(p, at) for piece, at in cut for p in piece.pad_ids})[2]
+            and of each other pad not joined to the rest of its net (no fill
+            of its net reaches it: fan-out's to join, ``plan.fanout``)."""
+            found = estimate_pours(work, drawn, wire_net, wire_layer)
+            cut = [(piece, pour.layer) for pour in found for piece in pour.pieces if piece.kind == "cut"]
+            held = {p for piece, _ in cut for p in piece.pad_ids}
+            left = [pads[i] for group in unjoined_pads(found) for i in group if i not in held]
             return ([((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids]
                     + [((p.pad_id, -1), p.shape, None) for p in left])
 
