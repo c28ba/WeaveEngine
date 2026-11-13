@@ -60,6 +60,11 @@ DESCRIPTIONS = {
     "pour_narrow_reliefs": ("Narrow a pad's relief to join it", "A pad cut off from its pour may have its relief gap narrowed "
                             "to the zone's clearance and its spokes to the zone's minimum width, where that joins it and costs "
                             "least. Not the zone's rule: written as the pad's own in the routed copy of the board", "Pours"),
+    "join_bare_islands": ("Join pour islands that have no pads", "A piece of a pour that holds no pad and that its zone "
+                          "keeps (KiCad reports it as isolated copper) is joined to the rest of its net, by a via in it or a "
+                          "trace from it, so that the pour is whole under the traces. Off: such pieces are left as they are", "Pours"),
+    "pour_spokes": ("Add spokes to starved thermal pads", "A pad joined to its pour by fewer thermal spokes than the board asks "
+                    "(KiCad's starved thermal) gets traces from it into the fill, each a spoke KiCad counts", "Pours"),
     "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which "
                        "traces move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it", "Pours"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
@@ -128,6 +133,8 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "fanout_to_planes": ("fan out", "fanout", "plane", "ground", "gnd", "power", "pour", "zone", "via", "stitch", "decoupling"),
     "pour_reliefs": ("thermal", "relief", "spoke", "solid", "zone", "connection", "starved", "pad", "override", "kicad"),
     "pour_narrow_reliefs": ("thermal", "relief", "gap", "spoke", "width", "clearance", "narrow", "starved", "pad", "override"),
+    "join_bare_islands": ("island", "isolated", "copper", "pour", "zone", "plane", "stitch", "via", "whole", "return path", "fill"),
+    "pour_spokes": ("thermal", "spoke", "starved", "relief", "pad", "pour", "zone", "drc", "connection", "trace"),
     "pour_skeletons": ("zone", "plane", "copper fill", "fill", "connectivity", "split", "cut", "thermal", "spoke", "whole"),
     "pour_min_width": ("zone", "fill", "minimum thickness", "min width", "sliver", "copper fill", "thin", "narrowest"),
     "show_pours": ("zone", "plane", "copper fill", "fill", "display", "draw", "ground plane", "polygon"),
@@ -225,6 +232,8 @@ class Settings:
     fanout_to_planes: bool = True
     pour_reliefs: bool = False
     pour_narrow_reliefs: bool = False
+    join_bare_islands: bool = False
+    pour_spokes: bool = True
     pour_skeletons: bool = True
     pour_min_width: float = 0.0  # mm; 0 = from the board's zones
     show_pours: bool = True
@@ -278,7 +287,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        least_angle=min(max(self.least_angle, 0.0), 90.0), portfolio=self.portfolio)
 

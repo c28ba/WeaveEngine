@@ -113,13 +113,15 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
 
 
 def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), teardrops=None, widths: dict | None = None,
-         reliefs: bool = False, narrow: bool = False) -> Joined:
+         reliefs: bool = False, narrow: bool = False, islands: bool = False, spokes: bool = True) -> Joined:
     """For the routed ``board`` (its vias among its pads), its traces and other copper ``shapes`` (shape, net,
     layer: teardrops; and the same as ``teardrops``, wire -> polygons, for the fill): the pads of plane nets not
     joined to the rest of their net, joined by the cheapest way (see the module). ``widths``: wire -> [(points,
     width)] for traces drawn in pieces (``realize.taper``). ``reliefs``: a pad's thermal relief may be made solid or
     its spokes turned; ``narrow``: its relief gap narrowed to the zone's clearance and its spokes to the zone's
-    least width."""
+    least width. ``islands``: pieces of pour with no pad that their zone keeps are joined too (KiCad reports them as
+    isolated copper; joined, the pour is whole under the traces). ``spokes``: a pad short of thermal spokes gets
+    traces from it into the fill, which KiCad counts as spokes."""
     from weaveengine import pours as estimates
     rules = board.rules
     out = Joined()
@@ -441,9 +443,10 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
                 make(net, way, done)
                 return
 
-    # Islands of a pour that its zone keeps, and KiCad reports as isolated copper: joined to the net where that can be.
+    # Islands of a pour that its zone keeps, and KiCad reports as isolated copper: joined to the net where that can be,
+    # if asked for (they join no pad: a whole pour is the designer's choice).
     # (Only where the zone is known, from the .kicad_pcb: else they are shown, but KiCad's default removes them.)
-    for net in nets:
+    for net in nets if islands else ():
         if state["reach"][net][2] is None:
             continue
         lone = [(pour.layer, x.shape) for pour in estimates.classify(state["work"], _of(state["work"], state["fill_of"], {net}),
@@ -455,7 +458,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     # Pads joined with fewer spokes than KiCad asks (a join may have joined them, through fill that met nothing else):
     # a trace into the fill counts as one.
     rules_spokes = max(1, board.min_spokes)
-    for net in nets:
+    for net in nets if spokes else ():
         for k, (other, layer, outline) in enumerate(board.pours):
             if other != net or layer >= nlayers or k not in state["fill_of"]:
                 continue

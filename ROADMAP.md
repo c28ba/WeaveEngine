@@ -473,8 +473,9 @@ new example (a board and where on it); then it moves up to be fixed.
   the net's copper across layers for what is joined, open items counted per
   group of pads, and KiCad's rule for starved thermal reliefs (a join is
   refused if it leaves more; a pad left short of spokes gets traces into the
-  fill, which KiCad counts as spokes), islands the zone keeps joined too, and
-  no join KiCad's import would give another net (a via touching only another
+  fill, which KiCad counts as spokes; a setting, on), islands with no pad
+  joined too if asked for (a setting, off), and no join KiCad's import would
+  give another net (a via touching only another
   net's saved fill).
 
 ### Rules

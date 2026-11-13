@@ -145,6 +145,7 @@ OPTION_SWITCHES = {
 }
 OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
                 "reliefs": "--change-reliefs", "narrow_reliefs": "--narrow-reliefs",
+                "bare_islands": "--join-pad-less-islands", "spokes": "--no-pour-spokes",
                 "skeleton": "--no-skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
                 "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing", "least_angle": "--least-angle",
                 **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
@@ -187,6 +188,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--narrow-reliefs", action="store_true",
                     help="a pad cut off from its pour may have its relief gap narrowed to the zone's clearance and its spokes to "
                          "the zone's minimum width, where that is the cheapest join (written as with --change-reliefs)")
+    ap.add_argument("--join-pad-less-islands", action="store_true",
+                    help="join pieces of a pour that hold no pad, and that the zone keeps (KiCad reports them as isolated "
+                         "copper), to the rest of their net too, by a via in them or a trace from them")
+    ap.add_argument("--no-pour-spokes", action="store_true",
+                    help="no traces from a pad short of thermal spokes into its pour's fill (KiCad counts each as a spoke): "
+                         "such pads are left as KiCad's starved thermals")
     ap.add_argument("--no-skeleton", action="store_true",
                     help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
                          "traces are routed, which traces move off where they can; design 11.3)")
@@ -327,7 +334,8 @@ def main(argv: list[str] | None = None) -> int:
     rules.margin = args.margin
     style = "none" if args.no_teardrops or args.no_ses_teardrops else args.teardrops
     options = Options(vias=not args.no_vias, teardrops=style != "none", portfolio=args.portfolio, narrow=not args.no_narrowing,
-                      fanout=not args.no_fanout, reliefs=args.change_reliefs, narrow_reliefs=args.narrow_reliefs, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
+                      fanout=not args.no_fanout, reliefs=args.change_reliefs, narrow_reliefs=args.narrow_reliefs,
+                      bare_islands=args.join_pad_less_islands, spokes=not args.no_pour_spokes, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
                       teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing, least_angle=args.least_angle,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
