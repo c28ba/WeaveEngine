@@ -60,8 +60,8 @@ DESCRIPTIONS = {
     "pour_narrow_reliefs": ("Narrow a pad's relief to join it", "A pad cut off from its pour may have its relief gap narrowed "
                             "to the zone's clearance and its spokes to the zone's minimum width, where that joins it and costs "
                             "least. Not the zone's rule: written as the pad's own in the routed copy of the board", "Pours"),
-    "join_bare_islands": ("Join pour islands that have no pads", "A piece of a pour that holds no pad and that its zone "
-                          "keeps (KiCad reports it as isolated copper) is joined to the rest of its net, by a via in it or a "
+    "join_bare_islands": ("Join pour islands that have no pads", "A piece of a pour that holds no pad and that its zone does "
+                          "not remove (KiCad reports it as isolated copper) is joined to the rest of its net, by a via in it or a "
                           "trace from it, so that the pour is whole under the traces. Off: such pieces are left as they are", "Pours"),
     "pour_spokes": ("Add spokes to starved thermal pads", "A pad joined to its pour by fewer thermal spokes than the board asks "
                     "(KiCad's starved thermal) gets traces from it into the fill, each a spoke KiCad counts", "Pours"),

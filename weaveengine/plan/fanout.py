@@ -55,7 +55,6 @@ IN_PAD = 1.0       # more, for a via in a pad (solder runs down it)
 RELIEF = 0.5       # a pad's thermal relief changed (no copper, but not as the zone asks)
 NARROWED = 1.0     # a pad's relief gap and spokes narrowed
 ROOM = 0.5         # each mm2 of a layer its copper takes, with the clearance round it
-SQUARE = 1.0       # a trace that leaves a pad (not a round one) at a slant to its side: an acute meeting (``realize.acute``)
 TURN = 0.5         # degrees off square that is square
 SURE = 0.25        # mm: an end this far into the fill (past a via's radius, or past where a trace may end) is sure to be reached
 UNSURE = 4.0       # each mm an end falls short of that
@@ -389,7 +388,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             room = free(net, window, half, rules.clearance, [layer]).intersection(within.buffer(-half).intersection(window))
             room = room.difference(margin.buffer(half)) if margin is not None else room
             s = Sizes(r, half, keep, rules.clearance, every)
-            ways = _rays(net, pad.centre, layer, pad, {layer: room}, into, Polygon(), {}, [], s, None, None, trace_ok, via_ok)
+            ways = _rays(net, pad.centre, layer, pad, {layer: room}, into, Polygon(), {}, [], s, None, None, trace_ok, via_ok,
+                         straight=True)
             for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
                 done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
                 if done is not None and _coarser(_groups(work, reach[net][0], net), _groups(done[0], done[3][net][0], net)):
@@ -728,32 +728,67 @@ def _nearest(region, aims: list, count: int) -> list[tuple[float, float]]:
 
 
 def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land: dict, ends: list, s: Sizes, landed,
-          via_cost, trace_ok, via_ok, via_start=None) -> list[Join]:
+          via_cost, trace_ok, via_ok, via_start=None, straight: bool = False) -> list[Join]:
     """The joins by one straight trace on ``layer`` from ``start`` (a ``pad``'s centre, or, with ``via_start`` (its
     cost, and the layer of the piece it is in), a via in a cut-off piece): into another group's fill there, to its pad
     or via, or to a via that lands in its fill on another layer; the cheapest of each kind to each group, along
-    ``DIRECTIONS`` rays."""
+    ``DIRECTIONS`` rays. From a pad that is not round, a trace leaves square to a side (a slant is an acute meeting,
+    ``realize.acute``): out square from each side to just past it, and from there along each ray that turns by no
+    more than a right angle; ``straight``: only square out of a side, no turn (a spoke, which KiCad counts by a
+    track's two ends)."""
     free = tfree.get(layer)
     if free is None or free.is_empty:
         return []
     kind = "trace" if via_start is None else "jumper"
     base = 0.0 if via_start is None else via_start[0]
     first = [] if via_start is None else [start]
-    x0, y0 = start
-    t = np.arange(0.0, FAR + (_extent(pad) if pad is not None else 0.0) + 1e-9, STEP)
-    a = 2.0 * np.pi * np.arange(DIRECTIONS) / DIRECTIONS
-    if pad is not None and pad.radius is None:  # (and square off each side of a pad that is not round)
-        a = np.concatenate([a, np.radians(_turn(pad) + 90.0 * np.arange(4)) % (2.0 * np.pi)])
-    aslant = np.array([_aslant(pad, math.degrees(d)) for d in a]) * SQUARE  # (what a trace leaving the pad there costs more)
-    xs, ys = x0 + np.outer(np.cos(a), t), y0 + np.outer(np.sin(a), t)
+    round_ = 2.0 * np.pi * np.arange(DIRECTIONS) / DIRECTIONS
+    if pad is not None and pad.radius is None:
+        # (each ray from a point just past a side, square out of it: the trace runs pad middle, that point, its end)
+        turn = _turn(pad)
+        rays, lead = [], {}
+        for k in range(4):
+            axis = math.radians(turn + 90.0 * k) % (2.0 * np.pi)
+            out = _out(pad, math.degrees(axis), s.half)
+            if trace_ok(net, layer, start, out, pad):
+                lead[k] = out
+                rays += [(out, d, k) for d in np.unique(np.round(np.append(round_, axis), 9))
+                         if (abs(math.sin(d - axis)) < 1e-9 if straight else True) and math.cos(d - axis) > 1e-9]
+        if not rays:
+            return []
+        origin = np.array([o for o, _, _ in rays])
+        a = np.array([d for _, d, _ in rays])
+        side = [k for _, _, k in rays]
+        t = np.arange(0.0, FAR + 1e-9, STEP)
+        stub = s.half + GAP  # (the trace's length past the pad to the turn)
+    else:
+        origin = np.tile(np.array(start, dtype=float), (DIRECTIONS, 1))
+        a, side, lead = round_, [None] * DIRECTIONS, {}
+        t = np.arange(0.0, FAR + (_extent(pad) if pad is not None else 0.0) + 1e-9, STEP)
+        stub = 0.0
+    xs, ys = origin[:, :1] + np.outer(np.cos(a), t), origin[:, 1:] + np.outer(np.sin(a), t)
     clear = shapely.contains_xy(free, xs, ys)
-    beyond = np.zeros_like(xs)  # (how far each place is beyond the pad: the trace's length that counts)
-    if pad is not None:
+    if lead:
+        beyond = stub + np.broadcast_to(t, xs.shape)  # (how far each place is beyond the pad: the trace's length that counts)
+    elif pad is not None:
         beyond = shapely.distance(pad.shape, shapely.points(xs, ys))
         clear |= beyond <= 0.0  # (inside the pad is its own copper)
     else:
         beyond = np.broadcast_to(t, xs.shape)
     stop = np.where((~clear).any(axis=1), (~clear).argmax(axis=1), len(t))  # (each ray, up to where it is first not clear)
+
+    def path(k: int, x: float, y: float) -> list:
+        """The points of the trace along ray ``k`` to (x, y)."""
+        if side[k] is None:
+            return [start, (x, y)]
+        turn_at = lead[side[k]]
+        if abs(math.sin(math.atan2(y - turn_at[1], x - turn_at[0]) - math.atan2(turn_at[1] - start[1], turn_at[0] - start[0]))) < 1e-9:
+            return [start, (x, y)]  # (straight on, square out of the side)
+        return [start, turn_at, (x, y)]
+
+    def path_ok(k: int, x: float, y: float) -> bool:
+        pts = path(k, x, y)
+        return trace_ok(net, layer, pts[-2], pts[-1], pad if len(pts) == 2 else None)
     best: dict = {}
 
     def offer(join: Join, group) -> None:
@@ -786,9 +821,9 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
                 i = min(got[0] + int(round(SURE / STEP)), stop[k] - 1)
                 i = i if hit[k, i] else got[0]
                 x, y, length = float(xs[k, i]), float(ys[k, i]), float(beyond[k, i])
-                if not dead(kind, group, base + aslant[k] + length + ROOM * s.trace_room(length)) and trace_ok(net, layer, start, (x, y), pad):
-                    offer(Join(base + aslant[k] + length + ROOM * s.trace_room(length) + UNSURE * max(0.0, SURE - _depth(aim, x, y)),
-                               kind, vias=list(first), traces=[(layer, [start, (x, y)])]), group)
+                if not dead(kind, group, base + length + ROOM * s.trace_room(length)) and path_ok(k, x, y):
+                    offer(Join(base + length + ROOM * s.trace_room(length) + UNSURE * max(0.0, SURE - _depth(aim, x, y)),
+                               kind, vias=list(first), traces=[(layer, path(k, x, y))]), group)
     # To a via that lands in the main fill on another layer: beside the pad, or clear of the jumper's first via.
     vhit = shapely.contains_xy(vland, xs, ys) & (beyond >= (s.r + GAP if pad is not None else 2.0 * s.r + HOLES))
     skip = [layer] + ([at for at, _ in land if pad.on(at)] if pad is not None else [])
@@ -799,28 +834,61 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
         for key, mask in masks.items():  # (along this ray, the first good place that lands in each group, and others further)
             last = -math.inf
             for i in np.nonzero(mask[k, :stop[k]])[0]:
-                if dead(vkind, key[1], base + aslant[k] + least[k, i] + ROOM * s.trace_room(least[k, i]) + VIA + ROOM * s.via_room):
+                if dead(vkind, key[1], base + least[k, i] + ROOM * s.trace_room(least[k, i]) + VIA + ROOM * s.via_room):
                     break  # (nothing further along it can be kept)
                 if t[i] - last < APART:
                     continue
                 x, y = float(xs[k, i]), float(ys[k, i])
-                if not via_ok(net, x, y) or not trace_ok(net, layer, start, (x, y), pad):
+                if not via_ok(net, x, y) or not path_ok(k, x, y):
                     continue
                 last = t[i]
                 length = float(beyond[k, i])
-                offer(Join(base + aslant[k] + length + ROOM * s.trace_room(length) + via_cost(x, y, key), vkind,
-                           vias=first + [(x, y)], traces=[(layer, [start, (x, y)])]), key[1])
+                offer(Join(base + length + ROOM * s.trace_room(length) + via_cost(x, y, key), vkind,
+                           vias=first + [(x, y)], traces=[(layer, path(k, x, y))]), key[1])
     for thing, (x, y), group in ends:  # to a pad or via of another group
         if not thing.on(layer):
             continue
-        length = pad.shape.distance(Point(x, y)) if pad is not None else math.dist(start, (x, y))
         tkind = kind + " to pad" if via_start is None else kind
-        way = math.degrees(math.atan2(y - start[1], x - start[0]))
-        cost = base + length + ROOM * s.trace_room(length) + SQUARE * (_aslant(pad, way) + _aslant(thing, way + 180.0))
-        if 1e-9 < length <= FAR and not dead(tkind, group, cost) and trace_ok(net, layer, start, (x, y), pad):
-            offer(Join(cost, tkind,
-                       vias=list(first), traces=[(layer, [start, (x, y)])]), group)
+        pts = _square(start, (x, y), pad, thing, s.half)
+        if pts is None:
+            continue
+        line = LineString(pts)
+        length = line.difference(pad.shape).length if pad is not None else line.length
+        cost = base + length + ROOM * s.trace_room(length)
+        if 1e-9 < length <= FAR and not dead(tkind, group, cost) \
+                and all(trace_ok(net, layer, a, b, pad if i == 0 else None) for i, (a, b) in enumerate(zip(pts, pts[1:]))):
+            offer(Join(cost, tkind, vias=list(first), traces=[(layer, pts)]), group)
     return [join for kept in best.values() for join in kept]
+
+
+def _square(start, end, pad, thing, half: float) -> list | None:
+    """The way of a trace from ``start`` (the middle of ``pad``, or a via) to ``end`` (the middle of ``thing``) that
+    leaves and meets each pad that is not round square to a side (``_aslant``): straight if it does so already, else
+    out square from the side nearest its way first (and into the other likewise), turning by no more than a right
+    angle (a sharper bend is acute too). None if it cannot."""
+    pts = [start, end]
+    way = math.degrees(math.atan2(end[1] - start[1], end[0] - start[0]))
+    if _aslant(pad, way):
+        pts.insert(1, _out(pad, way, half))
+    if _aslant(thing, way + 180.0):
+        pts.insert(len(pts) - 1, _out(thing, way + 180.0, half))
+    if len(pts) == 2:
+        return pts
+    for a, b, c in zip(pts, pts[1:], pts[2:]):  # (each bend: no sharper than a right angle)
+        u, v = (b[0] - a[0], b[1] - a[1]), (c[0] - b[0], c[1] - b[1])
+        if math.hypot(*u) < 1e-9 or math.hypot(*v) < 1e-9 or u[0] * v[0] + u[1] * v[1] < -1e-9:
+            return None
+    return pts
+
+
+def _out(pad, angle: float, half: float) -> tuple[float, float]:
+    """A point just outside ``pad``, square off its side nearest the way ``angle`` (degrees) from its middle."""
+    turn = _turn(pad)
+    axis = math.radians(turn + 90.0 * round((angle - turn) / 90.0))
+    cx, cy = pad.centre
+    far = LineString([(cx, cy), (cx + 50.0 * math.cos(axis), cy + 50.0 * math.sin(axis))]).intersection(pad.shape).length
+    reach = far + half + GAP
+    return (cx + reach * math.cos(axis), cy + reach * math.sin(axis))
 
 
 def _aslant(pad, angle: float) -> bool:
