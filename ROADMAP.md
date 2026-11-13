@@ -472,7 +472,8 @@ new example (a board and where on it); then it moves up to be fixed.
   KiCad sees: the zones that are not pours (teardrops, copper on one pad),
   the net's copper across layers for what is joined, open items counted per
   group of pads, and KiCad's rule for starved thermal reliefs (a join is
-  refused if it leaves more). Left: two cases where the estimate's fill
+  refused if it leaves more; a pad left short of spokes gets traces into the
+  fill, which KiCad counts as spokes). Left: two cases where the estimate's fill
   differs from KiCad's (cm5-minima, one island; olimex-poe-m2, one via).
 
 ### Rules
