@@ -6,7 +6,7 @@ import math
 import time
 from dataclasses import dataclass, field, replace
 
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
 from weaveengine import parallel
 from weaveengine.board import Board, Pad
@@ -163,9 +163,13 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     routing = _keep(ctx, lines, violations, wire_net, maps)  # (before corners are rounded: that is drawing, and done again)
     work = ctx.board_with_vias()  # the input board is not modified: the vias are pads of a copy
     loops = _redundant(ctx, {w: line for w, line in lines.items() if not ctx.conns[w].skeleton}, {p.pad_id for p in work.pads if p.is_via})
-    lines, violations = _taut(ctx, lines, violations, loops)
+    lines, violations, straight = _taut(ctx, lines, violations, loops)
     work.rules = drawn_board.rules
     lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations, loops)
+    # (A via that is not drawn though traces end on it, all on one layer, is no copper from here on: they meet at a point.)
+    met = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)} - {p.pad_id for p in vias}
+    work.pads = [p for p in work.pads if not (p.is_via and p.pad_id in met)]
+    lines = _over_own_vias(work, lines, straight, wire_net, wire_layer)
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
         ctx.emit_snapshot(force=True, lines=lines)
@@ -258,47 +262,128 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
 def _drawn(ctx: Context, work: Board, lines: dict, violations: list, loops: set[int] | None = None) -> tuple[dict, list, dict, list[Pad]]:
     """What of a routing is drawn: the traces less those that join nothing
     new (``_redundant``, unless given as ``loops``) and pieces of no length,
-    the violations left among them, each trace's layer, and the vias a trace
-    ends on. ``work``: the board with the vias as pads
-    (``Context.board_with_vias``). The pours' skeletons are not drawn: they
-    are the fill's (``plan.skeleton``)."""
+    the violations left among them, each trace's layer, and the vias that
+    join traces of two layers or more. A via whose traces all lie on one layer
+    joins nothing a point of that layer does not (what else ended on it was
+    ripped up, or is not drawn): the traces meet there and no via is drawn,
+    unless its net has a pour, which it may join. ``work``: the board with the
+    vias as pads (``Context.board_with_vias``). The pours' skeletons are not
+    drawn: they are the fill's (``plan.skeleton``)."""
     lines = {w: line for w, line in lines.items() if not ctx.conns[w].skeleton}
     if loops is None:
         loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
     lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
     violations = [v for v in violations if not loops.intersection(v.wires) and not any(w in ctx.conns and ctx.conns[w].skeleton for w in v.wires)]
     wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
-    used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
-    vias = [p for p in work.pads if p.is_via and p.pad_id in used]
+    on: dict[int, set[int]] = {}  # pad -> the layers of the traces that end on it
+    for w, layer in wire_layer.items():
+        for p in (ctx.conns[w].src, ctx.conns[w].dst):
+            on.setdefault(p, set()).add(layer)
+    poured = {net for net, _, _ in work.pours}
+    vias = [p for p in work.pads if p.is_via and p.pad_id in on and (len(on[p.pad_id]) > 1 or p.net_id in poured)]
     return lines, violations, wire_layer, vias
 
 
-def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple[dict, list]:
-    """The traces pulled once more without the wires that will not be drawn
-    (``loops``, from ``_redundant``): a trace is held away from a wire only if
-    that wire is copper on the board (13.1). A layer keeps the new traces only
-    if the check finds no more on it than before; the state is left as it was."""
-    if not loops:
-        return lines, violations
+def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple[dict, list, dict]:
+    """The traces pulled once more as they will be drawn (13.1): a trace is
+    held away only from what is copper to it. So without the wires that will
+    not be drawn (``loops``, from ``_redundant``) and without the sleeping via
+    sites that can be taken out now (``sites.delete``, here also those a wire
+    passes on both sides, which stay in the map while routing); a layer keeps those traces
+    only if the check finds no more on it than before. Returns them, the
+    violations, and the traces as they would be if also not bent round a via
+    of their own net that they pass (``relax``'s ``own_vias``), where they
+    differ and the check finds nothing on them: ``_over_own_vias``
+    takes those where the pours keep their room. (While routing, traces go
+    round such vias, as the routing was planned with them.) The state and the
+    maps are left as they were."""
     board = ctx.board_with_vias()
-    lines, violations = dict(lines), list(violations)
+    lines, violations, straight = dict(lines), list(violations), {}
     skeleton = lambda v: any(w in ctx.conns and ctx.conns[w].skeleton for w in v.wires)
+    poured = {net for net, _, _ in board.pours}
     for layer in ctx.layers:
-        state = layer.state
+        state, pmap = layer.state, layer.pmap
         gone = [w for w in loops if w in state.wire_path]
-        if not gone:
+        asleep = [site for site in pmap.sites.values() if not site.active]
+        vias = any(site.active and site.net not in poured for site in pmap.sites.values())
+        if not gone and not asleep and not vias:
             continue
-        snap = state.snapshot()
+        snap, mark, moved = state.snapshot(), (len(sites.log(pmap)), len(sites.journal(state))), pmap.__dict__.get("_moved_wires")
         for w in gone:
             state.remove(w)
-        new, found, _ = realize(state, board)
-        state.restore(snap)
-        found = [v for v in found if not skeleton(v)]
+        deleted = sum(sites.delete(pmap, state, site, both_sides=True) for site in asleep)
         before = [v for v in violations if v.layer == layer.index and not loops.intersection(v.wires) and not skeleton(v)]
-        if len(found) <= len(before):
-            lines.update(new)
-            violations = [v for v in violations if v.layer != layer.index or skeleton(v)] + found
-    return lines, violations
+        if gone or deleted:
+            new, found, _ = realize(state, board)
+            found = [v for v in found if not skeleton(v)]
+            if len(found) <= len(before):
+                lines.update(new)
+                violations = [v for v in violations if v.layer != layer.index or skeleton(v)] + found
+                before = found
+        if vias:  # (a trace the check finds anything on keeps its bends)
+            new, found, _ = realize(state, board, own_vias=True)
+            held = {w for v in found for w in v.wires}
+            straight.update({w: line for w, line in new.items()
+                             if w in lines and line != lines[w] and not ctx.conns[w].skeleton and w not in held})
+        sites.undo(pmap, state, *mark)
+        state.restore(snap)
+        if moved is not None:
+            pmap.__dict__["_moved_wires"] = moved
+    return lines, violations, straight
+
+
+def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wire_layer: dict) -> dict:
+    """``lines`` with the traces of ``straight`` (``_taut``: not bent round
+    vias of their own net) put in where the pours keep their room: no pad is
+    cut off from its pour that was not before (``pours.estimate``), and
+    fan-out finds a place for a via for every pad it did before
+    (``plan.fanout``). Where that fails, the traces near the trouble keep
+    their bends, a few times over, and then all do. Likewise the traces the
+    check finds more on than before (straightened beside others that keep
+    their bends), and then all on their layer."""
+    from weaveengine.realize import drc
+    straight = {w: line for w, line in straight.items() if w in lines}
+    if not straight:
+        return lines
+    trial = {**lines, **straight}
+    if work.pours:
+        def trouble(drawn: dict) -> list:
+            """(key, shape, layer or None) of each pad cut off from its pour,
+            and of each pad fan-out finds no place for a via for."""
+            cut = [(piece, pour.layer) for pour in estimate_pours(work, drawn, wire_net, wire_layer)
+                   for piece in pour.pieces if piece.kind == "cut"]
+            left = fanout(work, drawn, wire_net, wire_layer, cut={(p, at) for piece, at in cut for p in piece.pad_ids})[2]
+            return ([((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids]
+                    + [((p.pad_id, -1), p.shape, None) for p in left])
+
+        had = {key for key, _, _ in trouble(lines)}
+        reach = work.rules.via_diameter + 4.0 * work.rules.pitch  # (room for a via and the traces round it)
+        for _ in range(OWN_VIA_TRIES):
+            new = [(shape, at) for key, shape, at in trouble(trial) if key not in had]
+            if not new:
+                break
+            near = {w for w in straight if trial[w] is straight[w] and any(
+                (at is None or wire_layer[w] == at) and LineString(straight[w]).distance(shape) < reach for shape, at in new)}
+            if not near:
+                return lines
+            trial.update({w: lines[w] for w in near})
+        else:
+            if any(key not in had for key, _, _ in trouble(trial)):
+                return lines
+    for layer in {wire_layer[w] for w in straight}:
+        on = [w for w, li in wire_layer.items() if li == layer]
+        had = len(drc.check(work, {w: lines[w] for w in on}, wire_net, layer))
+        for _ in range(OWN_VIA_TRIES):
+            found = drc.check(work, {w: trial[w] for w in on}, wire_net, layer)
+            back = {w for v in found for w in v.wires if w in straight and trial[w] is straight[w]}
+            if len(found) <= had or not back:
+                break
+            trial.update({w: lines[w] for w in back})
+        else:
+            found = drc.check(work, {w: trial[w] for w in on}, wire_net, layer)
+        if len(found) > had:
+            trial.update({w: lines[w] for w in on})
+    return trial
 
 
 def _draft(ctx: Context, lines: dict, violations: list, wire_net: dict) -> Result:
@@ -487,6 +572,7 @@ def _adopt(ctx: Context, kept: dict) -> None:
 VARIANTS = ((1.0, 1.5), (1.5, 1.5), (1.25, 1.5), (1.75, 1.5), (1.0, 1.8), (2.0, 1.5), (1.5, 1.8), (1.25, 1.8))
 HEAT = 4
 SETTLE_AGAIN = 3  # times the routing is settled after repair before it is left as repair had it
+OWN_VIA_TRIES = 3  # times the traces near pads a straightened trace costs their pour or a fan-out via get their bends back (``_over_own_vias``)
 
 
 def _route_portfolio(ctx: Context, drc_rounds: int, drop_violators: bool, resumed: bool = False, checkpoint=None):

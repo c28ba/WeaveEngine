@@ -462,7 +462,8 @@ def replay(pmap: PlanarMap, entries: list) -> None:
         elif entry["kind"] == "move":
             _move_map(pmap, pmap.sites[entry["pad"]], entry["to"])
         else:
-            _delete_map(pmap, pmap.sites[entry["site"].pad])
+            site = pmap.sites[entry["site"].pad]
+            _delete_map(pmap, site, _plan_delete(pmap, site, fill=entry.get("fill")))  # (none in a log from before 2026-11: the first ears found)
 
 
 def _what(entry: dict) -> tuple:
@@ -828,9 +829,11 @@ def _ring(pmap: PlanarMap, site: Site):
     return (ring, edges, round_hole) if len(ring) == len(after) else None
 
 
-def _fill(pmap: PlanarMap, ring: list[int]):
+def _fill(pmap: PlanarMap, ring: list[int], allowed=None):
     """Triangles filling the polygon ``ring`` (vertex ids, counter-clockwise),
-    by cutting ears off it, as triples of positions in the ring. None if that fails."""
+    by cutting ears off it, as triples of positions in the ring. ``allowed``:
+    whether an edge may join two positions (i < j) across the polygon; an ear
+    is cut only where it may. None if that fails."""
     xy = pmap.vxy
     left = list(range(len(ring)))
     out = []
@@ -838,7 +841,7 @@ def _fill(pmap: PlanarMap, ring: list[int]):
         for n in range(len(left)):
             i, j, k = left[n - 1], left[n], left[(n + 1) % len(left)]
             a, b, c = xy[ring[i]], xy[ring[j]], xy[ring[k]]
-            if _cross(a, b, c) <= 1e-12:
+            if _cross(a, b, c) <= 1e-12 or (allowed is not None and not allowed(min(i, k), max(i, k))):
                 continue
             if any(m not in (i, j, k) and _cross(a, b, xy[ring[m]]) >= 0 and _cross(b, c, xy[ring[m]]) >= 0
                    and _cross(c, a, xy[ring[m]]) >= 0 for m in left):
@@ -853,15 +856,17 @@ def _fill(pmap: PlanarMap, ring: list[int]):
     return out + [tuple(left)]
 
 
-def _plan_delete(pmap: PlanarMap, site: Site):
+def _plan_delete(pmap: PlanarMap, site: Site, allowed=None, found=None, fill=None):
     """How the map looks once the site is gone: its surroundings, a polygon,
-    are filled with triangles again. Returns the ring, the new triangles and
-    edges with the ids they take, and the slot that is freed; or None."""
-    found = _ring(pmap, site)
+    are filled with triangles again (``fill``, if given: as an earlier plan
+    filled it; else cutting ears where ``allowed``, as ``_fill``). Returns
+    the ring, the new triangles and edges with the ids they take, and the slot
+    that is freed; or None. ``found``: the site's ``_ring``, if known."""
+    found = found or _ring(pmap, site)
     if found is None:
         return None
     ring, ring_edges, round_hole = found
-    fill = _fill(pmap, ring)
+    fill = fill or _fill(pmap, ring, allowed)
     if fill is None:
         return None
     n = len(ring)
@@ -891,7 +896,7 @@ def _delete_map(pmap: PlanarMap, site: Site, plan=None) -> None:
              "tris": [(t, _triangle_row(pmap, t)) for t in sorted(round_hole)],
              "outer": [(e, pmap.edge_t_list[e]) for e, _, _ in ring_edges],
              "nbrs": [(nb, tuple(int(v) for v in pmap.tri_n[nb])) for _, nb, _ in ring_edges if nb >= 0],
-             "claimed": [], "gained": []}
+             "fill": [tri for _, tri in triangles], "claimed": [], "gained": []}
     owner = pmap.__dict__["_site_of_vertex"]
     for e in site.spokes:  # a spoke may also be a spoke of the site at its other end
         for v in pmap.edge_v_list[e]:
@@ -927,7 +932,7 @@ def _delete_map(pmap: PlanarMap, site: Site, plan=None) -> None:
     log(pmap).append(entry)
 
 
-def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
+def delete(pmap: PlanarMap, state: TopoState, site: Site, both_sides: bool = False) -> bool:
     """Takes a sleeping site out of the map, wherever it is and whenever it was
     made. The triangles round the hole form a polygon; it is filled with
     triangles again, without the hole. Every wire that crossed the polygon
@@ -936,16 +941,25 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
     polygon's boundary. With the hole gone, which way round it a wire went no
     longer matters.
 
+    No wire may cross one of the new edges twice, as one that passes the hole
+    on both sides (round something of another net between: a U-turn round it)
+    does where the polygon is filled with the first ears found: such a site
+    stays. With ``both_sides`` the polygon is filled so that there is no such
+    edge. Only the last pull asks for that (``router._taut``, which puts the
+    map back afterwards): while routing, a site taken out where it would have
+    stayed leaves another map behind it, and the routing goes another way
+    from there on, no better for it (the sweep of 2026-11: 3 boards routed
+    fewer connections, 7 in all, and 2 more, 6 in all).
+
     Returns False, changing nothing, if the site is a via, has a trace on it,
-    or a wire that passes the polygon twice would have to cross one of the new
-    edges twice.
+    or the polygon cannot be filled so.
     """
     if site.active or any(state.gate_order[e] for e in site.hole):
         return False
-    plan = _plan_delete(pmap, site)
-    if plan is None:
+    found = _ring(pmap, site)
+    if found is None:
         return False
-    ring, ring_edges, round_hole, triangles, side, diagonals, slot = plan
+    ring, ring_edges, round_hole = found
     n = len(ring)
     order = state.gate_order
     at = {e: i for i, (e, _, _) in enumerate(ring_edges)}  # ring edge -> its position (it runs from ring[i] to ring[i + 1])
@@ -969,15 +983,26 @@ def delete(pmap: PlanarMap, state: TopoState, site: Site) -> bool:
                 m += 1
             runs.append((w, first, m, steps[first - 1][0], steps[m][0]))
             m += 1
-    # The new edges each passage crosses: those with its two ring edges on opposite sides.
-    crossing: dict[tuple[int, int], list] = {d: [] for d in diagonals}
-    for run in runs:
-        w, _, _, came, leave = run
-        for (i, j) in diagonals:
-            a_in, b_in = i <= at[came] < j, i <= at[leave] < j
-            if a_in != b_in:
-                e = came if a_in else leave  # its end on the arc from ring[i] round to ring[j]
-                crossing[(i, j)].append(((at[e] - i, along(e, w)), run))
+
+    def across(i: int, j: int) -> list:
+        """The passages that cross an edge from ring[i] to ring[j] (i < j): those with their two ring edges on opposite sides."""
+        return [run for run in runs if (i <= at[run[3]] < j) != (i <= at[run[4]] < j)]
+
+    def allowed(i: int, j: int) -> bool:
+        row = [run[0] for run in across(i, j)]
+        return len(set(row)) == len(row) and len(row) < 15  # (no wire twice; and slots for them all)
+
+    plan = _plan_delete(pmap, site, allowed if both_sides else None, found)
+    if plan is None:
+        return False
+    _, _, _, triangles, side, diagonals, slot = plan
+    # The new edges each passage crosses, from where it comes onto the arc from ring[i] round to ring[j].
+    crossing: dict[tuple[int, int], list] = {}
+    for (i, j) in diagonals:
+        crossing[(i, j)] = []
+        for run in across(i, j):
+            e = run[3] if i <= at[run[3]] < j else run[4]
+            crossing[(i, j)].append(((at[e] - i, along(e, run[0])), run))
     rows = {}
     for d, found in crossing.items():
         found.sort(key=lambda x: x[0])

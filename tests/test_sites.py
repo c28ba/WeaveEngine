@@ -596,13 +596,14 @@ def test_a_map_takes_up_a_log_that_went_back_before_its_own_end():
     assert [e["kind"] for e in sites.log(mine)] == [e["kind"] for e in sites.log(theirs)]
 
 
-@pytest.mark.parametrize("net", [None, 2])
+@pytest.mark.parametrize("net", [None, 1, 2])
 @pytest.mark.parametrize("off", [-0.06, -0.03, 0.03, 0.06])
 def test_a_trace_goes_round_a_via_site_only_where_it_is_copper(off, net):
     """ROADMAP 1.1, traces pulled fully taut: a site left asleep where a via was
     taken out (``sites.delete`` can refuse) is no copper. A trace with no wire
-    of another net across such a site does not bend round it (13.1). A via of
-    another net it does go round."""
+    of another net across such a site does not bend round it (13.1). Nor, in
+    the last pull (``own_vias``), round a via of its own net that it does not
+    end on, unless the net has a pour. A via of another net it does go round."""
     board = Board.rectangle(12.0, 10.0, Rules(), layers=["F.Cu"])
     board.pads += [Pad.circle(0, 4, 5, 0.3, 1), Pad.circle(1, 8, 5, 0.3, 1)]
     pmap = planar_map.build(board, 0)
@@ -615,9 +616,78 @@ def test_a_trace_goes_round_a_via_site_only_where_it_is_copper(off, net):
     assert any(1 in state.gate_order[e] for e in site.spokes)  # the wire passes it
     with_via = copy.copy(board)
     with_via.pads = board.pads + sites.via_pads(pmap, board.rules)
-    lines, violations, _ = realize(state, with_via)
+    lines, violations, _ = realize(state, with_via, own_vias=True)
     assert violations == []
     if net == 2:
         assert LineString(lines[1]).distance(Point(at)) >= sites.keep_off(board.rules) - 0.01
     else:
         assert len(lines[1]) == 2  # pad centre to pad centre, straight
+    if net == 1:  # while routing, and for a net with a pour, the trace goes round its via as planned
+        planned = realize(state, with_via)[0][1]
+        assert (len(planned) > 2) == (off > 0)  # (the wire passes the via on the side of +y: off +y, it is bent)
+        with_via.pours = [(1, 0, board.outline)]
+        assert realize(state, with_via, own_vias=True)[0][1] == planned
+
+
+def test_a_site_a_wire_passes_on_both_sides_is_deleted():
+    """ROADMAP 1.1, traces pulled fully taut: a sleeping site that a wire
+    passes on both sides (a U-turn round something of another net beside the
+    site) can be taken out (``both_sides``, as the last pull asks). Its polygon
+    is filled so that no wire crosses a new edge twice; the first ears found,
+    as while routing, have such an edge, and the site stays."""
+    board = grid_board(6, 10.0, seed=3)
+    pmap = planar_map.build(board)
+    state = TopoState(pmap)
+    rng = random.Random(12)
+    keep = sites.keep_off(board.rules)
+    pads = sorted(pmap.pad_edges)
+    live, made, wire = {}, [], 0
+    for _ in range(2000):
+        roll = rng.random()
+        if roll < 0.40 or not live:
+            a, b = rng.sample(pads + [s.pad for s in made if s.active], 2)
+            nets = {pmap.pad_net[x] for x in (a, b) if x in pmap.sites}
+            if len(nets) > 1:
+                continue
+            net = nets.pop() if nets else -1
+            r = route(pmap, state, a, b, hard_cap=True, net=net)
+            if r is not None:
+                wire += 1
+                state.insert(wire, r.steps, net=net)
+                live[wire] = (a, b)
+        elif roll < 0.78:
+            state.remove(rng.choice(sorted(live)))
+            live = {w: ends for w, ends in live.items() if w in state.wire_path}
+        elif roll < 0.82 and made:
+            asleep = [s for s in made if not s.active]
+            if not asleep:
+                continue
+            site = rng.choice(asleep)
+            first = sites.delete(pmap, state, site)  # the first ears found
+            if not first:
+                around = sites._ring(pmap, site)[2]  # the triangles round the hole
+                assert any(sum(steps[i][1] in around and steps[i - 1][1] not in around for i in range(1, len(steps))) > 1
+                           for steps in state.wire_path.values())  # a wire passes the site twice
+                assert sites.delete(pmap, state, site, both_sides=True) and site.pad not in pmap.sites
+                assert state.invariant_errors() == [] and map_errors(pmap) == []
+                copy_of = planar_map.build(board)
+                sites.replay(copy_of, sites.log(pmap))  # (filled the same way again)
+                assert fingerprint(copy_of) == fingerprint(pmap)
+                return
+            made.remove(site)
+        elif roll < 0.88 and len(made) < 60:
+            t = rng.randrange(pmap.num_triangles)
+            (ax, ay), (bx, by), (cx, cy) = (pmap.vxy[v] for v in pmap.tri_v_list[t])
+            u, v = sorted((rng.random(), rng.random()))
+            try:
+                made.append(sites.create(pmap, state, t, (u * ax + (v - u) * bx + (1 - v) * cx, u * ay + (v - u) * by + (1 - v) * cy)))
+            except ValueError:
+                continue
+        elif made:
+            site = rng.choice(made)
+            used = {pad for ends in live.values() for pad in ends}
+            if site.active and site.pad not in used:
+                sites.set_net(pmap, state, site, -1)
+            elif not site.active and sites.fits(pmap, state, site, keep):
+                sites.set_net(pmap, state, site, 1000 + site.pad, keep)
+    pytest.fail("no site that the first ears found could not take out")

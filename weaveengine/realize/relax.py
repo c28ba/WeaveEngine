@@ -17,7 +17,7 @@ ARC_OUT = 4e-4  # mm: the most the corners of a drawn arc stand out from its cir
 
 
 def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
-          report: dict | None = None) -> dict[int, Polyline]:
+          report: dict | None = None, own_vias: bool = False) -> dict[int, Polyline]:
     """Returns wire id -> polyline, from pad centre to pad centre.
 
     A wire with some wires between it and a vertex must stay their combined
@@ -29,6 +29,11 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
 
     ``cuts`` gives a wire more discs to keep clear of than its own triangles
     tell it about (13.2): wire id -> discs, as ``realize`` collects them.
+
+    ``own_vias``: a wire is not bent round a via of its own net (not a pour's)
+    that it passes without ending on it. Only for the last pull
+    (``router._taut``): while routing, wires go round such vias, as the
+    routing was planned with them.
 
     A wire leaves its pad anywhere in the window of its pad edge. Foreign wires
     passing that pad keep their distance from the point it leaves through, so
@@ -80,24 +85,28 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     hole = {v: site for site in pmap.sites.values() for v in site.verts}
     kept: dict[tuple[int, int], list[float]] = {}
 
-    # A sleeping site is no copper: a point left in the map where a via was
-    # taken out and the site could not be (``sites.delete``). A wire is not
-    # held away from one (nor makes a U-turn round it) unless something there
-    # is copper to it: a wire of another net nearer the site on a spoke they
-    # share, that does go round it; or a wire of another net across it (no
-    # spoke in common), from which the site keeps it half a pitch. (A wire
-    # passing a site crosses a fan of its spokes; wires on one side of it share
-    # a spoke, nested on it. A via of the wire's own net that it does not end
-    # on is no copper to it either, but traces drawn over such vias cost the
-    # pours room on lumen-blade13 and fomu: left as it is, ROADMAP back burner.)
+    # Via sites that are no copper to a wire passing them: a sleeping site (a
+    # point left in the map where a via was taken out and the site could not
+    # be, ``sites.delete``), and, with ``own_vias``, a via of the wire's own
+    # net that it passes without ending on it. A wire is not held away from
+    # such a site (nor makes a U-turn round it) unless something there is
+    # copper to it: a wire of another net nearer the site on a spoke they
+    # share, that does go round it; or, for a sleeping site, a wire of another
+    # net across it (no spoke in common), from which the site keeps it half a
+    # pitch. (A wire passing a site crosses a fan of its spokes; wires on one
+    # side of it share a spoke, nested on it.) The vias of a pour's net are
+    # left as they are: its traces lie in its own fill, and bent round them
+    # they leave the fill and fan-out the room the routing was planned with.
+    poured = {net for net, _, _ in board.pours} if own_vias else set()
+    loose = {site.pad for site in pmap.sites.values() if not site.active or (own_vias and site.net not in poured)}
     free: set[tuple[int, int]] = set()  # (site, wire) that does not go round it
     crossing: dict[int, dict[int, set[int]]] = {}  # site -> wire -> the spokes it crosses
-    if any(not site.active for site in pmap.sites.values()):
+    if loose:
         for w, steps in state.wire_path.items():
             for e, _, _, _ in steps[1:]:
                 for q in edge_v[e]:
                     site = hole.get(q)
-                    if site is not None and not site.active:
+                    if site is not None and site.pad in loose:
                         crossing.setdefault(site.pad, {}).setdefault(w, set()).add(e)
     for pad, by in crossing.items():
         site = pmap.sites[pad]
@@ -105,7 +114,10 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
         def foreign(x: int, w: int) -> bool:
             return wire_net[x] != wire_net[w] or wire_net[w] < 0
 
-        maybe = {w for w, mine in by.items() if not any(not (spokes & mine) and foreign(x, w) for x, spokes in by.items())}
+        if site.active:  # a via: loose for the wires of its net that pass it
+            maybe = {w for w, mine in by.items() if wire_net[w] == site.net and not any(e in site.hole for e in mine)}
+        else:
+            maybe = {w for w, mine in by.items() if not any(not (spokes & mine) and foreign(x, w) for x, spokes in by.items())}
         inner = {}  # wire -> the wires nearer the site than it on a spoke they share
         for w in maybe:
             inner[w] = set()
@@ -309,7 +321,7 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     # layer in which little has changed between one run and the next (an end
     # hopped round its pad, a disc added by the repair), so both are kept
     # while no wire has come or gone on any of the wire's gates.
-    memo = _kept(state, board)
+    memo = _kept(state, board, own_vias)
     stamp, changed = state.stamp, pmap.edge_changed
     sleeves, first, fresh = {}, {}, {}
     for w, steps in state.wire_path.items():
@@ -374,19 +386,23 @@ def relax(state: TopoState, board: Board, cuts: dict[int, dict] | None = None,
     return result
 
 
-def _kept(state: TopoState, board: Board) -> dict:
+def _kept(state: TopoState, board: Board, own_vias: bool = False) -> dict:
     """What ``relax`` keeps from one run to the next, per wire: (the state's
     and the map's count of changes when it was worked out, the wire's gates,
     its discs, its first pull by the discs the repair has added). A wire's
     entry holds while no wire has come or gone on any of its gates and the map
     has not changed at any of them (a via made, moved, woken or taken out
     changes the edges round it, and the wires that pass a via cross those).
-    Emptied when the rules have changed."""
+    Emptied when the rules have changed. Kept apart for ``own_vias``, whose
+    discs differ (and depend on the nets with a pour)."""
     rules = board.rules
     key = (rules.pitch, rules.clearance, tuple(sorted(rules.net_width.items())))
-    kept = state.__dict__.get("_relaxed")
+    name = "_relaxed_own" if own_vias else "_relaxed"
+    if own_vias:  # (the nets with a pour keep their bends)
+        key += (tuple(sorted({net for net, _, _ in board.pours})),)
+    kept = state.__dict__.get(name)
     if kept is None or kept[0] != key:
-        kept = state.__dict__["_relaxed"] = (key, {})
+        kept = state.__dict__[name] = (key, {})
     return kept[1]
 
 
@@ -527,11 +543,11 @@ def copper_length(lines: list[Polyline], within: float = 0.01) -> float:
     return shapely.union_all(drawn).area / (2.0 * within) if drawn else 0.0
 
 
-def realize(state: TopoState, board: Board, repair_rounds: int = 4):  # one layer
+def realize(state: TopoState, board: Board, repair_rounds: int = 4, own_vias: bool = False):  # one layer
     """Relax, check, and where a trace comes out too close to another or to a
     via, give it the discs it did not know of and pull again (13.2).
 
-    Returns (polylines, violations, wire_net).
+    ``own_vias``: as ``relax``'s. Returns (polylines, violations, wire_net).
     """
     pmap = state.map
     wire_net = {w: pmap.pad_net.get(pmap.edge_owner_list[steps[0][0]], -1) for w, steps in state.wire_path.items()}
@@ -540,7 +556,7 @@ def realize(state: TopoState, board: Board, repair_rounds: int = 4):  # one laye
     best = None
     for _ in range(repair_rounds + 1):
         report: dict = {}
-        lines = relax(state, board, cuts, report)
+        lines = relax(state, board, cuts, report, own_vias)
         violations = drc.check(board, lines, wire_net, pmap.layer)
         key = (len(violations), sum(v.required - v.distance for v in violations))
         if best is None or key < best[2]:
