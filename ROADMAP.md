@@ -107,7 +107,11 @@ To do, in order:
      user's board: 9 to 2, 78 bends with nothing near them to 63, on the
      routing main gives it. (`bench/slack.py` now takes each cause's slack
      from the trace as drawn: it used to show what the router had already
-     pulled out.)
+     pulled out.) On solo-c a straightened trace left a via with traces of
+     one layer only on it (KiCad: a dangling via): the trace had made a
+     2.2 mm hairpin out to that via and back, which was all that touched it
+     on a second layer. Such a via joins nothing and is no longer drawn; the
+     traces meet at the point (`router._drawn`).
 2. [x] Pours that stay whole by default (done above; what is left is below).
 3. [-] Room used where there is room: moved to 1.2, one feature with traces spread for the most space (below).
 4. [x] Traces tapered to fine-pitch pins (on branch `taper`, `realize/taper.py`).

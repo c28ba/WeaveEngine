@@ -167,6 +167,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     lines, violations, straight = _taut(ctx, lines, violations, loops)
     work.rules = drawn_board.rules
     lines, violations, wire_layer, vias = _drawn(ctx, work, lines, violations, loops)
+    # (A via that is not drawn though traces end on it, all on one layer, is no copper from here on: they meet at a point.)
+    met = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)} - {p.pad_id for p in vias}
+    work.pads = [p for p in work.pads if not (p.is_via and p.pad_id in met)]
     lines = _over_own_vias(work, lines, straight, wire_net, wire_layer)
     if events is not None:
         ctx.variant = -1  # the outcome of the pass, whichever variant it came from
@@ -265,18 +268,25 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
 def _drawn(ctx: Context, work: Board, lines: dict, violations: list, loops: set[int] | None = None) -> tuple[dict, list, dict, list[Pad]]:
     """What of a routing is drawn: the traces less those that join nothing
     new (``_redundant``, unless given as ``loops``) and pieces of no length,
-    the violations left among them, each trace's layer, and the vias a trace
-    ends on. ``work``: the board with the vias as pads
-    (``Context.board_with_vias``). The pours' skeletons are not drawn: they
-    are the fill's (``plan.skeleton``)."""
+    the violations left among them, each trace's layer, and the vias that
+    join traces of two layers or more. A via whose traces all lie on one layer
+    joins nothing a point of that layer does not (what else ended on it was
+    ripped up, or is not drawn): the traces meet there and no via is drawn,
+    unless its net has a pour, which it may join. ``work``: the board with the
+    vias as pads (``Context.board_with_vias``). The pours' skeletons are not
+    drawn: they are the fill's (``plan.skeleton``)."""
     lines = {w: line for w, line in lines.items() if not ctx.conns[w].skeleton}
     if loops is None:
         loops = _redundant(ctx, lines, {p.pad_id for p in work.pads if p.is_via})
     lines = {w: line for w, line in lines.items() if w not in loops and polyline_length(line) > 1e-9}  # (not a piece of no length)
     violations = [v for v in violations if not loops.intersection(v.wires) and not any(w in ctx.conns and ctx.conns[w].skeleton for w in v.wires)]
     wire_layer = {w: c.layer for w, c in ctx.conns.items() if c.layer is not None and w in lines}
-    used = {p for w in wire_layer for p in (ctx.conns[w].src, ctx.conns[w].dst)}
-    vias = [p for p in work.pads if p.is_via and p.pad_id in used]
+    on: dict[int, set[int]] = {}  # pad -> the layers of the traces that end on it
+    for w, layer in wire_layer.items():
+        for p in (ctx.conns[w].src, ctx.conns[w].dst):
+            on.setdefault(p, set()).add(layer)
+    poured = {net for net, _, _ in work.pours}
+    vias = [p for p in work.pads if p.is_via and p.pad_id in on and (len(on[p.pad_id]) > 1 or p.net_id in poured)]
     return lines, violations, wire_layer, vias
 
 

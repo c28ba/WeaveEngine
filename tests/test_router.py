@@ -1462,3 +1462,23 @@ def test_traces_are_pulled_again_without_the_wires_not_drawn():
         assert [layer.state.snapshot()[:3] for layer in ctx.layers] == before
         shorter += sum(polyline_length(new[w]) < polyline_length(lines[w]) - 1e-3 for w in lines if w != x)
     assert shorter
+
+
+def test_a_via_that_joins_one_layer_is_not_drawn():
+    """A via on which traces of one layer only end (what else ended on it was
+    ripped up or is not drawn) joins nothing: the traces meet there, and KiCad
+    calls such a via dangling. One that joins two layers is drawn, and so is
+    any via of a net with a pour, which it may join."""
+    from types import SimpleNamespace
+
+    from weaveengine import router
+    board = Board.rectangle(12.0, 10.0, Rules(), layers=["F.Cu", "B.Cu"])
+    board.pads += [Pad.circle(0, 2, 5, 0.3, 1), Pad.circle(1, 10, 5, 0.3, 1),
+                   Pad.circle(10, 5, 5, 0.3, 1, is_via=True), Pad.circle(11, 7, 5, 0.3, 1, is_via=True)]
+    wire = lambda src, dst, layer: SimpleNamespace(src=src, dst=dst, layer=layer, skeleton=False)
+    ctx = SimpleNamespace(conns={1: wire(0, 10, 0), 2: wire(10, 11, 0), 3: wire(11, 1, 1)})
+    centre = {p.pad_id: p.centre for p in board.pads}
+    lines = {w: [centre[c.src], centre[c.dst]] for w, c in ctx.conns.items()}
+    assert [p.pad_id for p in router._drawn(ctx, board, lines, [], set())[3]] == [11]
+    board.pours = [(1, 1, board.outline)]
+    assert [p.pad_id for p in router._drawn(ctx, board, lines, [], set())[3]] == [10, 11]
