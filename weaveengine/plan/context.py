@@ -519,7 +519,7 @@ class Context:
                 continue  # a trace of another connection ends on it
             for layer, site in here:
                 sites.set_net(layer.pmap, layer.state, site, -1)
-                sites.delete(layer.pmap, layer.state, site)  # if it cannot be, it stays, asleep
+                sites.delete(layer.pmap, layer.state, site)  # if it cannot be, it stays, asleep (the last pull takes out more: ``router._taut``)
         if conn.sites:
             self._maps_changed()
         conn.layer, conn.pieces, conn.sites = None, (), ()

@@ -7,14 +7,18 @@ round something that is not copper on the board:
 - *by cause*: the trace is pulled again with one kind of thing taken out of
   its layer, and every trace that comes out shorter by more than ``TOL`` had
   that much slack because of it. The kinds: via sites that are asleep (no
-  via), via sites that are vias of no drawn trace, the pours' skeletons (not
-  drawn: they hold room for the fill, on purpose), and wires that are not
-  drawn because their net joins those pads already (``router._redundant``).
+  via), vias of a trace's own net that it passes without ending on them (the
+  router draws a trace straight over them where the pours keep their room:
+  ``router._over_own_vias``), via sites that are vias of no drawn trace, the
+  pours' skeletons (not drawn: they hold room for the fill, on purpose), and
+  wires that are not drawn because their net joins those pads already
+  (``router._redundant``).
 - *by geometry*, independent of the map: every corner of a drawn trace (as
   pulled, before corners are rounded) that turns by more than a degree must
   have something drawn within its clearance of it: a foreign pad, via,
-  keepout or trace, or the board edge. A corner with nothing there is listed
-  with how far the nearest thing is beyond its clearance.
+  keepout or trace, or the board edge. A bend with nothing there (the corners
+  of one arc are one bend) is listed with how far the nearest thing is beyond
+  its clearance, and what that is not drawn is near it.
 
     python bench/slack.py BOARD.dsn [weaveengine.cli options]
 
@@ -44,27 +48,38 @@ EDGE_MITRE = 5.0     # the board edge is inset with shapely's own mitre limit
 
 def route(argv: list[str]):
     """Routes as the CLI does; returns (the routing's context, its result, the
-    traces as pulled: before their corners are rounded)."""
+    drawn traces as pulled: before their corners are rounded)."""
     got: dict = {}
     realize, write, drawn = router._realize, cli.write_ses, router._drawn
+    straight = getattr(router, "_over_own_vias", None)
 
     def spy(ctx):
         got["ctx"] = ctx
         return realize(ctx)
 
-    def pulled(ctx, work, lines, *args):
-        got["lines"] = lines  # (the last call is the routing's own; the earlier ones are drafts)
-        return drawn(ctx, work, lines, *args)
+    def pulled(ctx, work, lines, violations, loops=None):
+        out = drawn(ctx, work, lines, violations, loops)
+        if loops is not None:  # (the routing's own call; drafts give none)
+            got["lines"] = out[0]
+        return out
+
+    def over(*args):
+        got["lines"] = straight(*args)  # (the last thing the router does to the traces before their corners are rounded)
+        return got["lines"]
 
     def keep(design, result, *args, **kw):
         got["result"] = result
         return write(design, result, *args, **kw)
 
     router._realize, cli.write_ses, router._drawn = spy, keep, pulled
+    if straight is not None:
+        router._over_own_vias = over
     try:
         cli.main(argv)
     finally:
         router._realize, cli.write_ses, router._drawn = realize, write, drawn
+        if straight is not None:
+            router._over_own_vias = straight
     return got["ctx"], got["result"], got["lines"]
 
 
@@ -81,31 +96,39 @@ def by_cause(ctx, result, pulled: dict) -> dict:
     drawn = set(result.polylines)
     used = {p for w in drawn if w in ctx.conns for p in (ctx.conns[w].src, ctx.conns[w].dst)}
     board = ctx.board_with_vias()
-    kinds = ("redundant", "unused via", "asleep", "skeleton")  # (the redundant first, as the router takes them out: ``router._taut``)
+    # (In the order the router takes them out, ``router._taut``: its traces
+    # show no slack by the first three, but for a layer that kept its traces
+    # because the check found more on the new ones, and the bends round own
+    # vias kept for the pours.)
+    kinds = ("redundant", "asleep", "own via", "unused via", "skeleton")
     out = {kind: [0, 0.0, 0.0, 0, 0] for kind in kinds}
     for layer in ctx.layers:
         pmap, state = layer.pmap, layer.state
         wire_net = {w: ctx.conns[w].net_id for w in state.wire_path}
         mine = [w for w in state.wire_path if w in drawn]
         before = _lengths({w: pulled[w] for w in mine})
+        own = False
         for kind in kinds:
             row = out[kind]
-            if kind == "asleep":
+            if kind == "own via":
+                own = True
+                row[4] += sum(s.active for s in pmap.sites.values())
+            elif kind == "asleep":
                 for site in [s for s in pmap.sites.values() if not s.active]:
-                    row[4] += sites.delete(pmap, state, site)
+                    row[4] += sites.delete(pmap, state, site, both_sides=True)
             elif kind == "unused via":
                 for site in [s for s in pmap.sites.values() if s.active and s.pad not in used]:
                     for w in {w for e in site.hole for w in state.gate_order[e]}:
                         state.remove(w)
                     sites.set_net(pmap, state, site, -1)
-                    row[4] += sites.delete(pmap, state, site)
+                    row[4] += sites.delete(pmap, state, site, both_sides=True)
             else:
                 for w in list(state.wire_path):
                     c = ctx.conns.get(w)
                     if c is not None and w not in drawn and (kind == "skeleton") == bool(c.skeleton):
                         state.remove(w)
                         row[4] += 1
-            lines = realize(state, board)[0]
+            lines = realize(state, board, own_vias=own)[0]
             after = _lengths(lines)
             for w in mine:
                 d = before[w] - after.get(w, before[w])
@@ -114,15 +137,17 @@ def by_cause(ctx, result, pulled: dict) -> dict:
                     row[1] += d
                     row[2] = max(row[2], d)
             row[3] += len(drc.check(board, {w: lines[w] for w in mine if w in lines}, wire_net, layer.index))
-            before = after
+            # (Each kind against the trace as drawn, or as the kinds before left it if that is shorter:
+            # what the router has pulled out itself is no slack, and nothing is counted twice.)
+            before = {w: min(before[w], after.get(w, before[w])) for w in mine}
     return out
 
 
 def by_geometry(ctx, result, routing_lines: dict) -> list[tuple]:
-    """Corners of drawn traces (as pulled) with nothing drawn within their
-    clearance: (wire, layer, x, y, how far beyond the clearance the nearest
+    """Bends of drawn traces (as pulled; the corners of one arc are one bend)
+    with nothing drawn within their clearance: (wire, layer, x, y, how far beyond the clearance the nearest
     copper is, what not drawn holds it there: "skeleton", "redundant",
-    "asleep", "unused via", "own pad" or "nothing")."""
+    "asleep", "unused via", "own via", "own pad" or "nothing")."""
     board, rules = result.board, result.board.rules
     wide = ctx.board.rules  # the routing's (the skeletons' widths are in them)
     used = {p for w in result.polylines if w in ctx.conns for p in (ctx.conns[w].src, ctx.conns[w].dst)}
@@ -138,7 +163,8 @@ def by_geometry(ctx, result, routing_lines: dict) -> list[tuple]:
         edge = board.outline.boundary
         for w in wires:
             line, net, half = routing_lines[w], result.wire_net[w], rules.width(result.wire_net[w]) / 2.0
-            for a, b, c in zip(line, line[1:], line[2:]):
+            last = -2  # (the vertices of one arc round something are one bend: the first of them stands for it)
+            for i, (a, b, c) in enumerate(zip(line, line[1:], line[2:])):
                 ux, uy, vx, vy = b[0] - a[0], b[1] - a[1], c[0] - b[0], c[1] - b[1]
                 if math.hypot(ux, uy) < 1e-9 or math.hypot(vx, vy) < 1e-9:
                     continue
@@ -156,7 +182,9 @@ def by_geometry(ctx, result, routing_lines: dict) -> list[tuple]:
                     if x != w and result.wire_net[x] != net:
                         best = min(best, p.distance(other) - rules.clearance - half - rules.width(result.wire_net[x]) / 2.0)
                 if best > NEAR:
-                    found.append((w, layer, b[0], b[1], best, _holder(ctx, layer, w, p, wide, used, pads, routing_lines)))
+                    if i != last + 1:
+                        found.append((w, layer, b[0], b[1], best, _holder(ctx, layer, w, p, wide, used, pads, routing_lines)))
+                    last = i
     return found
 
 
@@ -182,6 +210,8 @@ def _holder(ctx, layer: int, w: int, p, rules, used: set, pads: dict, drawn: dic
                 return "asleep"
             if site.pad not in used:
                 return "unused via"
+            if site.net == net and site.pad not in (c.src, c.dst):
+                return "own via"
     return "nothing"
 
 
@@ -199,7 +229,7 @@ def main(argv: list[str]) -> int:
     held: dict = {}
     for corner in corners:
         held[corner[5]] = held.get(corner[5], 0) + 1
-    print(f"slack: {len(corners)} corners with nothing drawn within their clearance: "
+    print(f"slack: {len(corners)} bends with nothing drawn within their clearance: "
           + ", ".join(f"{n} by {what}" for what, n in sorted(held.items()))
           + "".join([f"\n  wire {w} layer {li} at ({x:.3f}, {y:.3f}): nearest copper {d:.3f} mm beyond; {what}"
                      for w, li, x, y, d, what in sorted(corners, key=lambda c: -c[4]) if what not in ("skeleton", "own pad")][:15]))
