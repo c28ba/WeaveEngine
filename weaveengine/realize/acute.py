@@ -330,6 +330,11 @@ def _tries(m: Meeting, lines: dict, ends: dict, pads: dict, pads_here: list, rul
                                  rules.clearance + 2.0 * half)
                 if new is not None:
                     out.append((w, new))
+    # (No new corner within half the trace's width of the pad or via at its other end: there, what is left of the
+    # trace can be a sliver inside the via, which KiCad finds dangling.)
+    out = [(w, new) for w, new in out if not any(
+        Point(p).distance(pads[end].shape) < half and p not in lines[w]
+        for end in ends.get(w, ()) if end in pads and math.dist(pads[end].centre, new[0]) > 1e-9 for p in new[1:-1])]
     out = [(w, new if math.dist(new[0], lines[w][0]) <= math.dist(new[-1], lines[w][0]) else new[::-1]) for w, new in out]  # (as it ran)
     return sorted(out, key=lambda t: LineString(t[1]).length - LineString(lines[t[0]]).length)  # (what adds least first)
 

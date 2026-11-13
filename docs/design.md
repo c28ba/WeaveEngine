@@ -1075,6 +1075,8 @@ One setting gives the least angle (90 degrees by default) for all three, and the
 
 **Tried: no slack beyond the clearance** for the new stretch (the routing's own traces stand on it; the clearance holds the routing margin already). Most of the tees of a bus that runs beside others then pass (blade13 tees 17 to 2), but sweep-half-swept got one more island of pour in KiCad (37 to 38), which the pour estimate does not see (it is 30 islands off on that board), even with the check below. Not kept; the stretch keeps 0.1 microns beyond, as rounded corners do.
 
+**A sliver in a via.** The GitHub sweep of the first version (tiers 1 to 3) found every board routing as many, with the same open items, cut-off pads, islands and mask/thermal, and DRC 339 to 335, but for one track KiCad finds dangling on kicad-cm5-minima: a trace from a pad to a via was squared out of the pad and rejoined its old way 0.19 mm from the via's centre, inside the via, and what was left of it there was written as an arc of 0.06 mm. A new corner is now refused within half the trace's width of the pad or via at the trace's other end (cm5-minima: 0 dangling again).
+
 **Islands.** The traces redrawn here, and those straightened over their own vias, now also go back where the estimate shows an island of pour that overlaps none it showed before (`router._over_own_vias`).
 
 Not done: a junction moved with all its connections (the third case above) and 13.3a's `through` vias. Re-planning was tried twice (13.3a); the measure shows those meetings are not acid traps, and the same-layer ones at vias are fixed in the drawing. Fan-out stubs (`fanout`) are made after blunting, by `plan.fanout`, and are not blunted.
