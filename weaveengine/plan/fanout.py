@@ -190,12 +190,33 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
                 return False
         return True
 
-    def trace_ok(net: int, layer: int, a, b, pad=None) -> bool:
-        """Whether a trace of ``net`` from ``a`` to ``b`` on ``layer`` keeps its clearances (from ``pad``, if it starts in one)."""
+    def trace_ok(net: int, layer: int, a, b, pad=None, end=None) -> bool:
+        """Whether a trace of ``net`` from ``a`` to ``b`` on ``layer`` keeps its clearances (from ``pad``, if it starts in one),
+        and meets the net's other copper there at no acute angle (``realize.acute``): a pad that is not round (but
+        ``pad`` and ``end``, the pad it ends on, which it leaves and meets square, ``_square``) only square to a side,
+        and the traces of the joins made only square across."""
         stub = LineString([a, b]).buffer(rules.drawn(net) / 2.0, quad_segs=4)
-        if margin is not None and (stub if pad is None else stub.difference(pad.shape)).intersects(margin):
+        if margin is not None and stub.intersects(margin):  # (all of it: KiCad measures a track from the Margin whole)
             return False
-        return within.contains(stub) and clear(stub, net, layer, rules.clearance)
+        if not (within.contains(stub) and clear(stub, net, layer, rules.clearance)):
+            return False
+        angle = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+        for p in own.get(net, ()):
+            if p is not pad and p is not end and p.on(layer) and _aslant(p, angle) and stub.intersects(p.shape):
+                return False
+        for other, at, pts in out.traces:
+            if other == net and at == layer:
+                for c, d in zip(pts, pts[1:]):
+                    if stub.intersects(LineString([c, d]).buffer(rules.drawn(net) / 2.0, quad_segs=4)):
+                        across = math.degrees(math.atan2(d[1] - c[1], d[0] - c[0])) - angle
+                        if abs(math.cos(math.radians(across))) > math.sin(math.radians(TURN)) and not _touches_end(a, b, c, d):
+                            return False
+        return True
+
+    own: dict = {}  # net -> its pads that are not round (``trace_ok``)
+    for p in board.pads:
+        if not p.is_via and p.radius is None:
+            own.setdefault(p.net_id, []).append(p)
 
     seen: dict = {}  # id of a via added -> (it, its centre, its net)
 
@@ -856,7 +877,8 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
         length = line.difference(pad.shape).length if pad is not None else line.length
         cost = base + length + ROOM * s.trace_room(length)
         if 1e-9 < length <= FAR and not dead(tkind, group, cost) \
-                and all(trace_ok(net, layer, a, b, pad if i == 0 else None) for i, (a, b) in enumerate(zip(pts, pts[1:]))):
+                and all(trace_ok(net, layer, a, b, pad if i == 0 else None, thing if i == len(pts) - 2 else None)
+                        for i, (a, b) in enumerate(zip(pts, pts[1:]))):
             offer(Join(cost, tkind, vias=list(first), traces=[(layer, pts)]), group)
     return [join for kept in best.values() for join in kept]
 
@@ -889,6 +911,11 @@ def _out(pad, angle: float, half: float) -> tuple[float, float]:
     far = LineString([(cx, cy), (cx + 50.0 * math.cos(axis), cy + 50.0 * math.sin(axis))]).intersection(pad.shape).length
     reach = far + half + GAP
     return (cx + reach * math.cos(axis), cy + reach * math.sin(axis))
+
+
+def _touches_end(a, b, c, d) -> bool:
+    """Whether the two pieces a-b and c-d meet only end to end (a corner of one way, not a crossing)."""
+    return any(math.dist(p, q) < 1e-6 for p in (a, b) for q in (c, d))
 
 
 def _aslant(pad, angle: float) -> bool:
