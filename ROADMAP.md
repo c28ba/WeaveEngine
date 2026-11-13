@@ -135,7 +135,12 @@ To do, in order:
    all meetings before -> after: blade13 53 -> 36, half-swept 55 -> 34,
    complex-hierarchy 11 -> 3, sonde 10 -> 4, lna915 13 -> 9, ecc83 4 -> 0,
    pic-programmer 4 -> 1, sweep-mini 6 -> 2, fomu 6 -> 4, ringlight 8 -> 7,
-   castor-expander 7 -> 7, ftp 0 -> 0. Left: fan-out stubs (made after it, by
+   castor-expander 7 -> 7, ftp 0 -> 0. GitHub sweep of tiers 1 to 3 at c9f2d42
+   against taut2 95d67f5 (main's code): every board routes as many, with the
+   same open items (880), cut-off pads (250), islands (38) and mask/thermal
+   (96); DRC the routing causes 339 to 334 (olimex-poe-c 35 to 32, upduino 18
+   to 16); routing time 4752 to 5269 s (05f15c8, with most of it, took 4768).
+   Left: fan-out stubs (made after it, by
    `plan.fanout`), 13.3a's cross-layer sharp vias, and a junction moved with all
    its connections.
 7. [-] The 45-degree option: moved to 1.2, with the editor (below).
