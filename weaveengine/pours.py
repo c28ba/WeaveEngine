@@ -437,7 +437,8 @@ def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = 
         real += not lone
     if real == alone == 0 or real >= board.min_spokes:
         return False
-    fill = shapely.union_all([x.shape for x in pour.pieces]) if traces else None
+    # (the fill less the pad: the estimate's pieces hold the pad, KiCad's fill does not)
+    fill = shapely.union_all([x.shape for x in pour.pieces]).difference(pad.shape) if traces else None
     for layer, pts in traces:
         if layer == pour.layer:
             a, b = Point(pts[0]), Point(pts[-1])

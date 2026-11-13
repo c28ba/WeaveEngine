@@ -355,6 +355,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             window = pad.shape.buffer(FAR + 1.0).envelope
             fill = shapely.union_all([x.shape.intersection(window) for x in pour.pieces
                                       if comp.get(estimates.piece_key(pour, x)) == main and x.shape.intersects(window)])
+            fill = fill.difference(pad.shape.buffer(estimates.relief(pad, board.zone(net, layer))[0]))  # (the fill, not the pad in it)
             into = {(layer, main): fill.buffer(-(half + GAP))}
             room = free(net, window, half, rules.clearance, [layer]).intersection(within.buffer(-half).intersection(window))
             room = room.difference(margin.buffer(half)) if margin is not None else room
