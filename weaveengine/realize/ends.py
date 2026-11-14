@@ -107,8 +107,9 @@ def merge(board, lines: dict, wire_net: dict, wire_layer: dict, ends: dict, skip
                     for length, _src, src, width, dst, dline, dlength, dwidth, flip in ways:
                         if width + 1e-9 < dwidth:
                             continue
-                        way = _start(src, length) + _rest(dline, dlength)[1:]
-                        new = [tuple(q) for q in way]
+                        # (From where the way it takes ends, a step to where its own goes on: under a quarter width, in copper.)
+                        way = _start(src, length) + _rest(dline, dlength)
+                        new = [tuple(q) for k, q in enumerate(way) if k == 0 or math.dist(q, way[k - 1]) > 1e-9]
                         out[dst] = new[::-1] if flip else new
                         merged += 1
                         changed = True

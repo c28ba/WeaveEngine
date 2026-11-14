@@ -205,7 +205,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     merged = 0
     if options.merge_ends:  # (wires of one net riding into a pad, each drawn its own way there: one trace; before the teardrops)
         steps("joining traces that ride together")
-        lines, merged = merge_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer})
+        # (Not a wire with a violation left: its way is no way for another to take.)
+        lines, merged = merge_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer},
+                                   skip={w for v in violations for w in v.wires})
     # A trace's end on a pad within the edge clearance of a Margin drawing stops inside the pad where it is clear, if it can.
     steps("keeping clear of the margin")
     near_margin, trimmed = trim_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns})

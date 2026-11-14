@@ -123,6 +123,8 @@ def test_traces_that_ride_together_into_a_pad_are_drawn_as_one_there():
     assert new[0] == (0.0, 0.0) and new[-1] == (4.0, 1.0)              # still from pad to pad, the same way round
     assert LineString(new).distance(LineString([(1.0, 0.4), (1.0, 0.4001)])) > 0.3   # no longer out at the gap
     assert LineString(a[:2]).buffer(1e-6).contains(LineString(new[:2]))  # it leaves the pad along the other
+    # and goes nowhere either did not: the step back onto its own way is short, not a chord across it
+    assert LineString(a).buffer(0.07).union(LineString(b).buffer(0.07)).contains(LineString(new))
     # A wire of another net, or one that is with it all the way, is left alone.
     out, n = merge(board, lines, {10: 1, 11: 2}, {10: 0, 11: 0}, {10: (0, 1), 11: (2, 0)})
     assert n == 0 and out == lines
