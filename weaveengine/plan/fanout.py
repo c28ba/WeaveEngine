@@ -131,7 +131,17 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     work.pads = list(board.pads)
     wires = estimates.copper_of(board, lines, wire_net, wire_layer, teardrops, widths)
     fill_of, _ = estimates.fills(work, lines, wire_net, wire_layer, wires=wires)
-    reach = {net: _reach(work, estimates.classify(work, _of(work, fill_of, {net}), wires), wires, net) for net in nets}
+    known: dict = {}  # (ids of a board, its fills and copper, a net) -> (them, ``pours.classify``'s pours of the net)
+
+    def classified(work: Board, fill_of: dict, wires: list, net: int) -> list:
+        """``pours.classify`` of ``net``'s pours, made once for each state of the board (nothing changes one in place)."""
+        got = known.get((id(work), id(fill_of), id(wires), net))
+        if got is None:
+            got = known[id(work), id(fill_of), id(wires), net] = (work, fill_of, wires,
+                                                                  estimates.classify(work, _of(work, fill_of, {net}), wires))
+        return got[3]
+
+    reach = {net: _reach(work, classified(work, fill_of, wires, net), wires, net) for net in nets}
     r = rules.via_diameter / 2.0
     keep = rules.apart(rules.via_clearance)  # what a via keeps from foreign copper
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance)
@@ -177,20 +187,31 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         tree = trees[layer]
         if tree is None:
             return True
-        for i in tree.query(shape, predicate="dwithin", distance=max(widest + need, HOLES)).tolist():
-            other, other_net, asks = things[layer][i]
-            if other_net == net:
-                if drilled and other in through and shape.distance(other) < HOLES - 1e-9:
-                    return False  # (drill to drill, even within the net)
-                continue
-            if other_net == -2:
-                if shape.intersects(other):
-                    return False
-            elif shape.distance(other) < max(need, asks) - 1e-9:
+        far = max(widest + need, HOLES)  # (what is not within this of it is clear of it: its box is not either)
+        x0, y0, x1, y1 = shape.bounds
+        near = [things[layer][i] for i in tree.query(shapely.box(x0 - far, y0 - far, x1 + far, y1 + far)).tolist()]
+        measured = [t for t in near if (t[1] != -2 and t[1] != net) or (t[1] == net and drilled and t[0] in through)]
+        if measured:  # (what it keeps from each: from another net's copper; or, drill to drill, even within the net)
+            others = np.array([t[0] for t in measured], dtype=object)
+            least = np.array([HOLES if t[1] == net else max(need, t[2]) for t in measured])
+            b = shapely.bounds(others)  # (what its box keeps that from is far enough: measured, the rest)
+            gap = np.hypot(np.maximum(np.maximum(b[:, 0] - x1, x0 - b[:, 2]), 0.0),
+                           np.maximum(np.maximum(b[:, 1] - y1, y0 - b[:, 3]), 0.0))
+            close = gap <= least
+            if close.any() and (shapely.distance(shape, others[close]) < least[close] - 1e-9).any():
                 return False
-        return True
+        return not any(t[1] == -2 and t[1] != net and shape.intersects(t[0]) for t in near)
+
+    checked: dict = {}  # what ``trace_ok`` and ``via_ok`` found, while nothing is added (``make``, ``restore``)
 
     def trace_ok(net: int, layer: int, a, b, pad=None, end=None) -> bool:
+        key = (net, layer, tuple(a), tuple(b), id(pad), id(end))
+        got = checked.get(key)
+        if got is None or got[1] is not pad or got[2] is not end:
+            got = checked[key] = (_trace_ok(net, layer, a, b, pad, end), pad, end)
+        return got[0]
+
+    def _trace_ok(net: int, layer: int, a, b, pad=None, end=None) -> bool:
         """Whether a trace of ``net`` from ``a`` to ``b`` on ``layer`` keeps its clearances (from ``pad``, if it starts in one),
         and meets the net's other copper there at no acute angle (``realize.acute``): a pad that is not round (but
         ``pad`` and ``end``, the pad it ends on, which it leaves and meets square, ``_square``) only square to a side,
@@ -201,13 +222,17 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         if not (within.contains(stub) and clear(stub, net, layer, rules.clearance)):
             return False
         angle = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
-        for p in own.get(net, ()):
-            if p is not pad and p is not end and p.on(layer) and _aslant(p, angle) and stub.intersects(p.shape):
-                return False
+        if net in own:
+            for i in own_trees[net].query(stub, predicate="intersects").tolist():
+                p = own[net][i]
+                if p is not pad and p is not end and p.on(layer) and _aslant(p, angle):
+                    return False
         for other, at, pts in out.traces:
             if other == net and at == layer:
                 for c, d in zip(pts, pts[1:]):
-                    if stub.intersects(LineString([c, d]).buffer(rules.drawn(net) / 2.0, quad_segs=4)):
+                    if (c, d, net) not in drawn:
+                        drawn[c, d, net] = LineString([c, d]).buffer(rules.drawn(net) / 2.0, quad_segs=4)
+                    if stub.intersects(drawn[c, d, net]):
                         across = math.degrees(math.atan2(d[1] - c[1], d[0] - c[0])) - angle
                         if abs(math.cos(math.radians(across))) > math.sin(math.radians(TURN)) and not _touches_end(a, b, c, d):
                             return False
@@ -217,6 +242,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     for p in board.pads:
         if not p.is_via and p.radius is None:
             own.setdefault(p.net_id, []).append(p)
+    own_trees = {net: shapely.STRtree([p.shape for p in pads]) for net, pads in own.items()}
+    drawn: dict = {}  # (a, b, net) -> a piece of a join's trace, as drawn (``trace_ok``)
 
     seen: dict = {}  # id of a via added -> (it, its centre, its net)
 
@@ -228,6 +255,11 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         return [seen[id(v)][1:] for v in out.vias]
 
     def via_ok(net: int, x: float, y: float) -> bool:
+        if (net, x, y) not in checked:
+            checked[net, x, y] = _via_ok(net, x, y)
+        return checked[net, x, y]
+
+    def _via_ok(net: int, x: float, y: float) -> bool:
         """Whether a via of ``net`` may stand at (x, y) among everything there and the vias added."""
         if not inside_via.contains(Point(x, y)):
             return False
@@ -290,7 +322,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         half = rules.drawn(net) / 2.0
         comp = reach[net][0]
         root = comp[("pad", unit[0].pad_id)]
-        now = estimates.classify(work, _of(work, fill_of, {net}), wires)
+        now = classified(work, fill_of, wires, net)
         pieces = [(pour.layer, x.shape) for pour in now for x in pour.pieces if comp.get(estimates.piece_key(pour, x)) == root]
         # Everything near enough to matter: the group and its pieces, and as far round them as a join reaches.
         window = shapely.box(*shapely.union_all([p.shape for p in unit] + [s for _, s in pieces]).bounds).buffer(FAR + r + 1.0, join_style="mitre")
@@ -323,7 +355,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
             if not stays(net, way, work):
                 continue
-            done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
+            done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces, classified)
             if done is None:
                 continue
             after = _groups(done[0], done[3][net][0], net)
@@ -352,6 +384,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
 
     def restore(kept) -> None:
         nonlocal trees
+        checked.clear()
         del out.vias[kept[0]:], out.traces[kept[1]:]
         out.reliefs, out.kinds = kept[2], kept[3]
         for ts, n in zip(things, kept[4]):
@@ -362,6 +395,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     def make(net: int, way: Join, done) -> None:
         """Keeps ``way`` (made on ``done``, ``_apply``'s)."""
         nonlocal trees
+        checked.clear()
         half = rules.drawn(net) / 2.0
         _keep(done[0], way, net, out)
         state.update(work=done[0], fill_of=done[1], wires=done[2], reach=done[3])
@@ -396,7 +430,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         kept = snapshot()
         for _ in range(rules_spokes + 1):  # (the last round only finds whether the spokes made do)
             work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
-            now = estimates.classify(work, _of(work, fill_of, {net}), wires)
+            now = classified(work, fill_of, wires, net)
             pour = next(x for x in now if x.layer == layer and x.outline is outline)
             if not estimates.starved(work, pour, pad, wires, [(at, pts) for other, at, pts in out.traces if other == net]):
                 return
@@ -412,7 +446,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             ways = _rays(net, pad.centre, layer, pad, {layer: room}, into, Polygon(), {}, [], s, None, None, trace_ok, via_ok,
                          straight=True)
             for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
-                done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
+                done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces, classified)
                 if done is not None and _coarser(_groups(work, reach[net][0], net), _groups(done[0], done[3][net][0], net)):
                     make(net, dataclasses.replace(way, kind="spoke"), done)
                     break
@@ -427,7 +461,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
         comp, _, main = reach[net]
         half = rules.drawn(net) / 2.0
-        now = estimates.classify(work, _of(work, fill_of, {net}), wires)
+        now = classified(work, fill_of, wires, net)
         window = shapely.box(*shape.bounds).buffer(FAR + r + 1.0, join_style="mitre")
         target: dict = {}
         for pour in now:
@@ -455,7 +489,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
             if not stays(net, way, work):
                 continue
-            done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces)
+            done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces, classified)
             if done is None or not _coarser(before, _groups(done[0], done[3][net][0], net)):
                 continue
             after = estimates.classify(done[0], _of(done[0], done[1], {net}), done[2])
@@ -470,9 +504,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     for net in nets if islands else ():
         if state["reach"][net][2] is None:
             continue
-        lone = [(pour.layer, x.shape) for pour in estimates.classify(state["work"], _of(state["work"], state["fill_of"], {net}),
-                                                                      state["wires"]) if (net, pour.layer) in board.pour_zone
-                for x in pour.pieces if x.kind == "island"]
+        lone = [(pour.layer, x.shape) for pour in classified(state["work"], state["fill_of"], state["wires"], net)
+                if (net, pour.layer) in board.pour_zone for x in pour.pieces if x.kind == "island"]
         for layer, shape in lone:
             island(net, layer, shape)
 
@@ -531,12 +564,13 @@ def _of(board: Board, fill_of: dict, nets: set) -> dict:
 
 
 def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: dict, area, r: float, half: float,
-           now: list, traces: list):
+           now: list, traces: list, classified):
     """The board, fills, routing copper and groups (``pours.reach``) with ``way`` made, if the estimate finds that it
     leaves every pad of every other net as joined as it was, no more islands in their pours, and no more pads starved
     of thermal spokes (``pours.starved``: KiCad finds a pad whose spokes reach only a piece that meets nothing else
     starved once that piece is joined, so a join may trade a pad left unconnected for one starved); else None.
-    ``now``: the pours of ``net`` as they are (``pours.classify``); ``traces``: (net, layer, points) of the joins made."""
+    ``now``: the pours of ``net`` as they are (``pours.classify``); ``traces``: (net, layer, points) of the joins made;
+    ``classified``: ``pours.classify`` of a net's pours as they are (``join``'s)."""
     from weaveengine import pours as estimates
     board = copy.copy(work)
     board.pads = list(work.pads)
@@ -573,7 +607,7 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
         return None
     changed = {net: _reach(board, after, new_wires, net)}
     for other in sorted(others):
-        old = estimates.classify(work, _of(work, fill_of, {other}), wires)
+        old = classified(work, fill_of, wires, other)
         new = estimates.classify(board, _of(board, theirs, {other}), new_wires)
         if sum(pour.islands for pour in new) > sum(pour.islands for pour in old):
             return None
@@ -735,7 +769,13 @@ def _nearest(region, aims: list, count: int) -> list[tuple[float, float]]:
     if not len(pts) or not aims:
         return []
     points = shapely.points(pts)
-    d = np.min([shapely.distance(points, aim) for aim in aims], axis=0)
+    # (measured only where an aim is within ``FAR``, a little more to be sure: nothing further is taken)
+    d = np.full(len(pts), np.inf)
+    for aim in aims:
+        shapely.prepare(aim)
+        near = shapely.dwithin(aim, points, FAR + 1e-6)
+        if near.any():
+            d[near] = np.minimum(d[near], shapely.distance(points[near], aim))
     out: list = []
     for i in np.argsort(d, kind="stable"):
         if d[i] > FAR:
@@ -797,6 +837,14 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
     else:
         beyond = np.broadcast_to(t, xs.shape)
     stop = np.where((~clear).any(axis=1), (~clear).argmax(axis=1), len(t))  # (each ray, up to where it is first not clear)
+    before = np.arange(len(t))[None, :] < stop[:, None]  # (the places before that: only those are looked at)
+
+    def inside(region, mask):
+        """``contains_xy(region, xs, ys)`` where ``mask`` is, False elsewhere."""
+        got = np.zeros(xs.shape, dtype=bool)
+        if mask.any():
+            got[mask] = shapely.contains_xy(region, xs[mask], ys[mask])
+        return got
 
     def path(k: int, x: float, y: float) -> list:
         """The points of the trace along ray ``k`` to (x, y)."""
@@ -835,9 +883,9 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
     for (at, group), aim in into.items():  # into another group's fill on this layer: a little past its edge, where the ray stays clear
         if at != layer:
             continue
-        hit = shapely.contains_xy(aim, xs, ys)
-        for k in range(len(a)):
-            got = np.nonzero(hit[k, :stop[k]])[0]
+        hit = inside(aim, before)
+        for k in np.nonzero(hit.any(axis=1))[0].tolist():  # (the rays that reach it)
+            got = np.nonzero(hit[k])[0]
             if len(got):
                 i = min(got[0] + int(round(SURE / STEP)), stop[k] - 1)
                 i = i if hit[k, i] else got[0]
@@ -846,15 +894,18 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
                     offer(Join(base + length + ROOM * s.trace_room(length) + UNSURE * max(0.0, SURE - _depth(aim, x, y)),
                                kind, vias=list(first), traces=[(layer, path(k, x, y))]), group)
     # To a via that lands in the main fill on another layer: beside the pad, or clear of the jumper's first via.
-    vhit = shapely.contains_xy(vland, xs, ys) & (beyond >= (s.r + GAP if pad is not None else 2.0 * s.r + HOLES))
+    vhit = inside(vland, before & (beyond >= (s.r + GAP if pad is not None else 2.0 * s.r + HOLES)))
     skip = [layer] + ([at for at, _ in land if pad.on(at)] if pad is not None else [])
-    masks = {key: shapely.contains_xy(g, xs, ys) & vhit for key, g in land.items() if key[0] not in skip}
+    masks = {key: inside(g, vhit) for key, g in land.items() if key[0] not in skip}
     least = np.minimum.accumulate(beyond[:, ::-1], axis=1)[:, ::-1]  # (the least length of a trace from here on, along each ray)
     vkind = "via" if via_start is None else kind
-    for k in range(len(a)):
+    reached = {key: mask.any(axis=1) for key, mask in masks.items()}  # (the rays that reach each)
+    for k in np.nonzero(np.any(list(reached.values()), axis=0))[0].tolist() if masks else ():
         for key, mask in masks.items():  # (along this ray, the first good place that lands in each group, and others further)
+            if not reached[key][k]:
+                continue
             last = -math.inf
-            for i in np.nonzero(mask[k, :stop[k]])[0]:
+            for i in np.nonzero(mask[k])[0]:
                 if dead(vkind, key[1], base + least[k, i] + ROOM * s.trace_room(least[k, i]) + VIA + ROOM * s.via_room):
                     break  # (nothing further along it can be kept)
                 if t[i] - last < APART:
