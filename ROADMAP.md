@@ -480,8 +480,9 @@ new example (a board and where on it); then it moves up to be fixed.
   pads square. Tiers 1 to 3 against main f2872f5: every board routes the
   same; KiCad open 880 to 706, mask/thermal 96 to 38, none worse; acute
   meetings fewer or equal on every board; one island more on cm5-minima
-  (a pad-less strip main's fan-out anchored by chance; none with the
-  islands setting on); time +4 %.
+  (the sweep's islands 2 to 3: a pad-less strip main's fan-out anchored by
+  chance; KiCad's isolated copper there 12 on main, 13 with the islands
+  setting off, 3 with it on, locally); time +4 %.
 
 ### Rules
 
