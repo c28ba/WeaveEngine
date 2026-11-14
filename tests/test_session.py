@@ -33,6 +33,15 @@ def test_settings_round_trip_and_bad_files(tmp_path):
     assert set(AUTOMATIC) <= set(DESCRIPTIONS)
     assert all(getattr(Settings(), name) == 0 for name in AUTOMATIC)
     assert not any("0 =" in text for _, text, _ in DESCRIPTIONS.values())
+    # every setting is in exactly one topic, of App or Routing, and says in a sentence what it does
+    from weaveengine.settings import SECTIONS, TOPICS, section_of
+    assert len(TOPICS) == len(set(TOPICS)) and set(SECTIONS) == {"App", "Routing"}
+    assert all(topic in TOPICS for _, _, topic in DESCRIPTIONS.values())
+    assert all(any(group == topic for _, _, group in DESCRIPTIONS.values()) for topic in TOPICS)
+    assert all(len(text) > 40 and len(label) > 3 and text.rstrip().endswith((".", ")")) for label, text, _ in DESCRIPTIONS.values())
+    assert all(SECTIONS[section_of(topic)][topic] for topic in TOPICS)
+    assert {n for n, (_, _, topic) in DESCRIPTIONS.items() if section_of(topic) == "App"} ==         {"show_outlines", "show_names", "show_pours", "show_pour_islands", "gpu_drawing", "workers"}
+    assert "Margin layer" in DESCRIPTIONS["margin_drawings"][1] and "edge" in DESCRIPTIONS["margin_drawings"][1]
 
 
 def test_settings_become_router_arguments():

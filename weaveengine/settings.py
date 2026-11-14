@@ -15,94 +15,189 @@ from weaveengine.board import Rules
 from weaveengine.plan.context import Options
 from weaveengine.topo.costs import CostParams
 
-# name -> (label, description, group)
+# The settings come in two parts. "App" is the program itself: how it draws and what it uses of this computer; none
+# of it changes the routed result. "Routing" is everything that does. Each part is split by topic (the tabs of the
+# editor and the argument groups of ``--help``). topic -> what that tab is about.
+SECTIONS = {
+    "App": {
+        "Display": "How the board is drawn on screen. Nothing here changes the routing or the files written.",
+        "Computer": "What the program uses of this machine. It can change how fast routing runs, not what it routes.",
+    },
+    "Routing": {
+        "Rules & nets": "The design rules routing keeps, and which nets it routes. Each rule left on automatic is read from the board.",
+        "Layers": "Which layers carry traces, and which are dearer to use.",
+        "Margin & edges": "How close copper may come to the board edge, and what counts as the edge.",
+        "Effort & search": "How hard and how long the router tries, and how it searches. More effort finds more routes but takes longer; "
+                           "the defaults suit most boards.",
+        "Traces & shape": "How the traces are drawn once routed: corners, widths, angles and detours.",
+        "Vias": "Whether and how vias are used to change layer.",
+        "Pours & planes": "Copper pours (zones) and planes: joining pads and pieces they do not reach, and keeping them whole under the traces.",
+        "Teardrops": "The tapered fillets where a trace meets a pad or a via.",
+        "Export": "What is written to the output files.",
+    },
+}
+TOPICS = [topic for topics in SECTIONS.values() for topic in topics]
+
+
+def section_of(topic: str) -> str:
+    """The part ("App" or "Routing") that holds ``topic``."""
+    return next(part for part, topics in SECTIONS.items() if topic in topics)
+
+
+# name -> (label, description, topic). In the order the editor lists them.
 DESCRIPTIONS = {
-    "workers": ("Worker processes", "How many processor cores routing may use", "Speed"),
-    "portfolio": ("Variants raced per pass", "Each pass is tried several ways at once and the best is kept", "Speed"),
-    "seed": ("Random seed", "Same seed and settings give the same result", "Speed"),
-    "time_limit": ("Time limit (minutes)", "When it is up, the routing is not bettered further: the best found so far is finished "
-                   "and shown (that takes a little longer still)", "Speed"),
-    "drc_rounds": ("Design-rule repair rounds", "Reroute attempts for traces that fail the final check", "Routing"),
-    "use_vias": ("Use vias", "Let a connection change layer through vias where that is the cheaper way", "Routing"),
-    "global_selection": ("Global candidate selection", "Phase 1: choose routes for all nets together", "Routing"),
-    "regret_order": ("Commit in regret order", "Phase 2: most-constrained nets first", "Routing"),
-    "lookahead": ("Look-ahead costs", "Airwire-crossing and barrier costs", "Routing"),
-    "demand": ("Demand map", "Reserve scarce channels for nets that need them", "Routing"),
-    "ripup": ("Rip-up and reroute", "Phase 3: negotiate congestion", "Routing"),
-    "refine": ("Refinement", "Phase 4: shorten each wire once routing is done", "Routing"),
-    "candidates": ("Candidates per connection (K)", "Alternatives considered in Phase 1", "Routing"),
-    "reroute_candidates": ("Candidates per reroute", "Alternatives considered in rip-up", "Routing"),
-    "max_ripup_rounds": ("Rip-up round limit", "Upper bound on Phase 3 rounds", "Routing"),
-    "heuristic_weight": ("Search heuristic weight", "1 = exact; above 1 is faster and less exact", "Routing"),
-    "trace_width": ("Trace width (mm)", "Width of the default net class", "Rules"),
-    "clearance": ("Clearance (mm)", "Copper to copper", "Rules"),
-    "via_diameter": ("Via diameter (mm)", "Outer diameter of a via", "Rules"),
-    "via_drill": ("Via drill (mm)", "Hole diameter of a via", "Rules"),
-    "edge_clearance": ("Copper to board edge (mm)", "A DSN does not carry this rule", "Rules"),
-    "margin": ("Safety margin (mm)", "Extra clearance routed with, so nothing sits exactly on a limit", "Rules"),
-    "ignore_keepouts": ("Ignore keepout areas", "Drop the DSN's keepouts", "Rules"),
-    "margin_drawings": ("Drawings on the Margin layer", "KiCad's check holds copper to the edge clearance from them, as from "
-                        "the board edge", "Rules"),
-    "show_outlines": ("Component outlines", "Draw the outline of every part", "View"),
-    "show_names": ("Component names", "Draw every part's reference", "View"),
-    "gpu_drawing": ("Draw with the graphics card", "Much faster on large boards. If this machine cannot do it, or it once failed, "
-                    "the ordinary drawing is used instead", "View"),
-    "skip_nets": ("Nets not to route", "Names separated by commas; * and ? match any text (GND*, say). Treated as a net with a "
-                  "pour already: not routed, and not counted as open", "Routing"),
-    "untangle": ("Undo long detours", "Move the traces that force a connection the long way round, where that leaves less copper", "Routing"),
+    # -- App ------------------------------------------------------------------
+    "show_outlines": ("Component outlines", "Draw the outline of every part. Turn off for a clearer view of the copper on a crowded board. "
+                      "Display only.", "Display"),
+    "show_names": ("Component names", "Draw every part's reference (U1, R12). Turn off to declutter a dense board. Display only.", "Display"),
+    "show_pours": ("Show pours", "Draw the estimated fill of each copper pour once the board is routed, so you can see where the "
+                   "copper lies. It is WeaveEngine's estimate, not KiCad's own fill. Display only.", "Display"),
+    "show_pour_islands": ("Show islands", "Draw the islands of a pour: pieces joined to nothing, left in by their zone (KiCad reports "
+                          "them as isolated copper; a zone set to remove islands has none). Useful for seeing what 'Join pour islands "
+                          "that have no pads' would act on. Display only.", "Display"),
+    "gpu_drawing": ("Draw with the graphics card", "Much faster panning and zooming on large boards. If this machine cannot do it, or it "
+                    "once failed, the ordinary drawing is used instead. Off by default because some graphics drivers misbehave.", "Display"),
+    "workers": ("Worker processes", "How many processor cores routing may use. Every core is fastest; use fewer to keep the machine "
+                "responsive while you route. Racing variants (Effort & search) by default races one per worker.", "Computer"),
+    # -- Routing: Rules & nets ------------------------------------------------
+    "trace_width": ("Trace width (mm)", "Width of the default net class. Leave on automatic to take it from the board; set it only "
+                    "to route with something other than the board's own rule.", "Rules & nets"),
+    "clearance": ("Clearance (mm)", "The gap kept between copper of different nets. Automatic takes the board's rule. A larger value "
+                  "routes with more room and so leaves more connections open; a smaller one than the board's will fail KiCad's check.", "Rules & nets"),
+    "via_diameter": ("Via diameter (mm)", "Outer diameter of a via. Automatic takes the board's own. Larger vias need more room and "
+                     "route less easily.", "Rules & nets"),
+    "via_drill": ("Via drill (mm)", "Hole diameter of a via. Automatic takes the board's own. The ring of copper left around the hole "
+                  "is the via diameter less this.", "Rules & nets"),
+    "margin": ("Safety margin (mm)", "Extra clearance routed with, so that nothing sits exactly on a limit and the board passes KiCad's "
+              "check despite rounding. Raise it for more slack at the cost of room; the checks themselves still use the real rules.", "Rules & nets"),
+    "ignore_keepouts": ("Ignore keepout areas", "Drop the keepout areas the board file carries, so traces and vias may cross them. Leave "
+                        "off unless the keepouts are wrong or you mean to fix them afterwards: crossing them breaks the design's own rules.", "Rules & nets"),
+    "skip_nets": ("Nets not to route", "Names separated by commas; * and ? match any text (GND*, say). Treated as a net with a pour "
+                  "already: not routed, and not counted as open. Use for nets you will draw by hand.", "Rules & nets"),
+    # -- Routing: Layers ------------------------------------------------------
+    "layers": ("Layers to route", "Names of the signal layers that may carry traces, separated by commas (F.Cu, B.Cu, say). Empty: every "
+               "layer the board file has. The layers left out still keep vias clear of their copper and reach their planes. Applies "
+               "the next time the board is routed.", "Layers"),
+    "layer_cost": ("Layers that cost more", "A layer and how many times its length a trace on it counts for, as LAYER:FACTOR, separated "
+                   "by commas (In1.Cu:5, say). Traces then use that layer only where they must: for a layer that also carries a "
+                   "plane, say. The factor is 1 or more. Empty: every layer costs the same.", "Layers"),
+    # -- Routing: Margin & edges ----------------------------------------------
+    "edge_clearance": ("Copper to board edge (mm)", "How far copper keeps from the board outline. A DSN file does not carry this rule, so "
+                       "automatic reads it from the KiCad project beside the file, else uses the clearance. Set it if your fabricator "
+                       "needs more.", "Margin & edges"),
+    "margin_drawings": ("Drawings on the Margin layer", "Technical. KiCad's check holds copper an edge clearance away from anything "
+                        "drawn on the Margin layer, as if it were the board edge, and the DSN does not tell WeaveEngine about it. "
+                        "'Added' (the default) keeps clear of those drawings the copper WeaveEngine adds after routing (teardrops, rounded "
+                        "corners, tapers, corner blunting, arcs, plane vias and trace ends) and changes no routing. 'Edge' treats the "
+                        "drawings as a real board edge for traces and vias too, and a pad inside the band is left only straight away from "
+                        "the drawing: the fewest KiCad edge errors, but on a board whose Margin drawings are shield outlines crossed by "
+                        "the design's own traces it can leave many connections unrouted. 'Off' ignores them.", "Margin & edges"),
+    # -- Routing: Effort & search ---------------------------------------------
+    "portfolio": ("Variants raced per pass", "Each pass is tried several ways at once and the best result is kept. More variants find "
+                  "better routings but use more cores and memory; off gives one try per pass.", "Effort & search"),
+    "seed": ("Random seed", "Same seed and settings give the same result. Change it to get a different routing of the same board, "
+             "which sometimes completes where another does not.", "Effort & search"),
+    "time_limit": ("Time limit (minutes)", "When it is up, the routing is not bettered further: the best found so far is finished and "
+                   "shown (that takes a little longer still). Leave unlimited for the best result.", "Effort & search"),
+    "drc_rounds": ("Design-rule repair rounds", "Reroute attempts for traces that fail the final design-rule check. More rounds fix more "
+                   "violations but take longer; none leaves them for you.", "Effort & search"),
+    "global_selection": ("Global candidate selection", "Phase 1: choose routes for all nets together rather than one at a time, so the "
+                         "nets share the room well. Turning it off is faster and usually completes less.", "Effort & search"),
+    "regret_order": ("Commit in regret order", "Phase 2: route the most constrained nets first, since they have the fewest choices. "
+                     "Off routes shortest first.", "Effort & search"),
+    "lookahead": ("Look-ahead costs", "Make the search aware of where other nets' airwires will have to cross, and avoid blocking them. "
+                  "Better completion, slightly slower.", "Effort & search"),
+    "demand": ("Demand map", "Reserve narrow channels for the nets that need them, so earlier nets do not use them up. Better completion "
+               "on dense boards.", "Effort & search"),
+    "ripup": ("Rip-up and reroute", "Phase 3: where nets are in each other's way, remove some and route them again until the congestion "
+              "is settled. The step that completes hard boards; off is much faster and leaves more open.", "Effort & search"),
+    "refine": ("Refinement", "Phase 4: once routing is done, reroute each wire once more to shorten it. Shorter copper, a little more "
+               "time.", "Effort & search"),
+    "candidates": ("Candidates per connection (K)", "Alternative routes considered for each connection in phase 1. More gives the "
+                   "global choice more to pick from at the cost of time and memory.", "Effort & search"),
+    "reroute_candidates": ("Candidates per reroute", "Alternative routes considered when a connection is rerouted in rip-up. More "
+                           "finds ways around congestion, more slowly.", "Effort & search"),
+    "max_ripup_rounds": ("Rip-up round limit", "Upper bound on the rounds of phase 3. Fewer finish sooner with more left open; a board "
+                         "that is going to complete usually does so well within the default.", "Effort & search"),
+    "heuristic_weight": ("Search heuristic weight", "1 is exact. Above 1 the search is faster but less exact, so traces may be a little "
+                         "longer. Only worth raising for very large boards.", "Effort & search"),
+    # -- Routing: Traces & shape ----------------------------------------------
+    "untangle": ("Undo long detours", "Move the traces that force a connection the long way round, where that leaves less copper. "
+                 "Shorter, tidier routing; turn off to keep the first routing found.", "Traces & shape"),
     "narrow_to_reach": ("Narrow traces to reach fine-pitch pins", "Where a net's pads cannot be reached at its class's width, route it "
-                        "narrower, down to the board's minimum track width (from the KiCad project)", "Routing"),
-    "fanout_to_planes": ("Join pads to planes", "A pad of a poured net (GND, say) that its pour does not reach, or a piece of "
-                         "the pour the traces cut off, is joined to the rest of the net once the board is routed, by the cheapest "
-                         "way that the estimated fill finds joins it: a via in or beside the pad or in the piece, a trace into "
-                         "the fill, or a jumper (a via pair and a trace on another layer)", "Pours"),
-    "pour_reliefs": ("Change thermal reliefs to join pads", "A pad whose thermal spokes do not reach its pour may be joined "
-                     "solid, or its spokes turned, where that joins it and costs least. Not the zone's rule: written as the "
-                     "pad's own in the routed copy of the board (the SES cannot carry it)", "Pours"),
-    "pour_narrow_reliefs": ("Narrow a pad's relief to join it", "A pad cut off from its pour may have its relief gap narrowed "
-                            "to the zone's clearance and its spokes to the zone's minimum width, where that joins it and costs "
-                            "least. Not the zone's rule: written as the pad's own in the routed copy of the board", "Pours"),
-    "join_bare_islands": ("Join pour islands that have no pads", "A piece of a pour that holds no pad and that its zone does "
-                          "not remove (KiCad reports it as isolated copper) is joined to the rest of its net, by a via in it or a "
-                          "trace from it, so that the pour is whole under the traces. Off: such pieces are left as they are", "Pours"),
-    "pour_spokes": ("Add spokes to starved thermal pads", "A pad joined to its pour by fewer thermal spokes than the board asks "
-                    "(KiCad's starved thermal) gets traces from it into the fill, each a spoke KiCad counts", "Pours"),
-    "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which "
-                       "traces move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it", "Pours"),
-    "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
-                       "pours' skeletons are drawn to. From the board: each zone's own minimum thickness", "Pours"),
-    "show_pours": ("Show pours", "Draw the estimated fill of each copper pour after routing", "Pours"),
-    "show_pour_islands": ("Show islands", "Draw the islands of a pour: pieces joined to nothing, left in by its zone (KiCad "
-                          "reports them as isolated copper; a zone set to remove islands has none)", "Pours"),
-    "slide_vias": ("Straighten vias", "Move each via to where its traces run through it with less of a bend", "Routing"),
+                        "narrower, down to the board's minimum track width (from the KiCad project). Off keeps every net at its class "
+                        "width, and leaves the pins it cannot reach open.", "Traces & shape"),
     "taper_to_pins": ("Taper traces to fine-pitch pins", "A net narrowed to reach fine-pitch pins is drawn at its own width again, "
-                      "narrowing (with a wedge) only over the last stretch to each such pin, where there is room", "Routing"),
-    "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow", "Routing"),
-    "least_angle": ("Least angle where a net meets itself (degrees)", "Where a trace meets its pad, or traces of one net meet at "
-                    "a via, a pad or a branch, at a sharper angle (which traps etchant), it is redrawn where there is room: "
-                    "square into the pad, or along the other before it branches off. 0: not; at most 90", "Routing"),
-    "teardrop_style": ("Teardrops", "Where traces meet pads and vias. Can be changed after routing: only the teardrops are made "
-                       "again", "Teardrops"),
-    "routed_board": ("Routed copy of the board", "Also write the routing straight into a copy of the KiCad board (.kicad_pcb) "
-                     "beside the SES, at this path; empty: NAME-routed.kicad_pcb, written only for teardrop zones. The "
-                     "original board is never changed", "Teardrops"),
-    "arcs_in_ses": ("Write arcs to the SES", "Curves as arcs (qarc) instead of many short segments", "Routing"),
-    "teardrop_max_length": ("Longest teardrop (mm)", "Beyond the pad edge", "Teardrops"),
-    "teardrop_max_width": ("Widest teardrop (mm)", "Across, at the pad", "Teardrops"),
-    "teardrop_breathing": ("Teardrop breathing room", "Clearances kept from foreign copper; cramped teardrops are left out", "Teardrops"),
+                      "narrowing (with a wedge) only over the last stretch to each such pin, where there is room. Off: narrow all the "
+                      "way. Tapering keeps the resistance down on the stretch that does not need to be thin.", "Traces & shape"),
+    "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow. Smoother copper "
+                       "and nicer to etch; the arcs are written as arcs or as short segments (see Export).", "Traces & shape"),
+    "least_angle": ("Least angle where a net meets itself (degrees)", "Where a trace meets its pad, or traces of one net meet at a via, "
+                    "a pad or a branch, at a sharper angle than this, the copper makes an acid trap (a wedge that holds etchant). It "
+                    "is redrawn where there is room: square into the pad, or along the other trace before it branches off. At most "
+                    "90, the default, redraws any meeting sharper than square; lower leaves meetings above that angle as drawn; "
+                    "zero turns it off.", "Traces & shape"),
+    # -- Routing: Vias --------------------------------------------------------
+    "use_vias": ("Use vias", "Let a connection change layer through vias where that is the cheaper way. Off keeps every connection on "
+                 "one layer (for a single-sided board, say); many will then stay open.", "Vias"),
+    "slide_vias": ("Straighten vias", "Move each via to where its traces run through it with less of a bend. Neater routing; off "
+                   "leaves vias where the search put them.", "Vias"),
+    # -- Routing: Pours & planes ----------------------------------------------
+    "fanout_to_planes": ("Join pads to planes", "A pad of a poured net (GND, say) that its pour does not reach, or a piece of the pour "
+                         "the traces cut off, is joined to the rest of the net once the board is routed, by the cheapest way that the "
+                         "estimated fill finds joins it: a via in or beside the pad or in the piece, a trace into the fill, or a "
+                         "jumper (a via pair and a trace on another layer). Off leaves those pads and pieces for the pour or for "
+                         "you, and the settings below then do nothing.", "Pours & planes"),
+    "pour_reliefs": ("Change thermal reliefs to join pads", "A pad whose thermal spokes do not reach its pour may be joined solid, or "
+                     "its spokes turned, where that joins it and costs least. Off by default because it changes how the pad is "
+                     "connected, which can affect soldering. Not the zone's rule: written as the pad's own in the routed copy of the "
+                     "board (the SES cannot carry it).", "Pours & planes"),
+    "pour_narrow_reliefs": ("Narrow a pad's relief to join it", "A pad cut off from its pour may have its relief gap narrowed to the "
+                            "zone's clearance and its spokes to the zone's minimum width, where that joins it and costs least. Off by "
+                            "default because it changes the pad's own thermal rule. Written as the pad's own in the routed copy of "
+                            "the board.", "Pours & planes"),
+    "join_bare_islands": ("Join pour islands that have no pads", "A piece of a pour that holds no pad and that its zone does not "
+                          "remove (KiCad reports it as isolated copper) is joined to the rest of its net, by a via in it or a trace "
+                          "from it, so that the pour is whole under the traces. Off by default because it adds copper that nothing "
+                          "needs; the piece is harmless, but KiCad flags it. Off: such pieces are left as they are.", "Pours & planes"),
+    "pour_spokes": ("Add spokes to starved thermal pads", "A pad joined to its pour by fewer thermal spokes than the board asks (KiCad's "
+                    "starved thermal) gets traces from it into the fill, each a spoke KiCad counts. Clears those KiCad warnings; off "
+                    "leaves the pads as they are.", "Pours & planes"),
+    "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which traces "
+                       "move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it. Off "
+                       "lets traces cut a pour freely, which leaves more pieces to join.", "Pours & planes"),
+    "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
+                       "pours' skeletons are drawn to. Automatic takes each zone's own minimum thickness from the board (0.25 mm where "
+                       "there is none); set it to "
+                       "estimate with something else.", "Pours & planes"),
+    # -- Routing: Teardrops ---------------------------------------------------
+    "teardrop_style": ("Teardrops", "Tapered fillets where traces meet pads and vias, which strengthen the joint. 'Tracks' writes them "
+                       "into the SES as short tracks, 'zones' as KiCad teardrop zones in a routed copy of the board, 'none' leaves "
+                       "them out. Can be changed after routing: only the teardrops are made again.", "Teardrops"),
+    "teardrop_max_length": ("Longest teardrop (mm)", "How far a teardrop reaches along the trace beyond the pad's edge. Longer is "
+                            "gentler but needs more room.", "Teardrops"),
+    "teardrop_max_width": ("Widest teardrop (mm)", "How wide a teardrop may be across at the pad.", "Teardrops"),
+    "teardrop_breathing": ("Teardrop breathing room", "Clearances kept from foreign copper; a teardrop that would be closer is left "
+                           "out, so a cramped one never makes a clearance fault. Raise it for fewer, safer teardrops.", "Teardrops"),
+    # -- Routing: Export ------------------------------------------------------
+    "routed_board": ("Routed copy of the board", "Also write the routing straight into a copy of the KiCad board (.kicad_pcb) beside "
+                     "the SES, at this path. Empty: NAME-routed.kicad_pcb, written only when teardrop zones or changed reliefs need "
+                     "it. The original board is never changed.", "Export"),
+    "arcs_in_ses": ("Write arcs to the SES", "Write curves as arcs (qarc) instead of many short segments. Arcs are smaller and smoother; "
+                    "turn off if another tool reading the SES does not take arcs.", "Export"),
 }
 
 # A setting that is one of a few choices: name -> {value: label}
 CHOICES = {
     "margin_drawings": {
-        "added": "Kept clear of by teardrops, rounded corners and the vias to the planes; traces and their vias may cross them",
-        "edge": "Board edge to everything: a pad within it is left only straight away from the drawing",
-        "off": "Not kept clear of (only by the vias to the planes)",
+        "added": "Added copper keeps clear (default)",
+        "edge": "A board edge for everything",
+        "off": "Ignored",
     },
     "teardrop_style": {
-        "tracks": "WeaveEngine's, as tracks in the SES",
-        "zones": "WeaveEngine's, as KiCad teardrop zones in a routed copy of the board",
-        "none": "None (KiCad's own Edit > Edit Teardrops can add them)",
+        "tracks": "Tracks in the SES",
+        "zones": "KiCad zones in a routed copy",
+        "none": "None (KiCad can add its own)",
     },
 }
 
@@ -128,6 +223,8 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "clearance": ("spacing", "gap", "isolation", "distance", "copper", "net class", "design rule"),
     "via_diameter": ("via size", "via pad", "annular ring", "size", "outer", "pad size"),
     "via_drill": ("via size", "hole", "drill size", "hole size", "bore", "plated"),
+    "layers": ("layer", "layers", "copper layers", "signal", "single sided", "top", "bottom", "inner", "f.cu", "b.cu", "restrict", "only"),
+    "layer_cost": ("layer", "prefer", "avoid", "penalty", "weight", "plane layer", "inner", "cost", "factor", "dearer"),
     "edge_clearance": ("board edge", "outline", "border", "keepout", "edge cut", "edge cuts", "margin", "boundary"),
     "margin": ("slack", "tolerance", "safety", "buffer", "extra", "clearance", "headroom"),
     "margin_drawings": ("margin", "edge", "board edge", "edge clearance", "outline", "border", "kicad", "copper_edge_clearance",
@@ -204,8 +301,8 @@ AUTOMATIC = {
     "clearance": ("Use the value in the DSN", Rules.clearance),
     "via_diameter": ("Use the value in the DSN", Rules.via_diameter),
     "via_drill": ("Use the value in the DSN", Rules.via_drill),
-    "edge_clearance": ("From the KiCad project beside the DSN, else the clearance", 0.5),
-    "pour_min_width": ("From the board's zones (the .kicad_pcb), else 0.25 mm", 0.25),
+    "edge_clearance": ("From the KiCad project", 0.5),   # (else the clearance: the description says so)
+    "pour_min_width": ("From the board's zones", 0.25),  # (else 0.25 mm: the description says so)
 }
 
 
@@ -249,6 +346,8 @@ class Settings:
     show_pours: bool = True
     show_pour_islands: bool = False
     skip_nets: str = ""  # comma-separated net names or patterns
+    layers: str = ""  # comma-separated signal layers to route; "" = all
+    layer_cost: str = ""  # comma-separated LAYER:FACTOR; "" = every layer costs the same
     smooth_corners: bool = True
     least_angle: float = 90.0  # degrees; 0 = traces are not redrawn for acute meetings
     show_outlines: bool = True
@@ -357,6 +456,30 @@ class Settings:
         return want_clearance, want_edge, notes
 
 
+def layer_list(text: str) -> list[str] | None:
+    """The layers named in the ``layers`` setting, or None for all of them."""
+    return [name.strip() for name in text.split(",") if name.strip()] or None
+
+
+def layer_costs(design, items) -> dict[int, float]:
+    """Layer index -> factor for the ``LAYER:FACTOR`` items (the ``layer_cost`` setting split at commas, or ``--layer-cost``);
+    only factors above 1. Raises ValueError, with a message to show, for a layer not routed or a factor below 1."""
+    out = {}
+    for item in items:
+        if not item.strip():
+            continue
+        name, _, factor = item.strip().rpartition(":")
+        try:
+            factor = float(factor)
+        except ValueError:
+            factor = 0.0
+        if name not in design.board.layers or not 1.0 <= factor < float("inf"):
+            raise ValueError(f"layer cost {item.strip()}: a layer routed ({', '.join(design.board.layers)}) and a factor of 1 or more")
+        if factor > 1.0:
+            out[design.board.layers.index(name)] = factor
+    return out
+
+
 def skip_nets(design, patterns) -> str:
     """Marks the nets whose names match any of ``patterns`` (globs) as not to be routed.
     Returns the line to tell the user, or "" if none matched."""
@@ -433,5 +556,9 @@ def default_path() -> str:
     return os.path.join(base, "WeaveEngine", "settings.json")
 
 
-def cost_params(settings: Settings, pmap) -> CostParams:
-    return CostParams.for_map(pmap, **settings.cost_overrides())
+def cost_params(settings: Settings, pmap, layer_cost: dict | None = None) -> CostParams:
+    """The cost parameters for ``pmap``; ``layer_cost``: layer index -> factor (``layer_costs``)."""
+    overrides = settings.cost_overrides()
+    if layer_cost:
+        overrides["layer_cost"] = layer_cost
+    return CostParams.for_map(pmap, **overrides)

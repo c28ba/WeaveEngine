@@ -40,14 +40,14 @@ def _work(dsn_path: str, settings: Settings, events, resume=None) -> None:
         from weaveengine import accel
         from weaveengine.io.dsn import read_dsn
         from weaveengine.router import route_board
-        from weaveengine.settings import cost_params
+        from weaveengine.settings import cost_params, layer_costs, layer_list
         from weaveengine.topo import planar_map
 
         start = time.time()
         deadline = start + 60.0 * settings.time_limit if settings.time_limit > 0 else None  # (a time on the clock: ``Context.late``)
         status = accel.check()
         events.put({"type": "status", "compiled": status.compiled, "message": status.message, "warning": status.warning})
-        design = read_dsn(dsn_path)
+        design = read_dsn(dsn_path, layer_list(settings.layers))
         want_clearance, want_edge, notes = settings.apply_rules(design, dsn_path)
         rules = design.board.rules
         notes.insert(0, f"rules: trace {rules.trace_width:g} mm, clearance {want_clearance:g} mm, "
@@ -56,7 +56,7 @@ def _work(dsn_path: str, settings: Settings, events, resume=None) -> None:
         for text in notes:
             events.put({"type": "note", "text": text})
         events.put({"type": "board", "design": design})
-        params = cost_params(settings, planar_map.build(design.board))
+        params = cost_params(settings, planar_map.build(design.board), layer_costs(design, settings.layer_cost.split(",")))
         result = route_board(design.board, params, settings.options(), seed=settings.seed,
                              drc_rounds=settings.drc_rounds,
                              workers=settings.workers or None, events=events.put, resume=resume, deadline=deadline)
