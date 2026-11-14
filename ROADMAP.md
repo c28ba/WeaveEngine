@@ -199,6 +199,20 @@ user's board routed with its KiCad files beside the DSN; not yet looked into):
   route it from the CLI with the same settings and time each finishing step;
   check that every error in the finishing step reaches the window as an
   error, and that the buttons come back whatever happens.
+- [ ] Two traces of one net that ride together split again just before their
+  pad (seen by the user 2026-11-14). Pads A and B both connect to pad C from
+  the same side; their traces join partway and run as one, but right at C
+  they part again and enter C at different points. That leaves acid traps,
+  thin slivers of bare board between the two, and teardrops that overlap
+  each other oddly. Fix suggested by the user: once two traces are known to
+  overlap, keep only the cheaper one along the shared stretch, so the other
+  ends where they meet (a T joint on the kept trace) instead of running on
+  to C beside it; then redo the geometry around the joint (teardrop, corner
+  blunting). Riding on another trace is a matter of topology, not geometry,
+  so the merge likely belongs before realisation (where the connections of a
+  net are routed through the same channels), with realisation only drawing
+  the joint. Whichever is simplest that works. First find an example on a
+  board to test with (the user's board shows it).
 
 
 Back burner: bugs seen once that could not be found again. Each waits for a
