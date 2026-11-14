@@ -20,7 +20,8 @@ def test_svg_export(tmp_path):
 def _run(est, rounds, at=0.0, heat="racing variants 1-4 of 8", complete=True):
     """Feeds an estimator one heat as the router reports it: every variant
     takes 4 s to reach rip-up, then ``rounds`` rounds of 1 s (the last 8
-    without improvement), 2 s of geometry and one repair of 3 s. Yields the
+    without improvement), 10 s of refinement and geometry and one repair of
+    15 s (in the proportions of real runs, design section 24). Yields the
     time after each event."""
     def say(t, v, phase, done=0.0, total=1.0, **more):
         est.event({"type": "progress", "pass": 1, "variant": v, "phase": phase, "done": done, "total": total, **more}, t)
@@ -39,19 +40,24 @@ def _run(est, rounds, at=0.0, heat="racing variants 1-4 of 8", complete=True):
     end = at + 4.0 + rounds
     for v in variants:
         say(end, v, "refinement")
-        say(end + 2.0, v, "design-rule repair", 0, 4)
-        say(end + 2.0, v, "rip-up", 0, 5, round=rounds + 1, quiet=3, most=5)
-    yield end + 2.0
-    for v in variants:
-        say(end + 5.0, v, "finished", complete=complete)
     yield end + 5.0
+    for v in variants:
+        say(end + 10.0, v, "design-rule repair", 0, 4)
+        say(end + 10.0, v, "rip-up", 0, 5, round=rounds + 1, quiet=3, most=5)
+    yield end + 10.0
+    for v in variants:
+        say(end + 18.0, v, "refinement")
+    yield end + 18.0
+    for v in variants:
+        say(end + 25.0, v, "finished", complete=complete)
+    yield end + 25.0
 
 
 def test_time_left_is_a_range_that_holds_and_narrows():
     from weaveengine.progress import Estimator, clock, phrase
     assert clock(75) == "1:15" and clock(3725) == "1:02:05"
     est = Estimator(now=0.0)
-    total = 4.0 + 20 + 5.0
+    total = 4.0 + 20 + 25.0
     shares, widths = [], []
     for t in _run(est, rounds=20):
         if est.left(t) is None:
@@ -62,7 +68,7 @@ def test_time_left_is_a_range_that_holds_and_narrows():
         shares.append(est.progress(t))
         widths.append(hi - lo)
     assert shares == sorted(shares) and shares[-1] > 0.95           # the bar never moves backwards, and ends at the end
-    assert widths[-1] < 1.0 < widths[3] < widths[1]                 # the range narrows
+    assert widths[-1] < 0.05 * total < widths[3] < widths[1]       # the range narrows (to the finishing's, at the end)
     assert est.more(total) == 0.0                                   # a variant connected everything: no other heat
     assert phrase((50.0, 60.0)) == "about 0:55 left" and phrase((10.0, 90.0)) == "about 0:30 left (0:10 to 1:30)"
     assert "more if no variant connects everything" in phrase((10.0, 12.0), 30.0)
@@ -117,3 +123,30 @@ def test_svg_draws_no_via_areas_hatched(tmp_path):
     export_svg(board, str(out))
     text = out.read_text(encoding="utf-8")
     assert 'fill="url(#no-via)"' in text and "<title>no vias</title>" in text
+
+
+def test_the_finishing_is_counted_by_the_board_and_said_step_by_step():
+    from weaveengine.progress import FINISH_POURED, Estimator
+    est = Estimator(now=0.0)
+    est.event({"type": "progress", "pass": 1, "variant": -1, "phase": "setup", "done": 0, "total": 1, "pads": 1000, "poured": 400}, 0.0)
+    times = list(_run(est, rounds=20))
+    end = times[-1]
+    lo, hi = est.left(end)                                          # the variants are done; the finishing is all that is left
+    assert (lo, hi) == (FINISH_POURED[0] * 1000, FINISH_POURED[1] * 1000)
+    est.event({"type": "progress", "pass": 1, "variant": -1, "phase": "finishing: joining pours", "done": 0, "total": 1}, end)
+    assert est.status() == "finishing: joining pours"
+    lo2, hi2 = est.left(end + 10.0)
+    assert lo2 == max(lo - 10.0, 0.0) and hi2 == hi - 10.0         # it counts down from when the finishing began
+    assert est.left(end + 10 * hi)[1] > 0.0                         # never says done while it is not
+
+
+def test_another_heat_is_counted_in_when_every_variant_has_connections_open():
+    from weaveengine.progress import Estimator
+    plain, open_ = Estimator(now=0.0), Estimator(now=0.0)
+    for est in (plain, open_):
+        times = list(_run(est, rounds=12, complete=False))[:4]
+    for v in range(4):
+        open_.event({"type": "snapshot", "variant": v, "total": 50, "routed": 45}, times[-1])
+    t = times[-1]
+    assert plain.more(t) > 0.0 and open_.more(t) == 0.0             # counted in, so not said beside
+    assert open_.left(t)[1] > plain.left(t)[1] + 0.5 * plain.more(t)
