@@ -21,7 +21,11 @@ The copy is the original board, text for text, with:
   asked to from outside its PCB editor, and no pad or via is marked for them,
   so that KiCad does not add them on its own). A taper's wedge stays a fan of
   tracks: as a KiCad teardrop zone between two widths (``track_end``) KiCad's
-  check found the narrow piece unconnected.
+  check found the narrow piece unconnected;
+- the thermal reliefs the routing changed to join a pad to its pour
+  (``plan.fanout``, with ``--change-reliefs`` or ``--narrow-reliefs``), as
+  that pad's own zone connection, spoke angle, relief gap and spoke width. A
+  session cannot carry them.
 
 Beside it go copies of the project (``.kicad_pro``) and custom rules
 (``.kicad_dru``), so that KiCad checks it by the board's own rules and
@@ -33,6 +37,7 @@ import os
 import re
 import uuid
 
+from weaveengine.io.kicad import CONNECT, _place
 from weaveengine.io.ses import routed_copper
 
 TEARDROP_STYLES = {
@@ -122,10 +127,15 @@ def write_routed_board(design, result, source: str, path: str, teardrops: str = 
 
     board = result.board
     names = design.net_names
-    counts = dict(tracks=0, arcs=0, vias=0, zones=0, removed=0)
+    counts = dict(tracks=0, arcs=0, vias=0, zones=0, removed=0, reliefs=0)
     cut = []  # (start, end, what goes there instead)
+    changed = _reliefs(board, result.stats.get("reliefs") or {})
     for kind, s, e in top:
         body = text[s:e]
+        if kind == "footprint" and changed:
+            for start, end, new in _relieved(text, s, e, changed):
+                cut.append((start, end, new))
+                counts["reliefs"] += 1
         if kind in ("segment", "arc", "via") and not re.search(r"\(locked\s+yes\)|^\(\w+\s+locked\b", body):
             cut.append((s, e, ""))
             counts["removed"] += 1
@@ -210,6 +220,65 @@ def write_routed_board(design, result, source: str, path: str, teardrops: str = 
             with open(os.path.splitext(path)[0] + ext, "wb") as f:
                 f.write(data)
     return counts
+
+
+# A pad's thermal relief, as ``Pad`` holds it -> as KiCad writes it in the pad.
+RELIEF_TOKENS = {"zone_connect": "zone_connect", "spoke_angle": "thermal_bridge_angle", "thermal_gap": "thermal_gap",
+                 "spoke": "thermal_bridge_width"}
+
+
+def _reliefs(board, reliefs: dict) -> dict:
+    """(reference, pad number) -> [(centre, {KiCad token: value})] of the pads whose thermal relief was changed."""
+    out: dict = {}
+    pads = {p.pad_id: p for p in board.pads}
+    numbers = {v: k for k, v in CONNECT.items()}
+    for pad_id, change in sorted(reliefs.items()):
+        pad = pads.get(pad_id)
+        if pad is None or not pad.name:
+            continue
+        ref, _, number = pad.name.split("@")[0].rpartition("-")
+        tokens = {RELIEF_TOKENS[k]: (numbers[v] if k == "zone_connect" else f"{v:g}") for k, v in change.items() if k in RELIEF_TOKENS}
+        out.setdefault((ref, number), []).append((pad.centre, tokens))
+    return out
+
+
+def _relieved(text: str, start: int, end: int, changed: dict) -> list[tuple[int, int, str]]:
+    """The pads of the footprint ``text[start:end]`` whose relief was changed (``_reliefs``), each written again with
+    its own zone connection, spoke angle, gap and spoke width: (start, end, the pad's new text)."""
+    body = text[start:end]
+    m = re.search(r'\(property\s+"Reference"\s+"((?:[^"\\]|\\.)*)"', body) or re.search(r'\(fp_text\s+reference\s+"?((?:[^"\\\s)]|\\.)*)"?', body)
+    ref = m[1] if m else ""
+    wanted = {number: got for (r, number), got in changed.items() if r == ref}
+    if not wanted:
+        return []
+    inner = _lists(text, start + 1, end - 1)
+    at = next((text[s:e] for k, s, e in inner if k == "at"), "(at 0 0)")
+    fx, fy, angle = ([float(v) for v in re.findall(r"-?[\d.]+(?:e-?\d+)?", at)] + [0.0, 0.0, 0.0])[:3]
+    place = _place(fx, fy, angle)
+    pads = []
+    for k, s, e in inner:
+        m = re.match(r'\(pad\s+"?((?:[^"\\\s]|\\.)*)"?', text[s:e]) if k == "pad" else None
+        if m and m[1] in wanted:
+            pad_at = next((text[s2:e2] for k2, s2, e2 in _lists(text, s + 1, e - 1) if k2 == "at"), "(at 0 0)")
+            u, v = ([float(x) for x in re.findall(r"-?[\d.]+(?:e-?\d+)?", pad_at)] + [0.0, 0.0])[:2]
+            pads.append((m[1], place(u, v), s, e))
+    out = []
+    for number, got in wanted.items():
+        for centre, tokens in got:
+            mine = [p for p in pads if p[0] == number]
+            if not mine:
+                continue
+            _, _, s, e = min(mine, key=lambda p: math.dist(p[1], centre))
+            old = text[s:e]
+            for token in tokens:  # (the pad's own setting, if it had one, goes: KiCad reads one of each)
+                old = re.sub(r"\s*\(" + token + r"\s+[^()]*\)", "", old)
+            if "thermal_bridge_width" in tokens:
+                old = re.sub(r"\s*\(thermal_width\s+[^()]*\)", "", old)
+            indent = re.search(r"\n([ \t]*)\(", old)
+            pad_indent = indent[1] if indent else "\t\t\t"
+            new = old[:-1].rstrip() + "".join(f"\n{pad_indent}({token} {value})" for token, value in tokens.items()) + "\n" + pad_indent[:-1] + ")"
+            out.append((s, e, new))
+    return out
 
 
 def _zone(net: str, layer: str, poly, kind: str) -> str:

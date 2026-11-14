@@ -1203,9 +1203,9 @@ def test_fixed_copper_of_a_plane_net_joins_its_pads_to_the_plane():
     """Ground poured on the back. Pad 0 is joined to it already, by a locked
     trace to a locked via: it gets nothing. Pad 1 has a locked via of its net
     close by in the pour: it is joined to that by a short trace, no new via.
-    Pad 2's only room for a via, a gap in a keepout on the back, holds a
-    locked via too near the pour's edge to share: a new via there would be
-    drilled into it, so the pad is left (and named)."""
+    Pad 2's only room for a via, a notch in a keepout on the back that the
+    pour fills, holds a locked via: a new via there would be drilled into it,
+    so the pad is joined to the locked one by a trace too."""
     from shapely.geometry import box as rect
     from weaveengine.board import Obstacle, circle_polygon
     front = frozenset({0})
@@ -1220,12 +1220,13 @@ def test_fixed_copper_of_a_plane_net_joins_its_pads_to_the_plane():
                         Obstacle(circle_polygon(7, 10, r), 0, via=True),                     # and via
                         Obstacle(circle_polygon(25, 6.5, r), 0, via=True),                   # beside pad 1
                         Obstacle(circle_polygon(28.85, 15, r), 0, via=True),                 # right of pad 2, at the pour's edge
-                        Obstacle(rect(20, 10, 29.5, 20).difference(rect(28, 14.4, 29.2, 15.6)), layers=frozenset({1}))]
+                        Obstacle(rect(20, 10, 29.5, 20).difference(rect(28, 1, 29.2, 15.6)), layers=frozenset({1}))]
     result = route_board(board, options=Options(portfolio=1), workers=1)
-    assert result.unrouted == [] and result.stats["fanout"] == 0 and result.stats["plane_left"] == [2]
+    assert result.unrouted == [] and result.stats["fanout"] == 0 and result.stats["plane_left"] == []
     plane = {k: line for w, line in result.polylines.items() if result.wire_net[w] == 0
              for k in range(3) if math.dist(line[0], board.pads[k].centre) < 1e-9}   # the trace from each pad
-    assert set(plane) == {1} and math.dist(plane[1][-1], (25, 6.5)) < 1e-9          # pad 1's, to the locked via
+    assert set(plane) == {1, 2} and math.dist(plane[1][-1], (25, 6.5)) < 1e-9       # pad 1's, to the locked via
+    assert math.dist(plane[2][-1], (28.85, 15)) < 0.01                                # and pad 2's
     # Without that locked via, pad 2 gets one of its own in the gap.
     board.obstacles.pop(-2)
     again = route_board(board, options=Options(portfolio=1), workers=1)
@@ -1239,16 +1240,16 @@ def test_copper_kicad_does_not_join_leaves_a_pad_unreached():
     still given a way there. A locked trace over the same place does join it."""
     from shapely.geometry import box as rect
     from weaveengine.board import Obstacle
-    from weaveengine.plan.fanout import _lonely
+    from weaveengine.plan.fanout import unjoined
     front = frozenset({0})
     board = Board.rectangle(20, 20, Rules(0.25, 0.2), layers=["F.Cu", "B.Cu"])
     board.pads += [Pad.rect(0, 5, 10, 1, 1, 0, layers=front), Pad.rect(1, 12, 10, 1, 1, 0, layers=front)]
     board.plane_nets = {0}
     board.pours = [(0, 0, rect(10, 5, 15, 15))]                                               # reaches pad 1 only
     board.obstacles.append(Obstacle(rect(4.5, 9.5, 12.5, 10.5), 0, front, copper=True))      # the mask open over both
-    assert [p.pad_id for p in _lonely(board)] == [0]
+    assert [p.pad_id for p in unjoined(board)] == [0]
     board.obstacles.append(Obstacle(rect(4.5, 9.9, 12.5, 10.1), 0, front))
-    assert _lonely(board) == []
+    assert unjoined(board) == []
 
 
 def test_a_pad_its_plane_does_not_reach_gets_a_via_down_to_it():

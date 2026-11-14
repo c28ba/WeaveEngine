@@ -166,6 +166,14 @@ To do, in order:
    routed copy of the board, a setting of three (branch `export-shape`; below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
    (below).
+13. [ ] Settings organised cleanly, and nothing forced on the user (user,
+   2026-11-13): anything that changes the user's copper beyond what must be
+   connected is a setting with a flag (for example joining pour islands that
+   hold no pads); the settings are split into the app's own (display,
+   behaviour) and routing settings, each grouped by topic (routing, traces,
+   vias and fan-out, pours, teardrops and shape, export, checks), with the
+   command line's `--help` grouped the same way. Many settings, each easy to
+   find (the search box and keywords stay).
 
 
 Back burner: bugs seen once that could not be found again. Each waits for a
@@ -479,6 +487,23 @@ new example (a board and where on it); then it moves up to be fixed.
   change as 1: off by default, behind its own setting and flag. Pin swaps,
   net ties and moved parts change the design, so they are only suggested in
   the Warnings section, never done.
+  Built (2026-11, branch `pour-join`; design 11.3): 1 to 3 and the jumper
+  (a via pair and a trace on another layer), chosen by cost and checked with
+  the estimate; 4 not yet. On the way the estimate was made to see what
+  KiCad sees: the zones that are not pours (teardrops, copper on one pad),
+  the net's copper across layers for what is joined, open items counted per
+  group of pads, and KiCad's rule for starved thermal reliefs (a join is
+  refused if it leaves more; a pad left short of spokes gets traces into the
+  fill, which KiCad counts as spokes; a setting, on), islands with no pad
+  joined too if asked for (a setting, off), no join KiCad's import would
+  give another net (a via touching only another net's saved fill), rule
+  areas that bar pours left unfilled, and join traces that leave and meet
+  pads square. Tiers 1 to 3 against main f2872f5: every board routes the
+  same; KiCad open 880 to 706, mask/thermal 96 to 38, none worse; acute
+  meetings fewer or equal on every board; one island more on cm5-minima
+  (the sweep's islands 2 to 3: a pad-less strip main's fan-out anchored by
+  chance; KiCad's isolated copper there 12 on main, 13 with the islands
+  setting off, 3 with it on, locally); time +4 %.
 
 ### Rules
 

@@ -15,12 +15,12 @@ from weaveengine.plan import candidates as cand_mod
 from weaveengine.plan.commit import commit_all
 from weaveengine.plan.context import Connection, Context, Layer, Options, decompose
 from weaveengine.plan import skeleton
-from weaveengine.plan.fanout import fanout
+from weaveengine.plan.fanout import join as join_pours
+from weaveengine.pours import estimate as estimate_pours, unjoined as unjoined_pads
 from weaveengine.plan.path import find
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
-from weaveengine.pours import estimate as estimate_pours
 from weaveengine.realize.acute import LEAST, blunt, count as count_acute, meetings as acute_meetings
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
@@ -211,26 +211,20 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     if options.taper and narrowed:
         pieces, wedges = make_tapers(work, full_rules, lines, wire_net, wire_layer,
                                      {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}, narrowed, fine)
-    planed, unplaned = [], []
-    if options.fanout and work.pours:  # vias down to the planes, among everything routed (``plan.fanout``)
+    planed, unplaned, reliefs, kinds = [], [], {}, {}
+    if options.fanout and work.pours:  # pads and pour pieces joined to their net, by the cheapest way (``plan.fanout``)
         # (the traces as drawn: tapered ones in their pieces, with their wedges)
         drawn = with_wedges(drops, wedges)
         shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drawn.items() if w in wire_layer for poly in polys]
-        # A pad its pour reaches only in a piece cut off from the rest (or by spokes that reach no fill) is joined as one
-        # the pour does not reach.
-        cut = {(p, pour.layer) for pour in estimate_pours(work, lines, wire_net, wire_layer, drawn, widths=pieces)
-               for piece in pour.pieces if piece.kind == "cut" for p in piece.pad_ids}
-        planed, traces, unplaned = fanout(work, lines, wire_net, wire_layer, shapes, cut, drawn, pieces)
-        work.pads = work.pads + planed
+        done = join_pours(work, lines, wire_net, wire_layer, shapes, drawn, pieces, options.reliefs, options.narrow_reliefs,
+                          options.bare_islands, options.spokes)
+        planed, unplaned, reliefs, kinds = done.vias, done.left, done.reliefs, done.kinds
+        work.pads = [replace(p, **reliefs[p.pad_id]) if p.pad_id in reliefs else p for p in work.pads] + planed
         vias = vias + planed
         w = max(list(ctx.conns) + list(lines), default=-1) + 1
-        for net, layer_index, points in traces:
+        for net, layer_index, points in done.traces:
             lines[w], wire_net[w], wire_layer[w] = points, net, layer_index
             w += 1
-        if unplaned:  # (a pad with no room for a via may be joined all the same, through a pad of its piece that got one)
-            joined = {i for pour in estimate_pours(work, lines, wire_net, wire_layer, with_wedges(drops, wedges), widths=pieces)
-                      for piece in pour.pieces if piece.kind in ("main", "via") for i in piece.pad_ids}
-            unplaned = [p for p in unplaned if p.pad_id not in joined]
 
     for layer in ctx.layers:
         assert layer.state.check_invariants(), "topological invariant broken"
@@ -266,7 +260,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "tapered": sum(1 for w in routed if wire_net.get(w) in narrowed and w in pieces),
         "narrow_all_along": sum(1 for w in routed if wire_net.get(w) in narrowed and w not in pieces),
         "fanout": len(planed),  # vias placed to join pads to their net's plane (``plan.fanout``)
-        "plane_left": [p.pad_id for p in unplaned],  # pads of a plane net it does not reach, with no room for a via
+        "plane_left": [p.pad_id for p in unplaned],  # pads of a plane net still not joined to the rest of it
+        "joins": kinds,  # kind of join (``plan.fanout``) -> how many
+        "reliefs": reliefs,  # pad id -> its thermal relief as changed ({Pad field: value}; ``Options.reliefs``, ``narrow_reliefs``)
         "unreachable": unreachable,  # connections of those pads, counted as open
         "skeletons": len(skeletons),  # connections of the pours' skeletons (``plan.skeleton``)
         "skeletons_routed": len(skeletons) - ctx.skeletons_open(),
@@ -362,11 +358,11 @@ def _taut(ctx: Context, lines: dict, violations: list, loops: set[int]) -> tuple
 def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wire_layer: dict) -> dict:
     """``lines`` with the traces of ``straight`` (``_taut``: not bent round
     vias of their own net) put in where the pours keep their room: no pad is
-    cut off from its pour that was not before (``pours.estimate``), no island
-    of a pour is left where there was none, and
-    fan-out finds a place for a via for every pad it did before
-    (``plan.fanout``). Where that fails, the traces near the trouble keep
-    their bends, a few times over, and then all do. Likewise the traces the
+    cut off from its pour that was not before (``pours.estimate``), nor left
+    with no fill of its net to join it (fan-out's to join, ``plan.fanout``),
+    and no island of a pour is left where there was none. Where that fails,
+    the traces near the trouble keep their bends, a few times over, and then
+    all do. Likewise the traces the
     check finds more on than before (straightened beside others that keep
     their bends), and then all on their layer. (The traces redrawn for acute
     meetings, ``realize.acute.blunt``, are put in the same way.)"""
@@ -376,12 +372,18 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
         return lines
     trial = {**lines, **straight}
     if work.pours:
+        pads = {p.pad_id: p for p in work.pads}
+
         def trouble(drawn: dict) -> list:
             """(key, shape, layer or None) of each pad cut off from its pour,
-            and of each pad fan-out finds no place for a via for."""
-            pieces = [(piece, pour.layer) for pour in estimate_pours(work, drawn, wire_net, wire_layer) for piece in pour.pieces]
+            and of each other pad not joined to the rest of its net (no fill
+            of its net reaches it: fan-out's to join, ``plan.fanout``), and of
+            each island."""
+            found = estimate_pours(work, drawn, wire_net, wire_layer)
+            pieces = [(piece, pour.layer) for pour in found for piece in pour.pieces]
             cut = [(piece, at) for piece, at in pieces if piece.kind == "cut"]
-            left = fanout(work, drawn, wire_net, wire_layer, cut={(p, at) for piece, at in cut for p in piece.pad_ids})[2]
+            held = {p for piece, _ in cut for p in piece.pad_ids}
+            left = [pads[i] for group in unjoined_pads(found) for i in group if i not in held]
             return ([((p, at), piece.shape, at) for piece, at in cut for p in piece.pad_ids]
                     + [((p.pad_id, -1), p.shape, None) for p in left]
                     + [(None, piece.shape, at) for piece, at in pieces if piece.kind == "island"])  # (an island: by where it is)
