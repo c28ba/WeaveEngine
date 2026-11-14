@@ -62,9 +62,15 @@ as traces, and its pads are connected by the pour when KiCad fills it.
 
 ## Settings
 
-**Settings…** shows every setting with a description, grouped as Routing,
-Rules, Teardrops and View, and the design rules found in the DSN (warning about
-any it does not carry). The ones you are most likely to change:
+**Settings…** shows every setting with a description of what it does, when to
+change it and what it costs, in two parts. **App** is the program itself:
+Display (outlines, names, pours, graphics card) and Computer (worker
+processes); none of it changes the routing. **Routing** is everything that does,
+by topic: Rules & nets, Layers, Margin & edges, Effort & search, Traces &
+shape, Vias, Pours & planes, Teardrops and Export. A search box finds a setting
+by any word. The design rules found in the DSN are shown too (with a warning
+for any it does not carry). On the command line, `--help` groups the flags the
+same way. The ones you are most likely to change:
 
 | Setting | What it does |
 |---|---|

@@ -14,7 +14,7 @@ from weaveengine.pours import note as pour_note, of_result as estimate_pours, un
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
 from weaveengine.router import route_board
-from weaveengine.settings import skip_nets
+from weaveengine.settings import SECTIONS, layer_costs, skip_nets
 from weaveengine.topo import planar_map
 from weaveengine.topo.costs import CostParams
 from weaveengine.viz.svg import export_result
@@ -153,102 +153,155 @@ COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rou
               "layer_cost": "--layer-cost"}
 
 
+# The flag of each setting that has one (all of Routing, and the App's workers); the rest are display settings of the app.
+SETTING_FLAGS = {
+    "workers": "--workers", "trace_width": "--trace-width", "clearance": "--clearance", "via_diameter": "--via", "via_drill": "--via",
+    "margin": "--margin", "ignore_keepouts": "--ignore-keepouts", "skip_nets": "--skip-net", "layers": "--layers",
+    "layer_cost": "--layer-cost", "edge_clearance": "--edge-clearance", "margin_drawings": "--margin-drawings",
+    "portfolio": "--portfolio", "seed": "--seed", "time_limit": "--time-limit", "drc_rounds": "--drc-rounds",
+    "global_selection": "--no-global-selection", "regret_order": "--no-regret-order", "lookahead": "--no-lookahead",
+    "demand": "--no-demand", "ripup": "--no-ripup", "refine": "--no-refine", "candidates": "--candidates",
+    "reroute_candidates": "--reroute-candidates", "max_ripup_rounds": "--max-rounds", "heuristic_weight": "--heuristic-weight",
+    "untangle": "--no-untangle", "narrow_to_reach": "--no-narrowing", "taper_to_pins": "--no-taper", "smooth_corners": "--no-smooth",
+    "least_angle": "--least-angle", "use_vias": "--no-vias", "slide_vias": "--no-slide-vias", "fanout_to_planes": "--no-fanout",
+    "pour_reliefs": "--change-reliefs", "pour_narrow_reliefs": "--narrow-reliefs", "join_bare_islands": "--join-pad-less-islands",
+    "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_min_width": "--pour-min-width",
+    "teardrop_style": "--teardrops", "teardrop_max_length": "--teardrop-max-length", "teardrop_max_width": "--teardrop-max-width",
+    "teardrop_breathing": "--teardrop-breathing", "routed_board": "--routed-board", "arcs_in_ses": "--no-ses-arcs",
+}
+
+
 def main(argv: list[str] | None = None) -> int:
     started = time.time()  # the time limit runs from here
-    ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter.")
+    ap = argparse.ArgumentParser(prog="weaveengine", description="WeaveEngine: a topological PCB autorouter. The flags are grouped as "
+                                 "the settings in the app are (Settings, Routing); the app's own settings (display) have no flags here.",
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog="Every flag that is a setting in the app, and what it does, is described under the same name there.")
     ap.add_argument("--version", action="version", version=f"WeaveEngine {__version__}")
-    ap.add_argument("dsn", help="input Specctra DSN file")
-    ap.add_argument("-o", "--output", help="output SES file (default: input name with .ses)")
-    ap.add_argument("--layers", nargs="+", metavar="LAYER",
-                    help="signal layers to route (default: all in the DSN); vias still keep clear of the others' copper and reach their planes")
-    ap.add_argument("--svg", help="also write an SVG picture of the result")
-    ap.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
-    ap.add_argument("--teardrops", choices=list(TEARDROP_STYLES), default="tracks",
-                    help="teardrops where traces meet pads and vias: " + "; ".join(f"{k}: {v}" for k, v in TEARDROP_STYLES.items())
-                         + " (default %(default)s)")
-    ap.add_argument("--no-teardrops", action="store_true", help="no teardrops at all (the same as --teardrops none)")
-    for name, (flag, text) in OPTION_SWITCHES.items():
-        ap.add_argument(flag, dest="no_" + name, action="store_true", help=text)
-    ap.add_argument("--teardrop-max-length", type=float, default=Options.teardrop_max_length, metavar="MM",
-                    help="longest teardrop beyond the pad's edge (default %(default)g)")
-    ap.add_argument("--teardrop-max-width", type=float, default=Options.teardrop_max_width, metavar="MM",
-                    help="widest teardrop, across at the pad (default %(default)g)")
-    ap.add_argument("--teardrop-breathing", type=float, default=Options.teardrop_breathing, metavar="N",
-                    help="clearances a teardrop keeps from foreign copper, else it is left out (default %(default)g)")
-    ap.add_argument("--least-angle", type=float, default=Options.least_angle, metavar="DEG",
-                    help="the least angle at which copper of one net may meet itself (a trace and its pad, traces at a via or "
-                         "pad, a branch off a trunk): sharper meetings, which trap etchant, are redrawn where there is room; "
-                         "0: not (default %(default)g)")
-    ap.add_argument("--no-fanout", action="store_true",
-                    help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
-    ap.add_argument("--change-reliefs", action="store_true",
-                    help="a pad whose thermal spokes do not reach its pour may be joined solid, or its spokes turned, where that "
-                         "is the cheapest join: written as the pad's own in the routed copy of the board (--routed-board; the SES "
-                         "cannot carry it)")
-    ap.add_argument("--narrow-reliefs", action="store_true",
-                    help="a pad cut off from its pour may have its relief gap narrowed to the zone's clearance and its spokes to "
-                         "the zone's minimum width, where that is the cheapest join (written as with --change-reliefs)")
-    ap.add_argument("--join-pad-less-islands", action="store_true",
-                    help="join pieces of a pour that hold no pad, and that the zone keeps (KiCad reports them as isolated "
-                         "copper), to the rest of their net too, by a via in them or a trace from them")
-    ap.add_argument("--no-pour-spokes", action="store_true",
-                    help="no traces from a pad short of thermal spokes into its pour's fill (KiCad counts each as a spoke): "
-                         "such pads are left as KiCad's starved thermals")
-    ap.add_argument("--no-skeleton", action="store_true",
-                    help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
-                         "traces are routed, which traces move off where they can; design 11.3)")
-    ap.add_argument("--skeleton", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for scripts that ask for it)
-    ap.add_argument("--pour-min-width", type=float, default=0.0, metavar="MM",
-                    help="the narrowest copper a pour's fill may have, in the estimate of the fill and the skeletons "
-                         "(default: each zone's min_thickness from the .kicad_pcb, else 0.25)")
-    ap.add_argument("--no-narrowing", action="store_true",
-                    help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
-    ap.add_argument("--no-ses-teardrops", action="store_true",
-                    help="no teardrops in the SES (the same as --teardrops none: KiCad's own Edit > Edit Teardrops can add them)")
-    ap.add_argument("--routed-board", metavar="FILE",
-                    help="also write the routing straight into a copy of the .kicad_pcb beside the DSN, as FILE (with "
-                         "--teardrops zones this is where the teardrops go; default then: NAME-routed.kicad_pcb beside the output). "
-                         "The original board is never changed")
-    ap.add_argument("--no-ses-arcs", action="store_true",
-                    help="write curves in the SES as short straight segments, not arcs (qarc)")
-    ap.add_argument("--edge-clearance", type=float, metavar="MM",
-                    help="copper to board edge clearance (a DSN does not carry it; default: the trace clearance)")
-    ap.add_argument("--kicad-pro", metavar="FILE",
-                    help="KiCad project file to take the edge clearance from (default: one next to the DSN, if any)")
-    ap.add_argument("--trace-width", type=float, metavar="MM", help="override the default class trace width from the DSN")
-    ap.add_argument("--clearance", type=float, metavar="MM", help="override the clearance from the DSN")
-    ap.add_argument("--via", nargs=2, type=float, metavar=("DIAMETER", "DRILL"), help="override the via size from the DSN (mm)")
-    ap.add_argument("--layer-cost", action="append", metavar="LAYER:FACTOR",
-                    help="traces on LAYER cost FACTOR times their length (1 or more), so it is used only where it must be: "
-                         "a layer that also carries a plane, say (In1.Cu:5); once per layer")
-    ap.add_argument("--ignore-keepouts", action="store_true", help="drop the keepout areas of the DSN")
-    ap.add_argument("--margin-drawings", choices=("added", "edge", "off"), default="added",
-                    help="drawings on KiCad's Margin layer, which its check holds copper to the edge clearance from: kept clear "
-                         "of by teardrops, rounded corners and the vias to the planes, traces and their vias crossing them as "
-                         "they must (added, the default); "
-                         "board edge to everything, a pad within it left only straight away from the drawing (edge); or "
-                         "not (off)")
-    ap.add_argument("--margin", type=float, default=0.01, metavar="MM",
-                    help="extra clearance to route with, so nothing sits exactly on a limit (default 0.01)")
-    ap.add_argument("--workers", type=int, metavar="N", help="processes to use (default: all cores; 1 = no parallelism)")
-    ap.add_argument("--portfolio", type=int, default=0, metavar="N",
-                    help="routing variants raced per pass, best kept (default: one per worker, at most 8; 1 = off)")
-    ap.add_argument("--max-rounds", type=int, metavar="N",
-                    help="rip-up rounds at most, as the app's rip-up round limit (default 100; design-rule repair adds up to 5 "
-                         "of its own each time it runs): fewer finish sooner, with more left open")
-    ap.add_argument("--candidates", type=int, metavar="K", help="alternative routes considered per connection in phase 1 (default 6)")
-    ap.add_argument("--reroute-candidates", type=int, metavar="K", help="alternative routes considered per reroute in rip-up (default 2)")
-    ap.add_argument("--heuristic-weight", type=float, metavar="W",
-                    help="search heuristic weight: 1 is exact, above 1 is faster and less exact (default 1)")
-    ap.add_argument("--drc-rounds", type=int, default=4, metavar="N",
-                    help="reroute attempts for traces that fail the final check (default 4)")
-    ap.add_argument("--time-limit", type=float, metavar="MINUTES",
-                    help="stop bettering the routing after this many minutes from the start, and write the best found so far "
-                         "(its geometry and check take a little longer still; default: no limit)")
-    ap.add_argument("--skip-net", action="append", metavar="NAME", default=[],
-                    help="a net not to route, as one with a pour is (repeatable; * and ? match any text: GND*)")
-    ap.add_argument("--quiet", action="store_true", help="no progress bar")
-    ap.add_argument("--seed", type=int, default=0)
+    files = ap.add_argument_group("Input and output")
+    files.add_argument("dsn", help="input Specctra DSN file")
+    files.add_argument("-o", "--output", help="output SES file (default: input name with .ses)")
+    files.add_argument("--svg", help="also write an SVG picture of the result")
+    files.add_argument("--kicad-pro", metavar="FILE",
+                       help="KiCad project file to take the edge clearance from (default: one next to the DSN, if any)")
+    files.add_argument("--quiet", action="store_true", help="no progress bar")
+    groups = {topic: ap.add_argument_group(f"Routing: {topic}", SECTIONS["Routing"][topic]) for topic in SECTIONS["Routing"]}
+    computer = ap.add_argument_group("App: Computer", SECTIONS["App"]["Computer"])
+    rules, layers, edges, effort, shape, vias = (groups[t] for t in ("Rules & nets", "Layers", "Margin & edges", "Effort & search",
+                                                                      "Traces & shape", "Vias"))
+    pours, teardrops, export = groups["Pours & planes"], groups["Teardrops"], groups["Export"]
+
+    computer.add_argument("--workers", type=int, metavar="N",
+                          help="how many processor cores routing may use (default: all cores; 1: no parallelism)")
+
+    rules.add_argument("--trace-width", type=float, metavar="MM",
+                       help="width of the default net class (default: from the DSN)")
+    rules.add_argument("--clearance", type=float, metavar="MM",
+                       help="gap kept between copper of different nets (default: from the DSN); below the board's own it will fail "
+                            "KiCad's check")
+    rules.add_argument("--via", nargs=2, type=float, metavar=("DIAMETER", "DRILL"),
+                       help="via outer diameter and hole, in mm (default: from the DSN)")
+    rules.add_argument("--margin", type=float, default=0.01, metavar="MM",
+                       help="extra clearance to route with, so nothing sits exactly on a limit and the board passes KiCad's check "
+                            "despite rounding (default 0.01)")
+    rules.add_argument("--ignore-keepouts", action="store_true",
+                       help="drop the keepout areas of the DSN, so traces and vias may cross them (breaks the design's own rules)")
+    rules.add_argument("--skip-net", action="append", metavar="NAME", default=[],
+                       help="a net not to route, as one with a pour is, and not counted as open (repeatable; * and ? match any "
+                            "text: GND*)")
+
+    layers.add_argument("--layers", nargs="+", metavar="LAYER",
+                        help="the signal layers that may carry traces (default: all in the DSN); vias still keep clear of the "
+                             "others' copper and reach their planes")
+    layers.add_argument("--layer-cost", action="append", metavar="LAYER:FACTOR",
+                        help="traces on LAYER count for FACTOR times their length (1 or more), so it is used only where it must be: "
+                             "a layer that also carries a plane, say (In1.Cu:5); once per layer")
+
+    edges.add_argument("--edge-clearance", type=float, metavar="MM",
+                       help="how far copper keeps from the board edge (a DSN does not carry it; default: from the KiCad project "
+                            "beside the DSN, else the clearance)")
+    edges.add_argument("--margin-drawings", choices=("added", "edge", "off"), default="added",
+                       help="technical: KiCad's check holds copper an edge clearance away from drawings on the Margin layer, as "
+                            "from the board edge. added (default): the copper WeaveEngine adds after routing (teardrops, rounded "
+                            "corners, tapers, arcs, plane vias, trace ends) keeps clear of them and no routing changes; edge: "
+                            "they are a real board edge for traces and vias too, a pad inside the band left only straight away "
+                            "from the drawing, so fewest KiCad edge errors, but on a board whose Margin drawings are shield "
+                            "outlines crossed by its own traces many connections can stay unrouted; off: ignored")
+
+    effort.add_argument("--portfolio", type=int, default=0, metavar="N",
+                        help="routing variants raced per pass, the best kept (default: one per worker, at most 8; 1: off)")
+    effort.add_argument("--seed", type=int, default=0, help="same seed and flags give the same result; another may complete a board "
+                                                              "this one does not")
+    effort.add_argument("--time-limit", type=float, metavar="MINUTES",
+                        help="stop bettering the routing after this many minutes from the start, and write the best found so far "
+                             "(its geometry and check take a little longer still; default: no limit)")
+    effort.add_argument("--drc-rounds", type=int, default=4, metavar="N",
+                        help="reroute attempts for traces that fail the final check (default 4)")
+    effort.add_argument("--max-rounds", type=int, metavar="N",
+                        help="rip-up rounds at most, as the app's rip-up round limit (default 100; design-rule repair adds up to 5 "
+                             "of its own each time it runs): fewer finish sooner, with more left open")
+    effort.add_argument("--candidates", type=int, metavar="K", help="alternative routes considered per connection in phase 1 (default 6)")
+    effort.add_argument("--reroute-candidates", type=int, metavar="K",
+                        help="alternative routes considered per reroute in rip-up (default 2)")
+    effort.add_argument("--heuristic-weight", type=float, metavar="W",
+                        help="search heuristic weight: 1 is exact, above 1 is faster and less exact (default 1)")
+    for name in ("global_selection", "regret_order", "lookahead", "demand", "ripup", "refine"):
+        effort.add_argument(OPTION_SWITCHES[name][0], dest="no_" + name, action="store_true", help=OPTION_SWITCHES[name][1])
+
+    for name in ("untangle", "taper", "smooth"):
+        shape.add_argument(OPTION_SWITCHES[name][0], dest="no_" + name, action="store_true", help=OPTION_SWITCHES[name][1])
+    shape.add_argument("--no-narrowing", action="store_true",
+                       help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
+    shape.add_argument("--least-angle", type=float, default=Options.least_angle, metavar="DEG",
+                       help="the least angle at which copper of one net may meet itself (a trace and its pad, traces at a via or "
+                            "pad, a branch off a trunk): sharper meetings, which trap etchant, are redrawn where there is room; "
+                            "0: not (default %(default)g)")
+
+    vias.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")
+    vias.add_argument(OPTION_SWITCHES["slide"][0], dest="no_slide", action="store_true", help=OPTION_SWITCHES["slide"][1])
+
+    pours.add_argument("--no-fanout", action="store_true",
+                       help="no vias joining pads to their net's plane: those pads are left for the pour, or for you, to reach")
+    pours.add_argument("--change-reliefs", action="store_true",
+                       help="a pad whose thermal spokes do not reach its pour may be joined solid, or its spokes turned, where that "
+                            "is the cheapest join: written as the pad's own in the routed copy of the board (--routed-board; the SES "
+                            "cannot carry it)")
+    pours.add_argument("--narrow-reliefs", action="store_true",
+                       help="a pad cut off from its pour may have its relief gap narrowed to the zone's clearance and its spokes to "
+                            "the zone's minimum width, where that is the cheapest join (written as with --change-reliefs)")
+    pours.add_argument("--join-pad-less-islands", action="store_true",
+                       help="join pieces of a pour that hold no pad, and that the zone keeps (KiCad reports them as isolated "
+                            "copper), to the rest of their net too, by a via in them or a trace from them")
+    pours.add_argument("--no-pour-spokes", action="store_true",
+                       help="no traces from a pad short of thermal spokes into its pour's fill (KiCad counts each as a spoke): "
+                            "such pads are left as KiCad's starved thermals")
+    pours.add_argument("--no-skeleton", action="store_true",
+                       help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
+                            "traces are routed, which traces move off where they can; design 11.3)")
+    pours.add_argument("--skeleton", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for scripts that ask for it)
+    pours.add_argument("--pour-min-width", type=float, default=0.0, metavar="MM",
+                       help="the narrowest copper a pour's fill may have, in the estimate of the fill and the skeletons "
+                            "(default: each zone's min_thickness from the .kicad_pcb, else 0.25)")
+
+    teardrops.add_argument("--teardrops", choices=list(TEARDROP_STYLES), default="tracks",
+                           help="teardrops where traces meet pads and vias: " + "; ".join(f"{k}: {v}" for k, v in TEARDROP_STYLES.items())
+                                + " (default %(default)s)")
+    teardrops.add_argument("--no-teardrops", action="store_true", help="no teardrops at all (the same as --teardrops none)")
+    teardrops.add_argument("--no-ses-teardrops", action="store_true",
+                           help="no teardrops in the SES (the same as --teardrops none: KiCad's own Edit > Edit Teardrops can add them)")
+    teardrops.add_argument("--teardrop-max-length", type=float, default=Options.teardrop_max_length, metavar="MM",
+                           help="longest teardrop beyond the pad's edge (default %(default)g)")
+    teardrops.add_argument("--teardrop-max-width", type=float, default=Options.teardrop_max_width, metavar="MM",
+                           help="widest teardrop, across at the pad (default %(default)g)")
+    teardrops.add_argument("--teardrop-breathing", type=float, default=Options.teardrop_breathing, metavar="N",
+                           help="clearances a teardrop keeps from foreign copper, else it is left out (default %(default)g)")
+
+    export.add_argument("--routed-board", metavar="FILE",
+                        help="also write the routing straight into a copy of the .kicad_pcb beside the DSN, as FILE (with "
+                             "--teardrops zones this is where the teardrops go; default then: NAME-routed.kicad_pcb beside the output). "
+                             "The original board is never changed")
+    export.add_argument("--no-ses-arcs", action="store_true",
+                        help="write curves in the SES as short straight segments, not arcs (qarc)")
     args = ap.parse_args(argv)
     for flag, value in (("--candidates", args.candidates), ("--reroute-candidates", args.reroute_candidates)):
         if value is not None and value < 1:
@@ -320,17 +373,10 @@ def main(argv: list[str] | None = None) -> int:
     note = skip_nets(design, args.skip_net)
     if note:
         print(note)
-    layer_cost = {}
-    for item in args.layer_cost or ():
-        name, _, factor = item.rpartition(":")
-        try:
-            factor = float(factor)
-        except ValueError:
-            factor = 0.0
-        if name not in design.board.layers or not 1.0 <= factor < math.inf:
-            ap.error(f"--layer-cost {item}: a layer routed ({', '.join(design.board.layers)}) and a factor of 1 or more")
-        if factor > 1.0:
-            layer_cost[design.board.layers.index(name)] = factor
+    try:
+        layer_cost = layer_costs(design, args.layer_cost or ())
+    except ValueError as error:
+        ap.error(f"--layer-cost: {error}")
     if layer_cost:
         print("traces cost more on " + ", ".join(f"{design.board.layers[i]} ({f:g} times their length)" for i, f in sorted(layer_cost.items())))
     # Route slightly wider than the rules; report against the rules themselves.

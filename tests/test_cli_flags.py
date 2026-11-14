@@ -21,6 +21,25 @@ def test_every_option_has_a_flag(capsys):
         assert flag in text, flag
 
 
+def test_every_routing_setting_has_a_flag_in_a_group_of_the_same_name(capsys):
+    """Each setting of Routing (and the workers of App) has its flag, and --help lists the flag under the setting's topic."""
+    from weaveengine.settings import section_of
+    text = help_text(capsys)
+    assert set(cli.SETTING_FLAGS) == {n for n, (_, _, topic) in DESCRIPTIONS.items() if section_of(topic) == "Routing" or n == "workers"}
+    sections = {}
+    current = None
+    for line in text.splitlines():
+        if line and not line.startswith(" ") and line.endswith(":"):
+            current = line[:-1]
+        elif current:
+            sections.setdefault(current, []).append(line)
+    for name, flag in cli.SETTING_FLAGS.items():
+        label, _, topic = DESCRIPTIONS[name]
+        title = ("App: " if name == "workers" else "Routing: ") + topic
+        assert any(line.strip().startswith(flag) or f", {flag}" in line for line in sections[title]), (name, flag, title)
+    assert not any(t.startswith("App: ") and t != "App: Computer" for t in sections)  # (display settings have no flags)
+
+
 def test_every_cost_parameter_the_settings_override_has_a_flag(capsys):
     text = help_text(capsys)
     assert set(Settings().cost_overrides()) | {"layer_cost"} == set(cli.COST_FLAGS)
@@ -85,3 +104,19 @@ def test_how_margin_drawings_are_held_is_a_flag_and_a_setting(tmp_path, monkeypa
         design = read_dsn(dsn)
         Settings(margin_drawings=mode).apply_rules(design, dsn)
         assert design.board.margin_edge == mode
+
+
+def test_layers_and_layer_cost_are_settings(tmp_path):
+    from tests.conftest import demo_board
+    from weaveengine.io.dsn import read_dsn, write_dsn
+    from weaveengine.settings import layer_costs, layer_list
+    dsn = str(tmp_path / "b.dsn")
+    write_dsn(demo_board(), dsn)
+    design = read_dsn(dsn)
+    first, last = design.board.layers[0], design.board.layers[-1]
+    assert layer_list("") is None and layer_list(f" {first} , {last},") == [first, last]
+    assert layer_costs(design, "".split(",")) == {} and layer_costs(design, [f" {last}:5 "]) == {len(design.board.layers) - 1: 5.0}
+    for bad in (f"{first}:0.5", "nowhere:3", first):
+        with pytest.raises(ValueError):
+            layer_costs(design, [bad])
+    assert Settings().layers == "" and Settings().layer_cost == ""

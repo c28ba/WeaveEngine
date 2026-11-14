@@ -166,7 +166,7 @@ To do, in order:
    routed copy of the board, a setting of three (branch `export-shape`; below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
    (below).
-13. [ ] Settings organised cleanly, and nothing forced on the user (user,
+13. [x] Settings organised cleanly, and nothing forced on the user (user,
    2026-11-13): anything that changes the user's copper beyond what must be
    connected is a setting with a flag (for example joining pour islands that
    hold no pads); the settings are split into the app's own (display,
@@ -174,6 +174,9 @@ To do, in order:
    vias and fan-out, pours, teardrops and shape, export, checks), with the
    command line's `--help` grouped the same way. Many settings, each easy to
    find (the search box and keywords stay).
+   Done (branch `settings-org`): App (Display, Computer) and Routing (eight topics) in the
+   dialog and `--help`, every setting described in plain words, `--layers` and
+   `--layer-cost` now settings too; defaults and routing unchanged (SES byte-identical).
 
 
 Back burner: bugs seen once that could not be found again. Each waits for a

@@ -33,7 +33,7 @@ from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
 from weaveengine.router import redo_teardrops
-from weaveengine.settings import AUTOMATIC, CHOICES, DESCRIPTIONS, RULES, Settings, matches_search, default_path, detected_rules, skip_nets, undetected
+from weaveengine.settings import AUTOMATIC, CHOICES, DESCRIPTIONS, RULES, SECTIONS, Settings, matches_search, default_path, detected_rules, layer_list, skip_nets, undetected
 from weaveengine.viz.svg import export_result
 
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227", "#b06cff", "#22cfcf"]
@@ -585,7 +585,7 @@ CUT_OFF_COLOR = "#ff00ff"  # (unlike every layer colour)
 
 
 class SettingsDialog(QDialog):
-    """Editor for ``settings.json``: one tab per group, one row per setting.
+    """Editor for ``settings.json``: App and Routing, each a set of tabs by topic (``settings.SECTIONS``), one row per setting.
 
     On/off settings are switches. A number that can also be left to the program
     ("use every core", "use the DSN's value") is a switch for that plus the
@@ -600,26 +600,32 @@ class SettingsDialog(QDialog):
         self.path = path
         self.readers: dict[str, object] = {}   # name -> function returning the value
         self.writers: dict[str, object] = {}   # name -> function taking a value
-        tabs = QTabWidget()
-        self.tabs = tabs
+        self.parts = QTabWidget()   # App | Routing
+        self.tabs: dict[str, QTabWidget] = {}   # part -> its tabs, one per topic
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search settings")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         self.rows: dict[str, tuple[QFormLayout, int, int]] = {}   # name -> its form, first row, row after its last
-        self.groups: list[str] = []   # each tab's group
+        self.groups: list[tuple[str, int]] = []   # each topic's (part, tab) in order of SECTIONS
         forms: dict[str, QFormLayout] = {}
-        for name, (label, description, group) in DESCRIPTIONS.items():
-            if group not in forms:
+        for part, topics in SECTIONS.items():
+            self.tabs[part] = QTabWidget()
+            self.parts.addTab(self.tabs[part], part)
+            for topic, about in topics.items():
                 page = QWidget()
-                forms[group] = QFormLayout(page)
-                forms[group].setVerticalSpacing(4)
+                forms[topic] = QFormLayout(page)
+                forms[topic].setVerticalSpacing(4)
+                intro = QLabel(about)
+                intro.setWordWrap(True)
+                intro.setStyleSheet("font-style: italic; margin-bottom: 8px;")
+                forms[topic].addRow(intro)
                 scroll = QScrollArea()   # (a tab taller than the screen scrolls; the buttons stay below it)
                 scroll.setWidget(page)
                 scroll.setWidgetResizable(True)
                 scroll.setFrameShape(QFrame.NoFrame)
-                tabs.addTab(scroll, group)
-                self.groups.append(group)
+                self.groups.append((part, self.tabs[part].addTab(scroll, topic)))
+        for name, (label, description, group) in DESCRIPTIONS.items():
             form = forms[group]
             first = form.rowCount()
             value = getattr(Settings(), name)
@@ -640,6 +646,7 @@ class SettingsDialog(QDialog):
                 self.readers[name], self.writers[name] = box.isChecked, box.setChecked
             elif isinstance(value, str):
                 edit = QLineEdit()
+                edit.setToolTip(description)
                 form.addRow(label, edit)
                 self.readers[name], self.writers[name] = edit.text, edit.setText
             elif name in AUTOMATIC:
@@ -656,10 +663,12 @@ class SettingsDialog(QDialog):
             form.addRow(hint)
             self.rows[name] = (form, first, form.rowCount())
         if detected and any(value is None for value, _ in detected.values()):
+            tabs = self.tabs["Routing"]
             for i in range(tabs.count()):
-                if tabs.tabText(i) == "Rules":
-                    tabs.setTabText(i, "Rules ⚠")
-        self.titles = [tabs.tabText(i) for i in range(tabs.count())]   # (what the tabs say when nothing is searched for)
+                if tabs.tabText(i) == "Rules & nets":
+                    tabs.setTabText(i, "Rules & nets ⚠")
+        # (what the tabs say when nothing is searched for)
+        self.titles = [(self.tabs[part].tabText(i), part) for part, i in self.groups]
         self.load(settings)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel | QDialogButtonBox.RestoreDefaults)
         buttons.accepted.connect(self.accept)
@@ -667,31 +676,37 @@ class SettingsDialog(QDialog):
         buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self.restore_defaults)
         layout = QVBoxLayout(self)
         layout.addWidget(self.search)
-        layout.addWidget(tabs)
+        layout.addWidget(self.parts)
         where = QLabel(f"Saved to {path}")
         where.setStyleSheet("color: gray; font-size: 11px;")
         where.setWordWrap(True)
         layout.addWidget(where)
         layout.addWidget(buttons)
         screen = (parent.screen() if parent is not None else QApplication.primaryScreen()).availableGeometry()
-        self.resize(min(520, screen.width() - 40), min(640, screen.height() - 80))
+        self.resize(min(640, screen.width() - 40), min(640, screen.height() - 80))
 
     def _filter(self, text: str) -> None:
         """Show only the settings that fit every word of ``text``; each tab's title gets its match count."""
         text = text.strip().lower()
         counts: dict[str, int] = {}
         for name, (form, first, end) in self.rows.items():
-            group = DESCRIPTIONS[name][2]
+            topic = DESCRIPTIONS[name][2]
             hit = not text or matches_search(text, name)
-            counts[group] = counts.get(group, 0) + hit
+            counts[topic] = counts.get(topic, 0) + hit
             for row in range(first, end):
                 form.setRowVisible(row, hit)
-        for i, title in enumerate(self.titles):
-            self.tabs.setTabText(i, f"{title} ({counts.get(self.groups[i], 0)})" if text else title)
+        topics = [topic for topics in SECTIONS.values() for topic in topics]
+        parts = {part: 0 for part in SECTIONS}
+        for (part, i), topic, (title, _) in zip(self.groups, topics, self.titles):
+            parts[part] += counts.get(topic, 0)
+            self.tabs[part].setTabText(i, f"{title} ({counts.get(topic, 0)})" if text else title)
+        for i, part in enumerate(SECTIONS):
+            self.parts.setTabText(i, f"{part} ({parts[part]})" if text else part)
         if text:
-            for i, group in enumerate(self.groups):
-                if counts.get(group):
-                    self.tabs.setCurrentIndex(i)
+            for (part, i), topic in zip(self.groups, topics):
+                if counts.get(topic):
+                    self.parts.setCurrentIndex(list(SECTIONS).index(part))
+                    self.tabs[part].setCurrentIndex(i)
                     break
 
     @staticmethod
@@ -1085,7 +1100,7 @@ class MainWindow(QMainWindow):
 
     def open(self, path: str) -> bool:
         try:
-            design = read_dsn(path)
+            design = read_dsn(path, layer_list(self.settings.layers))
         except (OSError, ValueError) as error:
             if self.interactive:
                 QMessageBox.critical(self, "Cannot open the file", str(error))
@@ -1101,7 +1116,7 @@ class MainWindow(QMainWindow):
         self.board_label.setText(f"<b>{os.path.basename(path)}</b><br>{len(board.layers)} layers, {len(board.pads)} pads, "
                                  f"{len(nets)} nets, {connections} connections")
         self.say(f"Opened {path}")
-        warnings = [f"{text}. Set it in Settings, Rules" for text in undetected(detected_rules(design, path), self.settings)]
+        warnings = [f"{text}. Set it in Settings, Routing, Rules & nets" for text in undetected(detected_rules(design, path), self.settings)]
         warnings += design.warnings
         for text in warnings:
             self.say(f"  ⚠ {text}")
@@ -1599,12 +1614,12 @@ def self_test(dsn: str, ses: str | None, screenshot: str | None, timeout: float 
         picture(window).save(os.path.splitext(screenshot)[0] + "_zoom.png")
         dialog = SettingsDialog(window.settings, window.settings_path, window, *window._detected())
         dialog.show()
-        tabs = dialog.findChild(QTabWidget)
         print("self-test: rules detected:", [label.text() for label in dialog.findChildren(QLabel) if label.text().startswith(("Detected", "\u26a0"))])
-        for i in range(tabs.count()):
-            tabs.setCurrentIndex(i)
+        for n, (part, i) in enumerate(dialog.groups, 1):
+            dialog.parts.setCurrentIndex(list(dialog.tabs).index(part))
+            dialog.tabs[part].setCurrentIndex(i)
             app.processEvents()
-            dialog.grab().save(os.path.splitext(screenshot)[0] + f"_settings{i + 1}.png")
+            dialog.grab().save(os.path.splitext(screenshot)[0] + f"_settings{n}.png")
         assert dialog.settings() == window.settings
         # every state the file can hold comes back out of the editor unchanged
         for odd in (Settings(workers=3, portfolio=1, trace_width=0.127, edge_clearance=0.5, teardrop_style="none"),
