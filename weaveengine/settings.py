@@ -167,7 +167,8 @@ DESCRIPTIONS = {
                        "move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it. Off "
                        "lets traces cut a pour freely, which leaves more pieces to join.", "Pours & planes"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
-                       "pours' skeletons are drawn to. Automatic takes each zone's own minimum thickness from the board; set it to "
+                       "pours' skeletons are drawn to. Automatic takes each zone's own minimum thickness from the board (0.25 mm where "
+                       "there is none); set it to "
                        "estimate with something else.", "Pours & planes"),
     # -- Routing: Teardrops ---------------------------------------------------
     "teardrop_style": ("Teardrops", "Tapered fillets where traces meet pads and vias, which strengthen the joint. 'Tracks' writes them "
@@ -189,14 +190,14 @@ DESCRIPTIONS = {
 # A setting that is one of a few choices: name -> {value: label}
 CHOICES = {
     "margin_drawings": {
-        "added": "Kept clear of by teardrops, rounded corners and the vias to the planes; traces and their vias may cross them",
-        "edge": "Board edge to everything: a pad within it is left only straight away from the drawing",
-        "off": "Not kept clear of (only by the vias to the planes)",
+        "added": "Added copper keeps clear (default)",
+        "edge": "A board edge for everything",
+        "off": "Ignored",
     },
     "teardrop_style": {
-        "tracks": "WeaveEngine's, as tracks in the SES",
-        "zones": "WeaveEngine's, as KiCad teardrop zones in a routed copy of the board",
-        "none": "None (KiCad's own Edit > Edit Teardrops can add them)",
+        "tracks": "Tracks in the SES",
+        "zones": "KiCad zones in a routed copy",
+        "none": "None (KiCad can add its own)",
     },
 }
 
@@ -300,8 +301,8 @@ AUTOMATIC = {
     "clearance": ("Use the value in the DSN", Rules.clearance),
     "via_diameter": ("Use the value in the DSN", Rules.via_diameter),
     "via_drill": ("Use the value in the DSN", Rules.via_drill),
-    "edge_clearance": ("From the KiCad project beside the DSN, else the clearance", 0.5),
-    "pour_min_width": ("From the board's zones (the .kicad_pcb), else 0.25 mm", 0.25),
+    "edge_clearance": ("From the KiCad project", 0.5),   # (else the clearance: the description says so)
+    "pour_min_width": ("From the board's zones", 0.25),  # (else 0.25 mm: the description says so)
 }
 
 

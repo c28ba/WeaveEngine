@@ -624,6 +624,7 @@ class SettingsDialog(QDialog):
                 scroll.setWidget(page)
                 scroll.setWidgetResizable(True)
                 scroll.setFrameShape(QFrame.NoFrame)
+                scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)   # (descriptions wrap to the width instead)
                 # (a lone "&" in a tab title marks a shortcut key and is not shown)
                 self.groups.append((part, self.tabs[part].addTab(scroll, topic.replace("&", "&&"))))
         for name, (label, description, group) in DESCRIPTIONS.items():
@@ -634,6 +635,8 @@ class SettingsDialog(QDialog):
                 self._race_row(form, label, description)
             elif name in CHOICES:
                 combo = QComboBox()
+                combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                combo.setMinimumContentsLength(16)
                 for key, text in CHOICES[name].items():
                     combo.addItem(text, key)
                 combo.setToolTip(description)
