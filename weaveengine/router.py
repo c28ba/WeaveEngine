@@ -150,6 +150,10 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
                   (lambda phase, done=0.0, total=1.0: progress("pass 1: " + phase, done, total)) if progress else None, events,
                   skeletons)
     ctx.deadline = deadline
+    if events is not None:  # the board's size, for the estimate of the finishing (``weaveengine.progress``)
+        poured = {net for net, _, _ in board.pours}
+        events({"type": "progress", "pass": 1, "variant": -1, "phase": "setup", "done": 0.0, "total": 1.0,
+                "pads": len(board.pads), "poured": sum(1 for p in board.pads if p.net_id in poured)})
     # (As built: before any via is put into them. With the areas no via may touch, which are not in them.)
     maps = [_print(layer.pmap) for layer in layers] + [area.wkt for area in board.no_via] + (["skeletons"] if skeletons else [])
     if resume is not None:
@@ -179,15 +183,18 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         events({"type": "pass", "pass": 1, "open": len(ctx.open), "connections": len(pairs),
                 "vias": sum(1 for p in work.pads if p.is_via)})
     t_route = time.perf_counter()
+    steps = _Steps(ctx, events)
 
     smoothed = (0, 0)
     if options.smooth:
+        steps("rounding corners")
         tasks = [({w: lines[w] for w, li in wire_layer.items() if li == layer.index}, layer.index) for layer in ctx.layers]
         for new, rounded, kept in parallel.run(_smooth_task, (work, wire_net), tasks, workers):
             lines.update(new)
             smoothed = (smoothed[0] + rounded, smoothed[1] + kept)
     blunted = 0
     if options.least_angle > 0:  # (on the traces as drawn, before the teardrops, which are made round them: design 13.3b)
+        steps("blunting acute angles")
         ends = {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}
         limits = (options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing) if options.teardrops else None
         new = blunt(work, lines, wire_net, wire_layer, ends, options.least_angle, limits)
@@ -195,9 +202,11 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         blunted = sum(1 for w in new if kept[w] is new[w])
         lines = kept
     # A trace's end on a pad within the edge clearance of a Margin drawing stops inside the pad where it is clear, if it can.
+    steps("keeping clear of the margin")
     near_margin, trimmed = trim_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns})
     drops: dict[int, list] = {}
     if options.teardrops:
+        steps("teardrops")
         tasks = []
         for layer in ctx.layers:
             on_layer = {w: lines[w] for w, li in wire_layer.items() if li == layer.index}
@@ -209,11 +218,13 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
     pieces: dict[int, list] = {}
     wedges: dict[int, list] = {}
     if options.taper and narrowed:
+        steps("tapering")
         pieces, wedges = make_tapers(work, full_rules, lines, wire_net, wire_layer,
                                      {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}, narrowed, fine)
     planed, unplaned, reliefs, kinds = [], [], {}, {}
     if options.fanout and work.pours:  # pads and pour pieces joined to their net, by the cheapest way (``plan.fanout``)
         # (the traces as drawn: tapered ones in their pieces, with their wedges)
+        steps("joining pours")
         drawn = with_wedges(drops, wedges)
         shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drawn.items() if w in wire_layer for poly in polys]
         done = join_pours(work, lines, wire_net, wire_layer, shapes, drawn, pieces, options.reliefs, options.narrow_reliefs,
@@ -226,12 +237,14 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
             lines[w], wire_net[w], wire_layer[w] = points, net, layer_index
             w += 1
 
+    steps("checking angles")
     for layer in ctx.layers:
         assert layer.state.check_invariants(), "topological invariant broken"
     # (copper of one net meeting itself under the least angle, as drawn: design 13.3b)
     acute = acute_meetings(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns},
                            with_wedges(drops, wedges), pieces, options.least_angle or LEAST)
     t_end = time.perf_counter()
+    steps.end()
     routed = sorted(w for w in wire_layer if w in ctx.conns)
     air = sum(ctx.conns[w].air_len for w in routed)
     length = sum(polyline_length(lines[w]) for w in routed)
@@ -269,6 +282,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "wires_per_layer": {l.name: sum(1 for li in wire_layer.values() if li == l.index) for l in ctx.layers},
         "time_route": t_route - t0,
         "time_total": t_end - t0,
+        "time_steps": steps.took,  # finishing step -> seconds (``_Steps``)
         "triangles": sum(l.pmap.num_triangles for l in ctx.layers),
         "edges": sum(l.pmap.num_edges for l in ctx.layers),
         # Trace ends on pads within the edge clearance of a Margin drawing, and of them those stopped inside the pad clear
@@ -280,6 +294,33 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
     return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing)
+
+
+class _Steps:
+    """The finishing steps after the routing (the pass is over): each said as
+    it begins, as a progress event of the pass's outcome (variant -1) whose
+    phase starts with "finishing", for the estimate of the time left
+    (``weaveengine.progress``), and timed (``took``: step -> seconds)."""
+
+    def __init__(self, ctx: Context, events):
+        self.ctx, self.events = ctx, events
+        self.took: dict[str, float] = {}
+        self.name, self.at = None, time.perf_counter()
+
+    def __call__(self, name: str) -> None:
+        self.end()
+        self.name = name
+        if self.ctx.stop is not None and self.ctx.stop.is_set():
+            raise parallel.Stopped()
+        if self.events is not None:  # (no snapshot with it, as ``Context.report`` sends: the picture is final)
+            self.events({"type": "progress", "pass": self.ctx.pass_index, "variant": -1,
+                         "phase": "finishing: " + name, "done": 0.0, "total": 1.0})
+
+    def end(self) -> None:
+        now = time.perf_counter()
+        if self.name is not None:
+            self.took[self.name] = self.took.get(self.name, 0.0) + now - self.at
+        self.name, self.at = None, now
 
 
 def _drawn(ctx: Context, work: Board, lines: dict, violations: list, loops: set[int] | None = None) -> tuple[dict, list, dict, list[Pad]]:

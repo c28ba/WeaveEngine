@@ -23,20 +23,27 @@ import sys
 import time
 
 # Before a run has measured them itself: durations as shares of what its
-# variant took to reach rip-up ("the start": candidates, selection, commit).
-# From the raced variants of the five boards (design section 24).
-ROUND = (0.03, 0.5)    # one round of rip-up
-TAIL = (0.15, 0.5)     # refinement and geometry
+# variant took to reach rip-up ("the start": candidates, selection, commit),
+# or of a round of rip-up. From the raced variants of 33 boards (design
+# section 24): the ranges hold eight in ten of them.
+ROUND = (0.04, 0.8)    # one round of rip-up, against the start
+TAIL = (2.7, 8.0)      # refinement and geometry, against the mean of a round and the start (sqrt(round * start))
+REPAIR = (0.6, 2.4)    # one design-rule repair and the refinement after it, against the first refinement
 REST = (0.5, 24.0)     # everything after the start, before any of it is seen
-REPAIR_ROUNDS = 5      # rounds of rip-up one design-rule repair may take (router._route_once)
 REPAIRS = (1, 3)       # design-rule repairs a variant goes through: nearly always one, seldom more than three
+# The finishing after the routing (``router._Steps``: corners, blunting,
+# teardrops, joining the pours), in seconds a pad: it is the pours that take
+# the time. Said by the router's "setup" event; without it, a share of the run.
+FINISH = (0.004, 0.03)         # a board with no pour
+FINISH_POURED = (0.015, 0.12)  # a board with pours
 # Rounds of rip-up beyond those the stop rule still allows if nothing improves:
 # improvements come early, so nine runs in ten stay under EXTRA rounds at the
 # start and under half of that for every HALVING rounds gone.
 EXTRA, HALVING = 24.0, 8.0
 UNEVEN = (0.8, 1.3)    # rounds to come against the last few: they are not all alike
 AFTER = 0.03           # smoothing and teardrops, as a share of the run so far
-AGAIN = (0.9, 1.15)    # the same board with the same settings, against the time it took before
+AGAIN = (0.9, 1.15)
+NEXT_HEAT = (0.6, 1.3)  # another heat, when one is likely, against the one running (heats of a run are much alike)    # the same board with the same settings, against the time it took before
 
 
 def clock(seconds: float) -> str:
@@ -174,30 +181,33 @@ class _Variant:
             round_ = (UNEVEN[0] * self.round, UNEVEN[1] * self.round)
         else:
             round_ = (max(ROUND[0] * start, 0.5 * in_phase), max(ROUND[1] * start, 2.0 * in_phase))
-        tail = (self.tail, self.tail) if self.tail is not None else (TAIL[0] * start, TAIL[1] * start)
+        if self.tail is not None:
+            tail = (self.tail, self.tail)
+        else:
+            unit = math.sqrt(max(start, 1e-3) * (self.round or math.sqrt(round_[0] * round_[1])))
+            tail = (TAIL[0] * unit, TAIL[1] * unit)
         if self.repair:
             repair = (0.6 * self.repair, 1.2 * self.repair)
         else:
-            repair = (2 * round_[0] + 0.3 * tail[0], REPAIR_ROUNDS * round_[1] + 0.5 * tail[1])
+            repair = (REPAIR[0] * tail[0], REPAIR[1] * tail[1])
         lo = hi = 0.0
-        if self.phase == "rip-up":
+        if self.phase == "rip-up" and not self.repairs:  # (a repair's own rip-up is in the repair's time)
             in_round = now - self.rounds[-1]
             # At least: no round from here improves on the best. At most, in the
             # first rip-up: the improvements still likely. (A repair's is short.)
             extra = 0.0 if self.repairs else EXTRA * 0.5 ** (len(self.rounds) / HALVING)
             lo = max(round_[0] - in_round, 0.0) + (self.quiet - 1) * round_[0]
             hi = max(round_[1] - in_round, 0.0) + (min(self.most, self.quiet + extra) - 1) * round_[1]
+        done = len(self.repairs)
         if not self.repairs:
             if self.tail is None:
                 waited = now - self.tail_at if self.tail_at is not None else 0.0
                 lo += max(tail[0] - waited, 0.0)
                 hi += max(tail[1] - waited, 0.25 * waited)
-        else:
-            lo += 0.3 * tail[0]  # the geometry that follows a repair's rip-up
-            hi += 0.5 * tail[1]
-        done = len(self.repairs)
-        return (lo + max(REPAIRS[0] - done, 0) * repair[0],
-                hi + min(max(REPAIRS[1] - done, 1), self.repair_most - done) * repair[1])
+            return lo + REPAIRS[0] * repair[0], hi + min(REPAIRS[1], self.repair_most) * repair[1]
+        waited = now - self.repairs[-1]  # the repair under way, and those that may follow it
+        return (lo + max(repair[0] - waited, 0.0),
+                hi + max(repair[1] - waited, 0.25 * waited) + max(min(REPAIRS[1], self.repair_most) - done, 0) * repair[1])
 
 
 class Estimator:
@@ -217,6 +227,8 @@ class Estimator:
         self.over = None               # when the last heat ended
         self.fraction = 0.0
         self.phase = ""
+        self.finish = None             # (at least, at most) seconds of finishing, once the router has said the board's size
+        self.finishing = None          # when the finishing began (``router._Steps``)
 
     def event(self, e: dict, now: float | None = None) -> None:
         now = time.time() if now is None else now
@@ -228,6 +240,15 @@ class Estimator:
         if kind != "progress":
             return
         phase = e["phase"]
+        if phase == "setup":  # the board's size: what the finishing takes goes by it
+            share = FINISH_POURED if e.get("poured") else FINISH
+            self.finish = (share[0] * e.get("pads", 0), share[1] * e.get("pads", 0))
+            return
+        if phase.startswith("finishing"):
+            self.over = self.over or now
+            self.finishing = self.finishing or now
+            self.phase = phase
+            return
         heat = re.fullmatch(r"racing variants (\d+)-(\d+) of (\d+)", phase)
         if heat:
             first, last, count = (int(x) for x in heat.groups())
@@ -260,9 +281,16 @@ class Estimator:
         limit = max(self.deadline - now, 0.0)
         return min(left[0], limit), min(left[1], limit)
 
+    def _finish(self, now: float) -> tuple[float, float]:
+        """(at least, at most) seconds of finishing still to come."""
+        if self.finish is None:
+            return 0.0, AFTER * ((self.over or now) - self.start)
+        waited = now - (self.finishing or self.over or now)
+        return max(self.finish[0] - waited, 0.0), max(self.finish[1] - waited, 0.25 * waited)
+
     def _left(self, now: float) -> "tuple[float, float] | None":
         if self.over is not None:
-            return 0.0, max(AFTER * (self.over - self.start) - (now - self.over), 0.0)
+            return self._finish(now)
         if self.as_before(now):
             return max(AGAIN[0] * self.last - (now - self.start), 0.0), AGAIN[1] * self.last - (now - self.start)
         racing = self._racing()
@@ -274,9 +302,20 @@ class Estimator:
         waited_for = [x.left(now) for v, x in racing.items() if taken is None or v < taken]
         if None in waited_for:
             return None
+        finish = self._finish(now)
         lo = max((a for a, _ in waited_for), default=0.0)
         hi = max((b for _, b in waited_for), default=0.0)
-        return lo, hi + AFTER * (now - self.start)
+        if self._again(racing):  # another heat is likely: it is counted in, not only said
+            heat = self.heat_took or now - self.heat_at + middle((lo, hi))
+            lo, hi = lo + NEXT_HEAT[0] * heat, hi + NEXT_HEAT[1] * heat
+        return lo + finish[0], hi + finish[1]
+
+    def _again(self, racing: dict) -> bool:
+        """Whether another heat of variants is likely to follow this one: one
+        may, and every variant in this one still has connections open by its
+        latest picture (a board that cannot be routed whole runs every heat)."""
+        return (self.heats_to_come > 0 and len(racing) > 1 and all(x.open is not None and x.open > 0 for x in racing.values())
+                and not any(x.end is not None and x.complete for x in racing.values()))
 
     def as_before(self, now: float | None = None) -> bool:
         """Whether the estimate is the time the same run took before (it is,
@@ -289,7 +328,7 @@ class Estimator:
         racing = self._racing()
         phase = next((x.phase for _, x in sorted(racing.items()) if x.end is None), self.phase)
         if self.over is not None:
-            return "finishing"
+            return self.phase if self.phase.startswith("finishing") else "finishing"
         if self.deadline is not None and time.time() >= self.deadline:
             return "time is up: " + phase
         return (f"variants {self.heat[0] + 1} to {self.heat[1]}: " if self.heat[1] - self.heat[0] > 1 else "") + phase
@@ -299,7 +338,7 @@ class Estimator:
         one takes. Nothing once a variant has connected everything."""
         now = time.time() if now is None else now
         racing = self._racing()
-        if (self.over is not None or self.as_before(now) or not self.heats_to_come
+        if (self.over is not None or self.as_before(now) or not self.heats_to_come or self._again(racing)
                 or any(x.end is not None and x.complete for x in racing.values())):
             return 0.0
         left = self.left(now)
