@@ -474,9 +474,14 @@ new example (a board and where on it); then it moves up to be fixed.
   group of pads, and KiCad's rule for starved thermal reliefs (a join is
   refused if it leaves more; a pad left short of spokes gets traces into the
   fill, which KiCad counts as spokes; a setting, on), islands with no pad
-  joined too if asked for (a setting, off), and no join KiCad's import would
-  give another net (a via touching only another
-  net's saved fill).
+  joined too if asked for (a setting, off), no join KiCad's import would
+  give another net (a via touching only another net's saved fill), rule
+  areas that bar pours left unfilled, and join traces that leave and meet
+  pads square. Tiers 1 to 3 against main f2872f5: every board routes the
+  same; KiCad open 880 to 706, mask/thermal 96 to 38, none worse; acute
+  meetings fewer or equal on every board; one island more on cm5-minima
+  (a pad-less strip main's fan-out anchored by chance; none with the
+  islands setting on); time +4 %.
 
 ### Rules
 
