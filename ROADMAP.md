@@ -228,6 +228,11 @@ user's board routed with its KiCad files beside the DSN; not yet looked into):
   net are routed through the same channels), with realisation only drawing
   the joint. Whichever is simplest that works. First find an example on a
   board to test with (the user's board shows it).
+  Built (2026-11-14, branch `merge-ends`, design 13.3c): found at R14-1 on
+  the user's board (a gap 0.07 mm wide); after blunting and before the
+  teardrops, the longer of the two ways takes the shorter one's, drawing only
+  (`--no-merge-ends`, a setting, on by default). Every such gap on five
+  boards goes. Waiting on the board sweep to merge.
 
 
 Back burner: bugs seen once that could not be found again. Each waits for a

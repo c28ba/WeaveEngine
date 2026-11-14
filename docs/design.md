@@ -1116,6 +1116,15 @@ Not done: a junction moved with all its connections (the third case above) and 1
 
 ---
 
+
+### 13.3c Traces that ride together into a pad, drawn as one (`realize/ends.py`; branch `merge-ends`)
+
+**What was wrong** (seen by a user, 2026-11-14). Two connections of a net that ride one trace into a pad (11) are two wires, each drawn on its own: its corners rounded, its acute meetings blunted. Over the last stretch to the pad they can come out two ways, one with a corner rounded and the other not, meeting a little way out. Between them is a thin wedge of bare board inside the net's copper, an acid trap, and their two teardrops cross. On a user's board, at R14-1, the gap was 0.07 mm wide over 0.28 mm, between 0.15 mm traces.
+
+**The fix.** After blunting and before the teardrops, for every two wires of a net that leave a pad on one layer: walking out along one from the pad, if there is bare board between them outside the pad (further apart than their half widths together) and they are back on each other further out (nearer than a quarter of that), staying within a clearance of each other all the way so that nothing foreign can lie between them, the wire with the longer way to that point takes the shorter one's, and steps across to its own way there (a step inside copper that is there already). It does so only if the way it takes is no narrower than itself, so every clearance the other keeps it keeps. Each wire still runs from the centre of each of its pads: what is changed is drawing, not topology. A setting, on by default (`--no-merge-ends`). The user suggested deciding it in the topology instead (a rider ends where it meets its trunk); it is the drawing of two wires the topology already makes one trace that parts, so the drawing is where it is put right, with nothing for the rest of the program to learn.
+
+**Measured** on five boards (a user's board, kicad-mixer, lily58-pro, sweep-bling-mx, kicad-stickhub): every such gap found goes (two on a user's board, one on stickhub). What a looser search also finds, and is left alone, is two traces that leave a pad in different ways and pass within a width of each other once (sweep-bling-mx, lily58-pro): they never ride together.
+
 ## 14. Post-optimisation (M8)
 
 - Remove collinear points and shorten by re-running relaxation with a tighter tolerance.
