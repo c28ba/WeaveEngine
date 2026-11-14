@@ -13,7 +13,8 @@ for name, body in re.findall(r"_{5,} (\S+) _{5,}\n(.*?)(?=\n_{5,} |\n={5,})", te
     post(name, body)
 # A crash (segfault) ends the run without a failure section: the fault
 # handler's stack names the test, above the pytest frames the tail shows.
-crash = text.find("Fatal Python error")
+# (Windows words it "Windows fatal exception").
+crash = min((i for i in (text.find("Fatal Python error"), text.find("Windows fatal exception")) if i >= 0), default=-1)
 if crash >= 0:
     lines = text[crash:].splitlines()
     own = [line for line in lines if "/tests/" in line or "\\tests\\" in line or "weaveengine" in line]
