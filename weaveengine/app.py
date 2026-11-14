@@ -1300,6 +1300,35 @@ class MainWindow(QMainWindow):
         self.stats["race"].setText("  ".join(f"{v + 1}: {s['total'] - s['routed']}" for v, s in sorted(self.variants.items())) or "–")
 
     def _finished(self, event: dict) -> None:
+        """A run is done: its result, figures and notes shown. Whatever fails in
+        showing them is said in the log, and the window is left ready to go on
+        (an exception here is otherwise swallowed by Qt, and the window stays as
+        while routing, with the result never drawn)."""
+        try:
+            self._take_result(event)
+        except Exception as error:
+            self._report(error, "showing the result")
+        try:
+            self._idle()
+        except Exception as error:
+            self._report(error, "drawing the result")
+            self.act_route.setEnabled(self.dsn_path is not None)
+            self.act_stop.setEnabled(False)
+            self.act_open.setEnabled(True)
+            self.act_settings.setEnabled(True)
+        result = self.result
+        if result is not None and result.stats.get("improved") is False:
+            self.phase_label.setText("done; no better found, the routing is as it was")
+
+    def _report(self, error: Exception, doing: str) -> None:
+        import traceback
+        trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        print(trace, file=sys.stderr)
+        self.say(f"ERROR while {doing}: {type(error).__name__}: {error}")
+        self.say(trace)
+        self.phase_label.setText(f"failed while {doing}: {type(error).__name__}")
+
+    def _take_result(self, event: dict) -> None:
         self.result = result = event["result"]
         self.finished_runs = getattr(self, "finished_runs", 0) + 1
         self.routed_design = event["design"]
@@ -1307,6 +1336,7 @@ class MainWindow(QMainWindow):
         stats = result.stats
         self.progress.setValue(1000)
         self.pass_label.setText("Finished")
+        self.phase_label.setText("done")
         self.time_label.setText(f"took {clock(event['seconds'])}")
         if self.run_key:
             self.timings.record(self.run_key, time.time() - self.started)
@@ -1325,9 +1355,6 @@ class MainWindow(QMainWindow):
             self.say(narrowed_note(stats["narrowed"], self.routed_design.net_names))
         if stats.get("buried_pads"):
             self.say(unreachable_note(stats["buried_pads"], result.board))
-        self._idle()
-        if stats.get("improved") is False:
-            self.phase_label.setText(self.phase_label.text() + "; no better found, the routing is as it was")
 
     def _show(self, result) -> None:
         """Draws a result and puts its figures in the panel."""

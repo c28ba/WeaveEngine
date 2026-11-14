@@ -336,3 +336,23 @@ def test_the_warnings_panel_says_when_the_kicad_board_is_missing(tmp_path):
     window.interactive = False
     assert window.open(str(tmp_path / "m.dsn"))
     assert "No KiCad board file m.kicad_pcb" in window.warnings_label.text()
+
+
+def test_a_failure_while_showing_the_result_is_said_and_the_buttons_come_back(tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from weaveengine.app import MainWindow
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(str(tmp_path / "settings.json"))
+    window.interactive = False
+    for act in (window.act_open, window.act_settings):  # as while routing
+        act.setEnabled(False)
+    window.act_stop.setEnabled(True)
+
+    def fails(event):
+        raise KeyError(42)
+    window._take_result = fails
+    window._finished({})
+    log = window.log.toPlainText()
+    assert "ERROR while showing the result: KeyError: 42" in log and "Traceback" in log
+    assert window.act_open.isEnabled() and window.act_settings.isEnabled() and not window.act_stop.isEnabled()
+    assert window.phase_label.text().startswith("failed while showing the result")

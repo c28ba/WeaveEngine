@@ -199,6 +199,13 @@ user's board routed with its KiCad files beside the DSN; not yet looked into):
   route it from the CLI with the same settings and time each finishing step;
   check that every error in the finishing step reaches the window as an
   error, and that the buttons come back whatever happens.
+  Found so far (2026-11-14): on Windows the app routes the board to the end
+  in 4 minutes with the same settings, with no error. The symptoms match an
+  exception in the window's finishing code, which Qt swallows: it sets
+  "Finished" and stops the timer first, then writes the notes, draws the
+  result and gives back the buttons. Now any failure there is written to
+  the log with its traceback and the buttons always come back; the next Mac
+  run will name the failing line. Still to do: that run, and the fix.
 - [ ] Two traces of one net that ride together split again just before their
   pad (seen by the user 2026-11-14). Pads A and B both connect to pad C from
   the same side; their traces join partway and run as one, but right at C
