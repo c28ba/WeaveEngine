@@ -93,7 +93,7 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         barred.setdefault(at, []).append(shape)
     barred = {at: shapely.union_all(shapes) for at, shapes in barred.items()}
     # Higher priority first: a zone of another net that it overlaps is filled already (KiCad's order).
-    rank = lambda k: board.zone(*zones[k][:2]).priority
+    rank = [board.zone(*z[:2]).priority for z in zones].__getitem__
     order = sorted(range(len(zones)), key=lambda k: (-rank(k), k))
     if nets is not None:
         want = {k for k in order if k < len(board.pours) and zones[k][0] in nets}
@@ -335,7 +335,8 @@ def classify(board, fill_of: dict, wires: list) -> list[Pour]:
         fill = fill_of[k]
         parts = sorted(getattr(fill, "geoms", [fill]), key=lambda g: -g.area)
         pour = Pour(net, at, outline)
-        has = [[p for p in own if g.intersects(p.shape)] for g in parts]
+        index = shapely.STRtree([p.shape for p in own])  # (the pads each part meets, in the order of ``own``)
+        has = [[own[i] for i in sorted(index.query(g, predicate="intersects").tolist())] for g in parts]
         main = max(range(len(parts)), key=lambda j: (sum(not p.is_via for p in has[j]), parts[j].area), default=None)
         for j, g in enumerate(parts):
             if g.geom_type == "Polygon" and not g.is_empty:
@@ -443,13 +444,28 @@ def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = 
         real += not lone
     if real == alone == 0 or real >= board.min_spokes:
         return False
-    # (the fill less the pad: the estimate's pieces hold the pad, KiCad's fill does not)
-    fill = shapely.union_all([x.shape for x in pour.pieces]).difference(pad.shape) if traces else None
+    fill = []
+
+    def in_fill(point) -> bool:
+        """Whether ``point`` is in the fill less the pad (made when first asked: the estimate's pieces hold the pad,
+        KiCad's fill does not)."""
+        if not fill:
+            fill.append(_whole(pour).difference(pad.shape))
+        return fill[0].contains(point)
+
     for layer, pts in traces:  # (each straight piece is a track to KiCad: one end in the pad, the other in the fill)
         if layer == pour.layer:
             for a, b in zip(map(Point, pts), map(Point, pts[1:])):
-                real += (pad.shape.contains(a) and fill.contains(b)) or (pad.shape.contains(b) and fill.contains(a))
+                real += (pad.shape.contains(a) and in_fill(b)) or (pad.shape.contains(b) and in_fill(a))
     return (real or alone) < board.min_spokes
+
+
+def _whole(pour: Pour):
+    """The pieces of ``pour`` as one shape (made once for its pieces as they are: ``starved`` asks it of each pad)."""
+    made = pour.__dict__.get("_whole")
+    if made is None or made[0] is not pour.pieces or made[1] != len(pour.pieces):
+        made = pour.__dict__["_whole"] = (pour.pieces, len(pour.pieces), shapely.union_all([x.shape for x in pour.pieces]))
+    return made[2]
 
 
 def _turn(pad) -> float:
