@@ -20,6 +20,12 @@ its outline two ways).
 Left over from it:
 - [ ] **A time estimate that is not hours out** without a time limit, on a
   board whose rip-up goes on improving for hours (design 24, Open).
+  In progress (2026-11-14, branch `time-estimate`): first the finishing
+  steps, which the estimate counted as 3 % of the run and which now take
+  minutes on poured boards (pour joins, spokes, blunting). The router says
+  each finishing step as it begins and times it (`stats["time_steps"]`);
+  the estimate is being fitted from those times on the sweep boards, and
+  the status shows the step ("finishing: joining pours").
 - [x] **The board sweep on GitHub** keeps each board's prepared DSN in the
   Actions cache, so its runs route the same DSNs: two runs of tiers 1-3 came
   out identical (Linux baseline: `sweep-cache-a-d4de30f` on sweep-results).
@@ -165,7 +171,10 @@ To do, in order:
 11. [x] Teardrops as polygons instead of fans of tracks: as KiCad teardrop zones in a
    routed copy of the board, a setting of three (branch `export-shape`; below).
 12. [ ] Pour pieces and pins joined by stitching vias or traces, chosen by cost
-   (below).
+   (below). Left: the joins are slow on dense boards (olimex-poe-m2 218 to
+   374 s, olimex-poe-c 348 to 492 s, castor-mainboard 221 to 307 s). In
+   progress (2026-11-14, branch `pour-speed`): profiled and made faster with
+   the output unchanged (SES byte-identical).
 13. [x] Settings organised cleanly, and nothing forced on the user (user,
    2026-11-13): anything that changes the user's copper beyond what must be
    connected is a setting with a flag (for example joining pour islands that
