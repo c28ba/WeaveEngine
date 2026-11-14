@@ -139,6 +139,8 @@ OPTION_SWITCHES = {
     "refine": ("--no-refine", "do not reroute each wire once more to shorten it (phase 4)"),
     "slide": ("--no-slide-vias", "do not move vias to where their traces run straighter"),
     "smooth": ("--no-smooth", "do not round sharp corners"),
+    "merge_ends": ("--no-merge-ends", "draw traces of one net that ride together into a pad each its own way there, not as one "
+                                      "(can leave a thin gap of bare board between them)"),
     "untangle": ("--no-untangle", "do not undo long detours by moving the wires in their way"),
     "taper": ("--no-taper", "draw a net narrowed to reach fine-pitch pins narrow all along, not tapered to the pins "
                             "(a wedge from the full width over the last stretch)"),
@@ -162,7 +164,7 @@ SETTING_FLAGS = {
     "global_selection": "--no-global-selection", "regret_order": "--no-regret-order", "lookahead": "--no-lookahead",
     "demand": "--no-demand", "ripup": "--no-ripup", "refine": "--no-refine", "candidates": "--candidates",
     "reroute_candidates": "--reroute-candidates", "max_ripup_rounds": "--max-rounds", "heuristic_weight": "--heuristic-weight",
-    "untangle": "--no-untangle", "narrow_to_reach": "--no-narrowing", "taper_to_pins": "--no-taper", "smooth_corners": "--no-smooth",
+    "untangle": "--no-untangle", "narrow_to_reach": "--no-narrowing", "taper_to_pins": "--no-taper", "smooth_corners": "--no-smooth", "merge_ends": "--no-merge-ends",
     "least_angle": "--least-angle", "use_vias": "--no-vias", "slide_vias": "--no-slide-vias", "fanout_to_planes": "--no-fanout",
     "pour_reliefs": "--change-reliefs", "pour_narrow_reliefs": "--narrow-reliefs", "join_bare_islands": "--join-pad-less-islands",
     "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_min_width": "--pour-min-width",
@@ -248,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("global_selection", "regret_order", "lookahead", "demand", "ripup", "refine"):
         effort.add_argument(OPTION_SWITCHES[name][0], dest="no_" + name, action="store_true", help=OPTION_SWITCHES[name][1])
 
-    for name in ("untangle", "taper", "smooth"):
+    for name in ("untangle", "taper", "smooth", "merge_ends"):
         shape.add_argument(OPTION_SWITCHES[name][0], dest="no_" + name, action="store_true", help=OPTION_SWITCHES[name][1])
     shape.add_argument("--no-narrowing", action="store_true",
                        help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
