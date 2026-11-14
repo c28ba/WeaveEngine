@@ -17,6 +17,7 @@ import shapely
 from shapely.geometry import LineString, Point
 
 from weaveengine.board import Board, Rules
+from weaveengine.geom.margin import edge as margin_edge
 
 TOL = 1e-3          # mm, as ``drc``
 WEDGE = 3.0        # length of a wedge, in the difference of the widths it spans (and at least a trace width)
@@ -73,7 +74,7 @@ def taper(board: Board, full: Rules, lines: dict, wire_net: dict, wire_layer: di
         return {}, {}
     width = {w: rules.drawn(net) for w, net in wire_net.items() if w in lines}  # as drawn now, updated as traces widen
     edge = rules.outline_inset - rules.base_width / 2.0
-    boundary = board.outline.boundary
+    boundary = margin_edge(board)  # (and the Margin drawings, if held as edge)
     near = {}
     for layer in {wire_layer[w] for w in todo}:
         copper = [(p.shape, p.net_id, rules.apart(p.clearance)) for p in board.pads_on(layer)]

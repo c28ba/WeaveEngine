@@ -411,8 +411,9 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
         if design.board.margin:
             design.warnings.append(
                 f"{len(design.board.margin)} drawings on the Margin layer: KiCad holds copper to the edge clearance from them, "
-                "but WeaveEngine does not, so DRC may report copper_edge_clearance there. If they are only notes, move them to a "
-                "User layer; if they mark a no-go area, draw a keepout zone over it in KiCad, which WeaveEngine routes around.")
+                "and so do the teardrops, rounded corners and vias to the planes here, but the traces and their vias only with "
+                "the drawings set to board edge (they may wall areas off), so DRC may report copper_edge_clearance where traces "
+                "cross them, and at a pad within that clearance and its trace. If they are only notes, move them to a User layer.")
         if taken:
             design.kicad = f"from {os.path.basename(os.path.splitext(path)[0])}.kicad_pcb/.kicad_pro: {taken}"
 

@@ -5,6 +5,7 @@ import shapely
 from shapely.geometry import LineString, Point, Polygon
 
 from weaveengine.board import Board
+from weaveengine.geom.margin import edge as margin_edge
 
 LENGTH = 1.0       # teardrop length beyond the pad edge, in pad half-widths
 WIDTH = 0.9        # teardrop width at the pad, as a fraction of the pad's width
@@ -157,6 +158,9 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
     tree_c = shapely.STRtree([c[0] for c in copper]) if copper else None
     tree_w = shapely.STRtree(lines) if lines else None
     edge = rules.outline_inset - rules.base_width / 2.0
+    # (and the Margin drawings, if held as edge: whole, the part over the pad too, since each of the
+    # tracks a teardrop is written as is checked whole; so none at a pad within the edge clearance of one)
+    boundary = margin_edge(board)
     out: dict[int, list] = {}
     for w, line in polylines.items():
         net = wire_net[w]
@@ -194,7 +198,7 @@ def teardrops(board: Board, polylines: dict[int, list[tuple[float, float]]], wir
             to keep its distance is what is added: the part over a pad is the
             pad's, which stands where it stands. (Tested whole, a via at the
             least clearance from a neighbour lost every teardrop on that side.)"""
-            if not shape.is_valid or not board.outline.contains(shape) or shape.distance(board.outline.boundary) < edge - 1e-6:
+            if not shape.is_valid or not board.outline.contains(shape) or shape.distance(boundary) < edge - 1e-6:
                 return False
             added = shape
             for pad in own:

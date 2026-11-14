@@ -41,6 +41,8 @@ DESCRIPTIONS = {
     "edge_clearance": ("Copper to board edge (mm)", "A DSN does not carry this rule", "Rules"),
     "margin": ("Safety margin (mm)", "Extra clearance routed with, so nothing sits exactly on a limit", "Rules"),
     "ignore_keepouts": ("Ignore keepout areas", "Drop the DSN's keepouts", "Rules"),
+    "margin_drawings": ("Drawings on the Margin layer", "KiCad's check holds copper to the edge clearance from them, as from "
+                        "the board edge", "Rules"),
     "show_outlines": ("Component outlines", "Draw the outline of every part", "View"),
     "show_names": ("Component names", "Draw every part's reference", "View"),
     "gpu_drawing": ("Draw with the graphics card", "Much faster on large boards. If this machine cannot do it, or it once failed, "
@@ -92,6 +94,11 @@ DESCRIPTIONS = {
 
 # A setting that is one of a few choices: name -> {value: label}
 CHOICES = {
+    "margin_drawings": {
+        "added": "Kept clear of by teardrops, rounded corners and the vias to the planes; traces and their vias may cross them",
+        "edge": "Board edge to everything: a pad within it is left only straight away from the drawing",
+        "off": "Not kept clear of (only by the vias to the planes)",
+    },
     "teardrop_style": {
         "tracks": "WeaveEngine's, as tracks in the SES",
         "zones": "WeaveEngine's, as KiCad teardrop zones in a routed copy of the board",
@@ -123,6 +130,8 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "via_drill": ("via size", "hole", "drill size", "hole size", "bore", "plated"),
     "edge_clearance": ("board edge", "outline", "border", "keepout", "edge cut", "edge cuts", "margin", "boundary"),
     "margin": ("slack", "tolerance", "safety", "buffer", "extra", "clearance", "headroom"),
+    "margin_drawings": ("margin", "edge", "board edge", "edge clearance", "outline", "border", "kicad", "copper_edge_clearance",
+                       "drawing", "shield", "keepout"),
     "ignore_keepouts": ("keep out", "keepout", "restricted", "forbidden", "zone", "no route", "dsn", "area"),
     "show_outlines": ("courtyard", "footprint", "body", "silkscreen", "display", "draw", "parts", "components"),
     "show_names": ("reference", "designator", "refdes", "labels", "text", "display", "parts", "components"),
@@ -225,6 +234,7 @@ class Settings:
     edge_clearance: float = 0.0
     margin: float = 0.01
     ignore_keepouts: bool = False
+    margin_drawings: str = "added"  # one of CHOICES["margin_drawings"]
     slide_vias: bool = True
     untangle: bool = True
     narrow_to_reach: bool = True
@@ -324,6 +334,7 @@ class Settings:
             from weaveengine.io.dsn import walled_note
             notes.append(walled_note(design.walled))
         board.pour_override = self.pour_min_width
+        board.margin_edge = self.margin_drawings
         if self.pour_min_width > 0:
             notes.append(f"pour minimum width {self.pour_min_width:g} mm, set here (the zones' own are not used)")
         if self.edge_clearance > 0:

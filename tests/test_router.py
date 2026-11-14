@@ -1483,3 +1483,75 @@ def test_a_via_that_joins_one_layer_is_not_drawn():
     assert [p.pad_id for p in router._drawn(ctx, board, lines, [], set())[3]] == [11]
     board.pours = [(1, 1, board.outline)]
     assert [p.pad_id for p in router._drawn(ctx, board, lines, [], set())[3]] == [10, 11]
+
+
+def _margin_board(mode: str = "edge") -> Board:
+    """A Margin drawing across the board (y = 5), with pads just inside its edge
+    clearance (A, C, D: their copper 0.1 mm off it) and a net (E-F) across it."""
+    board = Board.rectangle(20, 10, Rules(trace_width=0.2, clearance=0.2, edge_clearance=0.5), layers=["F.Cu", "B.Cu"])
+    top = frozenset({0})
+    board.pads = [Pad.rect(0, 5, 4.6, 0.6, 0.6, net_id=1, name="A", layers=top), Pad.rect(1, 5, 1.5, 0.6, 0.6, net_id=1, name="B", layers=top),
+                  Pad.rect(2, 10, 4.6, 0.6, 0.6, net_id=2, name="C", layers=top), Pad.rect(3, 15, 4.6, 0.6, 0.6, net_id=2, name="D", layers=top),
+                  Pad.rect(4, 8, 8, 0.6, 0.6, net_id=3, name="E", layers=top), Pad.rect(5, 8, 2, 0.6, 0.6, net_id=3, name="F", layers=top)]
+    board.margin = [LineString([(2, 5), (18, 5)])]
+    board.margin_edge = mode
+    return board
+
+
+def _ends_in_pads(result) -> bool:
+    pads = {p.pad_id: p for p in result.board.pads}
+    return all(pads[result.connections[w].src].shape.contains(Point(pts[0])) and pads[result.connections[w].dst].shape.contains(Point(pts[-1]))
+               for w, pts in result.polylines.items())  # (KiCad joins a track to the pad its end is in)
+
+
+def test_margin_drawings_are_board_edge_and_a_pad_within_is_left_away_from_them():
+    """KiCad holds copper to the edge clearance from a Margin drawing. Held as
+    edge, traces keep it (E-F goes round the drawing's end, not across it), and
+    a pad within it is left straight away from the drawing, the trace stopping
+    inside the pad where it is clear: so no trace comes nearer, and C-D does not
+    run along it."""
+    board = _margin_board()
+    result = route_board(board, options=Options(vias=False))
+    assert result.unrouted == [] and result.violations == []
+    drawing, need = board.margin[0], 0.5 + 0.1
+    for w, pts in result.polylines.items():
+        assert LineString(pts).distance(drawing) >= need - 1.1e-3, w
+    assert _ends_in_pads(result) and result.stats["margin_ends"] == result.stats["margin_trimmed"] == 3   # (A, C and D)
+    assert all(Polygon(poly[:5]).distance(drawing) >= 0.5 - 1e-6 for polys in result.teardrops.values() for poly in polys)
+
+
+def test_margin_drawings_kept_clear_of_by_added_copper_only():
+    """Held as edge by what is added (the default): traces may cross the drawing
+    and run along it (E-F across, C-D along), but no teardrop comes within the
+    edge clearance, and a trace leaving a pad within it away from the drawing
+    stops inside the pad where it is clear (A-B). Not held: a teardrop at A."""
+    board = _margin_board("added")
+    result = route_board(board, options=Options(vias=False))
+    assert result.unrouted == [] and result.violations == []
+    drawing, need = board.margin[0], 0.5 + 0.1
+    near = {result.wire_net[w] for w, pts in result.polylines.items() if LineString(pts).distance(drawing) < need - 1.1e-3}
+    assert near == {2, 3}
+    assert _ends_in_pads(result) and result.stats["margin_ends"] == 3 and result.stats["margin_trimmed"] >= 1
+    assert all(Polygon(poly[:5]).distance(drawing) >= 0.5 - 1e-6 for polys in result.teardrops.values() for poly in polys)
+    off = route_board(_margin_board("off"), options=Options(vias=False))
+    assert any(Polygon(poly[:5]).distance(drawing) < 0.5 for polys in off.teardrops.values() for poly in polys)
+    assert "margin_ends" not in off.stats or off.stats["margin_ends"] == 0
+
+
+def test_a_pad_within_a_margin_drawing_has_a_way_out():
+    """A drawing through a pad's anchor: it is left straight away from the
+    drawing, either way. A pad whose way out other copper shuts (a pin of a part
+    that lies away from the drawing) has room all round instead."""
+    from weaveengine.geom import margin
+    board = _margin_board()
+    top = frozenset({0})
+    board.pads += [Pad.rect(6, 12, 5, 0.4, 0.4, net_id=4, name="G", layers=top),
+                   Pad.rect(7, 16.5, 4.6, 0.6, 0.6, net_id=5, name="H", layers=top), Pad.rect(8, 16.5, 3.6, 0.6, 0.6, net_id=6, name="J", layers=top)]
+    ways = margin.ways_out(board, 0)
+    assert ways.contains(Point(12, 3.6)) and ways.contains(Point(12, 6.4)) and not ways.contains(Point(12.6, 5.0))
+    assert ways.contains(Point(17.3, 4.6)) and not ways.contains(Point(17.6, 4.6))   # (H: room all round, J below it)
+    assert margin.ways_out(board, 1) is None   # (no pad on that layer)
+    keep = margin.keep_out(board, 0)
+    assert keep.contains(Point(13, 5.3)) and not keep.contains(Point(5, 4.45))
+    board.margin_edge = "added"   # (the traces not held: no way out needed)
+    assert margin.keep_out(board, 0) is None and margin.lines(board) is not None
