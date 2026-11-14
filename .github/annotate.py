@@ -11,4 +11,11 @@ def post(title: str, body: str) -> None:
 
 for name, body in re.findall(r"_{5,} (\S+) _{5,}\n(.*?)(?=\n_{5,} |\n={5,})", text, re.S)[:8]:
     post(name, body)
+# A crash (segfault) ends the run without a failure section: the fault
+# handler's stack names the test, above the pytest frames the tail shows.
+crash = text.find("Fatal Python error")
+if crash >= 0:
+    lines = text[crash:].splitlines()
+    own = [line for line in lines if "/tests/" in line or "\\tests\\" in line or "weaveengine" in line]
+    post("crash", "\n".join(lines[:6] + ["..."] + own[:40]))
 post("end of the test output", "\n".join(text.splitlines()[-40:]))
