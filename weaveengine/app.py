@@ -807,6 +807,10 @@ class SettingsDialog(QDialog):
         return out
 
 
+def _check_accel(into: list) -> None:
+    into.append(accel.check())  # never raises
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str | None = None):
         super().__init__()
@@ -827,7 +831,7 @@ class MainWindow(QMainWindow):
         self.previous: dict[int, set] = {}
         self.shown_variant = None
         self.snapshots_seen = 0
-        self.accel_status = None
+        self._accel: list = []  # the check's outcome, once in (``accel_status``)
 
         self.view = BoardView()
         self.setCentralWidget(self.view)
@@ -843,7 +847,10 @@ class MainWindow(QMainWindow):
         self.banner.setText("Checking the compiled kernels…")
         self.banner.setStyleSheet("background: #444; color: white; padding: 6px;")
         self.banner.show()
-        threading.Thread(target=self._check_accel, daemon=True).start()
+        # (The thread holds only the list, never the window: a window whose last
+        # reference died with the thread would be destroyed off the GUI thread,
+        # and Qt aborts the whole program then.)
+        threading.Thread(target=_check_accel, args=(self._accel,), daemon=True).start()
 
     # -- construction -----------------------------------------------------------
     def _build_actions(self) -> None:
@@ -1070,8 +1077,10 @@ class MainWindow(QMainWindow):
         self.selection_label.setText(f"<b>{info['kind'].capitalize()}</b><table>{rows}</table>")
 
     # -- compiled kernels -----------------------------------------------------
-    def _check_accel(self) -> None:
-        self.accel_status = accel.check()  # never raises
+    @property
+    def accel_status(self) -> "accel.Status | None":
+        """The compiled-kernel check's outcome, or None while it runs."""
+        return self._accel[0] if self._accel else None
 
     def _show_accel(self) -> None:
         status = self.accel_status
