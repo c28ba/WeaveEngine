@@ -189,8 +189,12 @@ user's board routed with its KiCad files beside the DSN; not yet looked into):
   the finishing step raise in its worker and the error go unreported (so the
   window waits for a result that never comes), or is it only very slow on
   this board (pour joins and spoke checks took minutes on dense boards)?
-  Does it happen on Windows with the same board and the same settings
-  (settings.json beside the app on the Mac may be an older file)? Steps:
+  Does it happen on Windows with the same board and the same settings?
+  The user's settings.json on the Mac is current (every key, all defaults:
+  margin_drawings added, pour_spokes on, join_bare_islands off,
+  least_angle 90, teardrops as tracks, workers and portfolio automatic),
+  so an old settings file is not the cause; it was left about 10 minutes
+  in that state. Steps:
   route the board in the app on Windows with `--self-test`-like logging;
   route it from the CLI with the same settings and time each finishing step;
   check that every error in the finishing step reaches the window as an
