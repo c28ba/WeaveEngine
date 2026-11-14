@@ -178,6 +178,24 @@ To do, in order:
    dialog and `--help`, every setting described in plain words, `--layers` and
    `--layer-cost` now settings too; defaults and routing unchanged (SES byte-identical).
 
+Fix first (seen by the user 2026-11-14, macOS app built from main f2db5c8, a
+user's board routed with its KiCad files beside the DSN; not yet looked into):
+- [ ] The app stops before the final drawing. One status text says
+  "Finishing...", another says "Finished"; the timer stops; no more routing
+  happens; the top bar's buttons stay greyed out as while routing. The view
+  never shows the final pass: no teardrops, no holes in the vias, and the
+  other finishing (acute-angle blunting, and presumably the pour joins and
+  the rest of the realise step) does not appear. Questions to answer: does
+  the finishing step raise in its worker and the error go unreported (so the
+  window waits for a result that never comes), or is it only very slow on
+  this board (pour joins and spoke checks took minutes on dense boards)?
+  Does it happen on Windows with the same board and the same settings
+  (settings.json beside the app on the Mac may be an older file)? Steps:
+  route the board in the app on Windows with `--self-test`-like logging;
+  route it from the CLI with the same settings and time each finishing step;
+  check that every error in the finishing step reaches the window as an
+  error, and that the buttons come back whatever happens.
+
 
 Back burner: bugs seen once that could not be found again. Each waits for a
 new example (a board and where on it); then it moves up to be fixed.
