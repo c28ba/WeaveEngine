@@ -624,7 +624,8 @@ class SettingsDialog(QDialog):
                 scroll.setWidget(page)
                 scroll.setWidgetResizable(True)
                 scroll.setFrameShape(QFrame.NoFrame)
-                self.groups.append((part, self.tabs[part].addTab(scroll, topic)))
+                # (a lone "&" in a tab title marks a shortcut key and is not shown)
+                self.groups.append((part, self.tabs[part].addTab(scroll, topic.replace("&", "&&"))))
         for name, (label, description, group) in DESCRIPTIONS.items():
             form = forms[group]
             first = form.rowCount()
@@ -665,8 +666,8 @@ class SettingsDialog(QDialog):
         if detected and any(value is None for value, _ in detected.values()):
             tabs = self.tabs["Routing"]
             for i in range(tabs.count()):
-                if tabs.tabText(i) == "Rules & nets":
-                    tabs.setTabText(i, "Rules & nets ⚠")
+                if tabs.tabText(i) == "Rules && nets":
+                    tabs.setTabText(i, "Rules && nets ⚠")
         # (what the tabs say when nothing is searched for)
         self.titles = [(self.tabs[part].tabText(i), part) for part, i in self.groups]
         self.load(settings)

@@ -244,16 +244,16 @@ def test_settings_has_a_pours_tab_and_search_filters_rows():
     from weaveengine.settings import DESCRIPTIONS, SECTIONS
     assert [dialog.parts.tabText(i) for i in range(dialog.parts.count())] == ["App", "Routing"]
     for part, topics in SECTIONS.items():
-        assert [dialog.tabs[part].tabText(i) for i in range(dialog.tabs[part].count())] == list(topics)
+        assert [dialog.tabs[part].tabText(i) for i in range(dialog.tabs[part].count())] == [topic.replace("&", "&&") for topic in topics]
     assert set(dialog.rows) == set(DESCRIPTIONS)  # every setting has a row, in one topic only
     form, first, end = dialog.rows["pour_skeletons"]
     other, ofirst, _ = dialog.rows["clearance"]
     dialog.search.setText("KEEP POURS")
     assert form.isRowVisible(first) and not other.isRowVisible(ofirst)
     assert dialog.parts.tabText(1) == "Routing (1)" and dialog.parts.currentIndex() == 1
-    assert dialog.tabs["Routing"].tabText(dialog.tabs["Routing"].currentIndex()) == "Pours & planes (1)"
+    assert dialog.tabs["Routing"].tabText(dialog.tabs["Routing"].currentIndex()) == "Pours && planes (1)"
     dialog.search.setText("")
-    assert other.isRowVisible(ofirst) and "Pours & planes" in [dialog.tabs["Routing"].tabText(i) for i in range(dialog.tabs["Routing"].count())]
+    assert other.isRowVisible(ofirst) and "Pours && planes" in [dialog.tabs["Routing"].tabText(i) for i in range(dialog.tabs["Routing"].count())]
 
 
 def test_the_side_panel_can_shrink_to_a_thin_strip(tmp_path):
