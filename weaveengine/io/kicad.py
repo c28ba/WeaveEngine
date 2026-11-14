@@ -77,6 +77,8 @@ class KicadBoard:
     courtyards: dict = field(default_factory=dict)                    # footprint reference -> its courtyard
     thickness: list[tuple] = field(default_factory=list)              # (net name, canonical copper layer, outline, min_thickness) of each copper zone
     zones: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, outline, ``Zone``) of each copper zone
+    fills: list[tuple] = field(default_factory=list)                  # (net name, canonical copper layer, shape) of each zone's fill as saved
+    no_pour: list[tuple] = field(default_factory=list)                # (canonical copper layer, shape) of each rule area that keeps pours out
     areas: dict = field(default_factory=dict)                         # name -> outline of a named zone or rule area
 
 
@@ -88,7 +90,7 @@ def project_rules(path: str) -> dict[str, float]:
     return {"edge_clearance": get("min_copper_edge_clearance"), "hole_clearance": get("min_hole_clearance"),
             "min_clearance": get("min_clearance"), "min_track_width": get("min_track_width"),
             "via_annulus": get("min_via_annular_width"), "via_diameter": get("min_via_diameter"),
-            "min_drill": get("min_through_hole_diameter")}
+            "min_drill": get("min_through_hole_diameter"), "min_spokes": float(rules.get("min_resolved_spokes", 2))}
 
 
 def read_kicad(dsn_path: str, notes: list[str] | None = None) -> KicadBoard | None:
@@ -149,6 +151,17 @@ def read_kicad(dsn_path: str, notes: list[str] | None = None) -> KicadBoard | No
         elif kind.startswith("gr_"):
             _drawing(item, _place(0.0, 0.0, 0.0), out, kind)
     return out
+
+
+def _fills(item, out: KicadBoard) -> None:
+    """A copper zone's fill as the board was saved (``filled_polygon``: one outline each, holes cut in)."""
+    net = _child(item, "net_name") or _child(item, "net")
+    name = net[1] if net and len(net) > 1 and isinstance(net[1], str) and not _is_number(net[1]) else ""
+    for polygon in _children(item, "filled_polygon"):
+        layer = _child(polygon, "layer")
+        pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+        if layer and len(layer) > 1 and str(layer[1]).endswith(".Cu") and len(pts) >= 3:
+            out.fills.append((name, layer[1], Polygon(pts).buffer(0)))
 
 
 def _thickness(item, out: KicadBoard) -> None:
@@ -281,6 +294,15 @@ def _children(node, name):
 
 def _numbers(node, n: int):
     return [float(v) for v in node[1:1 + n]] if node else []
+
+
+def _copper(layer: str) -> list[str]:
+    """The copper layers a rule area's layer names: itself, or each of "*.Cu", "F&B.Cu"."""
+    if layer == "*.Cu":
+        return ["F.Cu", "B.Cu"] + [f"In{i}.Cu" for i in range(1, 31)]
+    if layer == "F&B.Cu":
+        return ["F.Cu", "B.Cu"]
+    return [layer] if layer.endswith(".Cu") else []
 
 
 def _layers(item) -> list[str]:
@@ -580,9 +602,16 @@ def _rule_area(item, out: KicadBoard) -> None:
     keepout = _child(item, "keepout")
     if keepout is None:
         _zone(item, out)
+        _fills(item, out)
         _thickness(item, out)
         _settings(item, out)
         return  # a copper zone, not a rule area
+    if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "copperpour")):
+        for polygon in _children(item, "polygon"):  # (no zone fills there: ``pours.fills``)
+            pts = [(float(xy[1]), -float(xy[2])) for xy in _children(_child(polygon, "pts"), "xy")]
+            if len(pts) >= 3:
+                for layer in _layers(item):
+                    out.no_pour += [(name, Polygon(pts).buffer(0)) for name in _copper(layer)]
     if any(len(rule) > 1 and rule[1] == "not_allowed" for rule in _children(keepout, "tracks")):
         return  # it does keep traces out
     for polygon in _children(item, "polygon"):
@@ -613,6 +642,7 @@ def apply(design, kicad: KicadBoard) -> str:
     if (rule := next((x for x in reversed(wide) if "min" in x.limits.get("clearance", ())), None)) \
             and rule.limits["clearance"]["min"] > r.get("min_clearance", 0.0):
         r["min_clearance"] = rule.limits["clearance"]["min"]
+    board.min_spokes = int(r.get("min_spokes", board.min_spokes))
     if r.get("edge_clearance", 0.0) > 0:  # (what KiCad's fill keeps from the edge, whatever the traces are asked to)
         board.pour_edge = r["edge_clearance"]
     if r.get("edge_clearance", 0.0) > kicad.rules.get("edge_clearance", 0.0) + 1e-9:
@@ -786,20 +816,22 @@ def apply(design, kicad: KicadBoard) -> str:
     if unread or kicad.skipped:
         names = sorted(unread) + [n for n in kicad.skipped if n.split(" (")[0] not in unread]
         said.append(f"skipped custom rules {', '.join(names)}")
-    # The least width of each pour's fill is its zone's own (``pours.estimate``).
+    # The least width of each pour's fill is its zone's own (``pours.estimate``); and of the other zones, which fill too.
+    same = lambda a, b: all(abs(u - v) < 0.1 for u, v in zip(a.bounds, b.bounds)) and a.symmetric_difference(b).area < 0.01 * b.area
     least = {}
-    for k, (net, at, shape) in enumerate(board.pours):
+    for k, (net, at, shape) in enumerate(board.pours + board.areas):
         for name, layer, outline, thick in kicad.thickness:
-            if on(layer) == at and design.net_ids.get(name) == net and outline.symmetric_difference(shape).area < 0.01 * shape.area:
+            if on(layer) == at and design.net_ids.get(name) == net and same(outline, shape):
                 board.pour_min[(net, at)] = max(board.pour_min.get((net, at), 0.0), thick)
-                least[thick] = least.get(thick, 0) + 1
+                if k < len(board.pours):
+                    least[thick] = least.get(thick, 0) + 1
     if least:
         said.append("pour minimum width " + " and ".join(f"{t:g} mm" for t in sorted(least)) + " from the zones")
     # Each pour's clearance, thermal reliefs and priority are its zone's (``pours.estimate``, ``plan.skeleton``).
     # (Two zones of a net on a layer: the larger clearance, gap and priority, the narrower spoke.)
-    for k, (net, at, shape) in enumerate(board.pours):
+    for k, (net, at, shape) in enumerate(board.pours + board.areas):
         for name, layer, outline, zone in kicad.zones:
-            if on(layer) == at and design.net_ids.get(name) == net and outline.symmetric_difference(shape).area < 0.01 * shape.area:
+            if on(layer) == at and design.net_ids.get(name) == net and same(outline, shape):
                 had = board.pour_zone.get((net, at))
                 if had is not None:
                     most = lambda a, b: b if a is None else a if b is None else max(a, b)
@@ -808,8 +840,14 @@ def apply(design, kicad: KicadBoard) -> str:
                     zone.spoke = had.spoke if zone.spoke is None else zone.spoke if had.spoke is None else min(had.spoke, zone.spoke)
                     zone.priority = max(had.priority, zone.priority)
                 board.pour_zone[(net, at)] = zone
-    if any(z.clearance and z.clearance > rules.clearance - rules.margin + 1e-9 for z in board.pour_zone.values()):
+    if any(z.clearance and z.clearance > rules.clearance - rules.margin + 1e-9 for key, z in board.pour_zone.items()
+           if key in {(net, at) for net, at, _ in board.pours}):
         said.append("the zones' own clearances")
+    # Where rule areas keep pours out (``Board.no_pour``).
+    board.no_pour = [(on(layer), shape) for layer, shape in kicad.no_pour if on(layer) is not None and not shape.is_empty]
+    # The zones' fills as saved, from before the routing (``Board.saved_fills``).
+    board.saved_fills = [(design.net_ids[name], on(layer), shape) for name, layer, shape in kicad.fills
+                         if name in design.net_ids and on(layer) is not None and not shape.is_empty]
     # A pour whose fill has rounded corners has no copper in the corners of its outline (``plan.fanout``).
     for k, (net, at, shape) in enumerate(board.pours):
         for name, layer, outline, radius, chamfer in kicad.rounded:

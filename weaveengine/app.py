@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDia
                                QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from weaveengine import HOME, __version__, accel, safe_output
-from weaveengine.cli import narrowed_note, plane_left_note, unreachable_note
+from weaveengine.cli import joins_note, narrowed_note, plane_left_note, reliefs_note, unreachable_note
 from weaveengine.io.check import measure
 from weaveengine.io.dsn import read_dsn
 from weaveengine.io.kicad_board import routed_board_path, source_board, write_routed_board
@@ -1296,6 +1296,10 @@ class MainWindow(QMainWindow):
                  f"length ratio {stats['length_ratio']:.3f}, {event['seconds']:.1f} s")
         if stats.get("fanout"):
             self.say(f"{stats['fanout']} vias placed to join pads to their net's plane")
+        if stats.get("joins"):
+            self.say(joins_note(stats["joins"]))
+        if stats.get("reliefs"):
+            self.say(reliefs_note(stats["reliefs"], result.board))
         if stats.get("plane_left"):
             self.say(plane_left_note(stats["plane_left"], result.board))
         if stats.get("narrowed"):
@@ -1347,15 +1351,18 @@ class MainWindow(QMainWindow):
             style = self.settings.teardrop_style
             write_ses(self.routed_design, self.result, path, teardrops=style == "tracks", arcs=self.settings.arcs_in_ses)
             m = measure(self.routed_design, path, *self.want)
-            board = self.settings.routed_board or (routed_board_path(path) if style == "zones" else "")
+            board = self.settings.routed_board or (routed_board_path(path) if style == "zones" or self.result.stats.get("reliefs") else "")
             source = source_board(self.dsn_path)
             if board and source is None:
                 self.say(f"No routed copy of the board written: there is no {os.path.splitext(os.path.basename(self.dsn_path))[0]}"
-                         ".kicad_pcb beside the DSN" + (" (and the teardrops, as zones, are in that copy only)" if style == "zones" else ""))
+                         ".kicad_pcb beside the DSN" + (" (and the teardrops, as zones, are in that copy only)" if style == "zones" else "")
+                         + (" (and the thermal reliefs changed are in that copy only)" if self.result.stats.get("reliefs") else ""))
             elif board:
                 counts = write_routed_board(self.routed_design, self.result, source, board, style, self.settings.arcs_in_ses)
                 self.say(f"Wrote {board}: the board with this routing in it ({counts['tracks']} tracks, {counts['arcs']} arcs, "
-                         f"{counts['vias']} vias, {counts['zones']} teardrop zones); fill its zones in KiCad (B) before checking it")
+                         f"{counts['vias']} vias, {counts['zones']} teardrop zones"
+                         + (f", {counts['reliefs']} pads' thermal reliefs" if counts["reliefs"] else "")
+                         + "); fill its zones in KiCad (B) before checking it")
         except (OSError, ValueError) as error:
             self.say(f"Could not write {path}: {error}")
             if self.interactive:

@@ -401,6 +401,8 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             board.plane_nets.add(net_id)
             if layer in index:  # (on a layer left out of the routing too: ``plan.fanout`` takes vias down to it)
                 board.pours.append((net_id, index[layer], shape))
+        elif layer in index:  # (filled all the same: ``pours.fills``)
+            board.areas.append((net_id, index[layer], shape))
 
     if kicad is not None:
         taken = apply_kicad(design, kicad)
