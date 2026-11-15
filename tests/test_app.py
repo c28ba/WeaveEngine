@@ -356,3 +356,23 @@ def test_a_failure_while_showing_the_result_is_said_and_the_buttons_come_back(tm
     assert "ERROR while showing the result: KeyError: 42" in log and "Traceback" in log
     assert window.act_open.isEnabled() and window.act_settings.isEnabled() and not window.act_stop.isEnabled()
     assert window.phase_label.text().startswith("failed while showing the result")
+
+
+def test_a_trace_that_ends_where_no_via_is_drawn_is_shown(tmp_path):
+    """A wire may end at a via that is not drawn (all its traces came out on one layer; they meet at a point,
+    ``router._drawn``): it is in no pad list, and the result is drawn all the same (it was a KeyError, seen on macOS)."""
+    from PySide6.QtWidgets import QApplication
+    from tests.conftest import demo_board
+    from weaveengine.app import MainWindow
+    from weaveengine.router import route_board
+    app = QApplication.instance() or QApplication([])
+    result = route_board(demo_board(), workers=1).summary()
+    w = next(iter(result.wire_pads))
+    result.wire_pads[w] = (result.wire_pads[w][0], 99999)     # (a via planned there, and not drawn)
+    window = MainWindow(str(tmp_path / "settings.json"))
+    window.interactive = False
+    window.view.set_board(result.board)
+    window._show(result)
+    assert any(info["to"].startswith("a junction") for info in window.view.wire_info.values())
+    while window.accel_status is None:  # (the window's check of the kernels, before it goes)
+        app.processEvents()

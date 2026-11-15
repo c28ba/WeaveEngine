@@ -1436,9 +1436,13 @@ class MainWindow(QMainWindow):
         wires = [(result.wire_layer[w], result.wire_net[w], pts) + ((result.widths[w],) if w in result.widths else ())
                  for w, pts in result.polylines.items()]
         centre = {p.pad_id: p.centre for p in result.board.pads}
-        open_pairs = [(centre[c.src], centre[c.dst]) for c in result.connections.values()]
+        # (A wire may end where a via was planned that is not drawn: all its traces came out on one layer, and they meet at a
+        # point there, ``router._drawn``. It is in no pad list.)
+        open_pairs = [(centre[c.src], centre[c.dst]) for c in result.connections.values() if c.src in centre and c.dst in centre]
         pad_name = {p.pad_id: (p.name or str(p.pad_id)) for p in result.board.pads}
-        self.view.wire_info = {i: {"from": pad_name[result.wire_pads[w][0]], "to": pad_name[result.wire_pads[w][1]]}
+        def name(pad: int) -> str:
+            return pad_name.get(pad, "a junction of traces (no via)")
+        self.view.wire_info = {i: {"from": name(result.wire_pads[w][0]), "to": name(result.wire_pads[w][1])}
                                for i, w in enumerate(result.polylines) if w in result.wire_pads}
         self.view.widths = result.stats.get("narrowed", {})
         self.view.show_routing(wires, open_pairs, result.vias, teardrops, result.violations)
