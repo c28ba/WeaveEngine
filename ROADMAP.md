@@ -186,6 +186,26 @@ To do, in order:
    dialog and `--help`, every setting described in plain words, `--layers` and
    `--layer-cost` now settings too; defaults and routing unchanged (SES byte-identical).
 
+Next (the user, 2026-11-15): pours that pass KiCad's DRC.
+- [ ] On most boards the pours are where KiCad's DRC finds fault, while it
+  reports nothing unconnected: "thermal relief connection to zone
+  incomplete" (a pad reached by fewer spokes than the zone's minimum spoke
+  count, 2 by default), too few spokes, and connection to an isolated
+  island. Seen again on a new board of the user's (2026-11-15): pins on
+  pieces of a pour that the routing cut off, joined back by stitching vias.
+  The user would rather the pours were kept whole than joined by many
+  stitches. Why: "Keep pours whole" (11.3) always gives way to a trace, so
+  on a dense board the pour is cut, and the pieces are joined after
+  (`plan.fanout`), often by a stitch; a pad left in a sliver of fill has
+  room for one spoke, and the spoke pass (`pour_spokes`) misses some.
+  Plan: (1) route boards with pours and run KiCad's DRC (the harness), and
+  find for each such fault why the spoke pass or the joins left it;
+  (2) a setting for how traces and pours share room: traces first (as now),
+  balanced (traces go further round to keep a pour whole, never left open),
+  and perhaps pours first (a trace that can only cut a pour is left open and
+  said); measured on the sweep boards by KiCad's thermal and island counts.
+  Changing a pad's relief stays off (the user: it breaks the zone's rules).
+
 Fix first (seen by the user 2026-11-14, macOS app built from main f2db5c8, a
 user's board routed with its KiCad files beside the DSN; not yet looked into):
 - [ ] The app stops before the final drawing. One status text says
