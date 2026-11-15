@@ -14,7 +14,7 @@ from weaveengine.pours import note as pour_note, of_result as estimate_pours, un
 from weaveengine.plan.context import Options
 from weaveengine.progress import ProgressBar
 from weaveengine.router import route_board
-from weaveengine.settings import SECTIONS, layer_costs, skip_nets
+from weaveengine.settings import SECTIONS, direct_pairs, layer_costs, skip_nets
 from weaveengine.topo import planar_map
 from weaveengine.topo.costs import CostParams
 from weaveengine.viz.svg import export_result
@@ -156,7 +156,7 @@ COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rou
 # The flag of each setting that has one (all of Routing, and the App's workers); the rest are display settings of the app.
 SETTING_FLAGS = {
     "workers": "--workers", "trace_width": "--trace-width", "clearance": "--clearance", "via_diameter": "--via", "via_drill": "--via",
-    "margin": "--margin", "ignore_keepouts": "--ignore-keepouts", "skip_nets": "--skip-net", "layers": "--layers",
+    "margin": "--margin", "ignore_keepouts": "--ignore-keepouts", "skip_nets": "--skip-net", "direct_pairs": "--connect", "layers": "--layers",
     "layer_cost": "--layer-cost", "edge_clearance": "--edge-clearance", "margin_drawings": "--margin-drawings",
     "portfolio": "--portfolio", "seed": "--seed", "time_limit": "--time-limit", "drc_rounds": "--drc-rounds",
     "global_selection": "--no-global-selection", "regret_order": "--no-regret-order", "lookahead": "--no-lookahead",
@@ -206,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
                             "despite rounding (default 0.01)")
     rules.add_argument("--ignore-keepouts", action="store_true",
                        help="drop the keepout areas of the DSN, so traces and vias may cross them (breaks the design's own rules)")
+    rules.add_argument("--connect", action="append", metavar="PAD:PAD", default=[],
+                       help="two pads of one net to join by a trace of their own, by the pads' names (C5-1:U2-7: a decoupling "
+                            "capacitor to the pin it is for); otherwise a net is joined in the shortest tree over its pads, on a "
+                            "net with a pour too (repeatable, or several separated by commas)")
     rules.add_argument("--skip-net", action="append", metavar="NAME", default=[],
                        help="a net not to route, as one with a pour is, and not counted as open (repeatable; * and ? match any "
                             "text: GND*)")
@@ -373,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
     note = skip_nets(design, args.skip_net)
     if note:
         print(note)
+    for line in direct_pairs(design, [item for arg in args.connect for item in arg.split(",")]):
+        print(line)
     try:
         layer_cost = layer_costs(design, args.layer_cost or ())
     except ValueError as error:

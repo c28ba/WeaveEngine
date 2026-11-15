@@ -79,9 +79,9 @@ def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict |
     pmap, state = layer.pmap, layer.state
     first = None
     if plain is not None:  # the search ``find`` starts with: it may go through pads of its net, which a candidate does not
-        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id, reach=True, through=True)
+        first, _ = plain[li] = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.search_net, reach=True, through=not conn.direct)
     if first is None or first.lead:
-        first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.net_id)
+        first = route(pmap, state, conn.src, conn.dst, params, weight=conn.weight, net=conn.search_net)
     if first is None:
         return []
     found = {first.gates: first}
@@ -94,7 +94,7 @@ def _layer_routes(ctx: Context, conn: Connection, li: int, k: int, plain: dict |
         bump = params.alpha * max(first.length * pmap.length_cost, 1e-6) / len(last.steps)  # (at the layer's price, as the costs are)
         for g in last.gates:
             penalty[g] = penalty.get(g, 0.0) + bump
-        r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight, net=conn.net_id)
+        r = route(pmap, state, conn.src, conn.dst, params, penalty=penalty, weight=conn.weight, net=conn.search_net)
         if r is None:
             break
         r.cost -= sum(penalty.get(g, 0.0) for g in r.gates)
@@ -174,7 +174,7 @@ def plain_route(ctx: Context, conn: Connection, **kwargs) -> Route | None:
     """Cheapest in-search route on one layer, over the usable layers (searched at the same time)."""
     def one(li: int) -> Route | None:
         layer = ctx.layers[li]
-        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, net=conn.net_id, **kwargs)
+        return route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, weight=conn.weight, net=conn.search_net, **kwargs)
 
     if _use_threads(ctx, conn):
         found = list(_threads().map(one, conn.layers))
@@ -227,7 +227,7 @@ def replay(ctx: Context, conn: Connection, path: Path) -> Path | None:
     r = path.routes[0]
     layer = ctx.layers[r.layer]
     again = route(layer.pmap, layer.state, conn.src, conn.dst, ctx.params, mode="corridor",
-                  corridor=set(r.gates), weight=conn.weight, net=conn.net_id)
+                  corridor=set(r.gates), weight=conn.weight, net=conn.search_net)
     if again is None:
         return None
     again.layer = r.layer

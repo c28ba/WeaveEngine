@@ -197,6 +197,7 @@ class Board:
                                                        # layer indices after the routed layers'
     plane_nets: set[int] = field(default_factory=set)  # nets connected by a copper plane: not routed as traces
     skip_nets: set[int] = field(default_factory=set)   # nets left unrouted by the user's choice (a pour, if any, is still fanned out to)
+    direct: list = field(default_factory=list)         # (pad id, pad id) pairs of one net the user wants joined by a trace of their own
     pours: list = field(default_factory=list)          # (net, layer index, outline) of each of those planes (``plan.fanout``)
     areas: list = field(default_factory=list)          # (net, layer index, outline) of the other zones (teardrops, a copper area
                                                        # on one pad): KiCad fills them too, and they take room from the pours

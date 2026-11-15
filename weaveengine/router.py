@@ -588,7 +588,8 @@ def _redundant(ctx: Context, lines: dict, vias: set[int]) -> set[int]:
             return p
 
         kept = []
-        for w in sorted(wires, key=lambda w: (polyline_length(lines[w]), w)):
+        # (a direct connection first: it is what the user asked for, never redundant; ``Connection.direct``)
+        for w in sorted(wires, key=lambda w: (not ctx.conns[w].direct, polyline_length(lines[w]), w)):
             a, b = root(ctx.conns[w].src), root(ctx.conns[w].dst)
             if a == b:
                 out.add(w)
