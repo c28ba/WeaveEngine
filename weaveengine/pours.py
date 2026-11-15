@@ -248,8 +248,18 @@ def refill(board, fill_of: dict, nets: set, wires: list, near, reach: float) -> 
     inner = near.buffer(reach, join_style="mitre")
     outer = inner.buffer(REFILL, join_style="mitre")
     local, _ = fills(board, {}, {}, {}, nets=nets, wires=wires, window=outer)
-    return {k: Fill(*(shapely.union_all([was.difference(inner), now.intersection(inner)]) for was, now in zip(fill_of[k], local[k])))
-            for k in local}
+    out = {}
+    for k in local:
+        copper, zone = (shapely.union_all([was.difference(inner), now.intersection(inner)]) for was, now in zip(fill_of[k], local[k]))
+        out[k] = Fill(copper, _polygons(zone))  # (the zone's fill as polygons only: the pieces joined can leave a line or point)
+    return out
+
+
+def _polygons(shape):
+    """The polygons of ``shape``, as one (Multi)Polygon."""
+    if shape.geom_type in ("Polygon", "MultiPolygon"):
+        return shape
+    return shapely.MultiPolygon([g for g in shapely.get_parts(shapely.get_parts(shape)) if g.geom_type == "Polygon"])
 
 
 REFILL = 3.0  # mm round what is made anew by ``refill`` that it fills too, and does not keep
