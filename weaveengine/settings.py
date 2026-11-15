@@ -141,6 +141,11 @@ DESCRIPTIONS = {
                       "way. Tapering keeps the resistance down on the stretch that does not need to be thin.", "Traces & shape"),
     "smooth_corners": ("Round sharp corners", "Replace each sharp corner with the largest arc the design rules allow. Smoother copper "
                        "and nicer to etch; the arcs are written as arcs or as short segments (see Export).", "Traces & shape"),
+    "merge_ends": ("Draw traces that ride together into a pad as one", "Where two traces of one net run together into the "
+                   "same pad but are each drawn their own way over the last stretch (a corner rounded on one and not the other), "
+                   "the longer stretch follows the shorter, so they enter the pad as one trace. Off can leave a thin gap of bare "
+                   "board between them (an acid trap) and overlapping teardrops. Drawing only: each trace still joins the same "
+                   "pads.", "Traces & shape"),
     "least_angle": ("Least angle where a net meets itself (degrees)", "Where a trace meets its pad, or traces of one net meet at a via, "
                     "a pad or a branch, at a sharper angle than this, the copper makes an acid trap (a wedge that holds etchant). It "
                     "is redrawn where there is room: square into the pad, or along the other trace before it branches off. At most "
@@ -257,6 +262,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "show_pour_islands": ("zone", "orphan", "dead copper", "isolated", "unconnected", "fill", "display", "remnant"),
     "slide_vias": ("move", "straighten", "bend", "shift", "adjust", "via", "optimise", "optimize", "kink"),
     "taper_to_pins": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "wedge"),
+    "merge_ends": ("merge", "ride", "riding", "shared", "trunk", "sliver", "gap", "acid trap", "pad entry", "join", "one trace"),
     "least_angle": ("acute", "acid trap", "angle", "sharp", "junction", "branch", "tee", "pad entry", "etch", "dfm", "wedge"),
     "smooth_corners": ("round", "arc", "curve", "bend", "angle", "45", "90", "chamfer", "radius", "fillet", "acute"),
     "teardrop_style": ("teardrop", "fillet", "pad entry", "tear drop", "reinforce", "annular ring", "junction", "via", "kicad",
@@ -360,6 +366,7 @@ class Settings:
     layers: str = ""  # comma-separated signal layers to route; "" = all
     layer_cost: str = ""  # comma-separated LAYER:FACTOR; "" = every layer costs the same
     smooth_corners: bool = True
+    merge_ends: bool = True
     least_angle: float = 90.0  # degrees; 0 = traces are not redrawn for acute meetings
     show_outlines: bool = True
     show_names: bool = True
@@ -407,7 +414,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, merge_ends=self.merge_ends, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        least_angle=min(max(self.least_angle, 0.0), 90.0), portfolio=self.portfolio)
 

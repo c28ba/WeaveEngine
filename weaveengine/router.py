@@ -21,6 +21,7 @@ from weaveengine.plan.path import find
 from weaveengine.plan.ripup import legalise, negotiate, settle
 from weaveengine.plan.select import select
 from weaveengine.plan.slide import slide
+from weaveengine.realize.ends import merge as merge_ends
 from weaveengine.realize.acute import LEAST, blunt, count as count_acute, meetings as acute_meetings
 from weaveengine.realize.relax import copper_length, polyline_length, realize
 from weaveengine.realize.smooth import smooth as smooth_corners
@@ -201,6 +202,15 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         kept = _over_own_vias(work, lines, new, wire_net, wire_layer)
         blunted = sum(1 for w in new if kept[w] is new[w])
         lines = kept
+    merged = 0
+    if options.merge_ends:  # (wires of one net riding into a pad, each drawn its own way there: one trace; before the teardrops)
+        steps("joining traces that ride together")
+        # (Not a wire with a violation left: its way is no way for another to take. Nor a way that leaves a sharper meeting:
+        # blunting has drawn the traces, and a branch off the way taken can be one, which would be worse than the gap.)
+        lines, merged = merge_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer},
+                                   skip={w for v in violations for w in v.wires}, least=options.least_angle or LEAST,
+                                   drops=(options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing)
+                                   if options.teardrops else None)
     # A trace's end on a pad within the edge clearance of a Margin drawing stops inside the pad where it is clear, if it can.
     steps("keeping clear of the margin")
     near_margin, trimmed = trim_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns})
@@ -289,6 +299,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         # of it (``geom.margin.trim``): KiCad's check reports the rest, as it reports those pads.
         "margin_ends": near_margin,
         "margin_trimmed": trimmed,
+        "merged_ends": merged,  # wire ends that took the way of another of their net into a pad (``realize.ends``)
         "blunted": blunted,  # traces redrawn so that their net meets itself at no acute angle there (``realize.acute.blunt``)
         "acute": count_acute(acute),  # kind -> meetings of copper of one net under the least angle (``realize.acute``)
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything

@@ -104,3 +104,29 @@ def test_a_pair_of_teardrops_on_a_short_trace_has_no_acute_waist():
     one, two = teardrops(board, {1: [via.centre, (10.59, 10.023), pad.centre]}, {1: 1}, {1: (1, 2)})[1]
     assert one[2] == two[2] and one[3] == two[3]  # (made together: they meet in one line across the trace)
     assert min(_angle(one[2], one[1], two[1]), _angle(one[3], one[4], two[4])) >= WAIST
+
+
+def test_traces_that_ride_together_into_a_pad_are_drawn_as_one_there():
+    from shapely.geometry import LineString
+    from weaveengine.board import Board, Pad, Rules
+    from weaveengine.realize.ends import merge
+    board = Board.rectangle(10.0, 10.0, Rules(0.25, 0.2))
+    board.pads.append(Pad.circle(0, 0.0, 0.0, 0.3, net_id=1))
+    board.pads += [Pad.circle(1, 4.0, -1.0, 0.3, net_id=1), Pad.circle(2, 4.0, 1.0, 0.3, net_id=1)]
+    # Two wires of a net from pad 0: apart (a gap of bare board) over the first stretch, then one trace, then each its way.
+    a = [(0.0, 0.0), (3.0, 0.0), (4.0, -1.0)]
+    b = [(0.0, 0.0), (1.0, 0.4), (2.0, 0.0), (3.0, 0.0), (4.0, 1.0)]
+    lines = {10: a, 11: list(reversed(b))}  # (either way round)
+    out, n = merge(board, lines, {10: 1, 11: 1}, {10: 0, 11: 0}, {10: (0, 1), 11: (2, 0)})
+    assert n == 1 and out[10] == a                                     # the shorter way is kept as it was
+    new = list(reversed(out[11]))
+    assert new[0] == (0.0, 0.0) and new[-1] == (4.0, 1.0)              # still from pad to pad, the same way round
+    assert LineString(new).distance(LineString([(1.0, 0.4), (1.0, 0.4001)])) > 0.3   # no longer out at the gap
+    assert LineString(a[:2]).buffer(1e-6).contains(LineString(new[:2]))  # it leaves the pad along the other
+    # and goes nowhere either did not: the step back onto its own way is short, not a chord across it
+    assert LineString(a).buffer(0.07).union(LineString(b).buffer(0.07)).contains(LineString(new))
+    # A wire of another net, or one that is with it all the way, is left alone.
+    out, n = merge(board, lines, {10: 1, 11: 2}, {10: 0, 11: 0}, {10: (0, 1), 11: (2, 0)})
+    assert n == 0 and out == lines
+    out, n = merge(board, {10: a, 11: [(0.0, 0.0), (3.0, 0.0), (4.0, 1.0)]}, {10: 1, 11: 1}, {10: 0, 11: 0}, {10: (0, 1), 11: (0, 2)})
+    assert n == 0

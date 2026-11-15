@@ -216,6 +216,7 @@ class Options:
     vias: bool = True               # routes may change layer through vias (12.3)
     slide: bool = True              # move each via to where its traces run straighter (13.3)
     smooth: bool = True             # round sharp corners where the design rules leave room
+    merge_ends: bool = True         # wires of one net riding into a pad drawn as one trace there (``realize.ends``)
     untangle: bool = True           # undo long detours by moving the wires in their way (``ripup.untangle``)
     taper: bool = True              # a narrowed net is drawn at its width again, but at a fine-pitch pin (``realize.taper``)
     narrow: bool = True             # narrower traces for nets whose pads their width cannot reach (``router.reach``)
