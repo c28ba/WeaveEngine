@@ -431,7 +431,7 @@ def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = 
     real = alone = 0
     grown = pad.shape.buffer(relief(pad, zone)[0] / 2.0, quad_segs=8)
     ring = grown.exterior
-    met = shapely.line_merge(ring.intersection(shapely.clip_by_rect(pour.zone, *ring.bounds)))
+    met = shapely.line_merge(ring.intersection(pour.zone.intersection(shapely.box(*ring.bounds))))
     for arc in getattr(met, "geoms", [met]):
         if arc.is_empty or arc.length <= 0 or not any(x.shape.intersects(arc) for x in pour.pieces):
             continue  # (nothing, or an island KiCad removes)

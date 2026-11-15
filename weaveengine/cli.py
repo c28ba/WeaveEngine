@@ -148,7 +148,7 @@ OPTION_SWITCHES = {
 OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
                 "reliefs": "--change-reliefs", "narrow_reliefs": "--narrow-reliefs",
                 "bare_islands": "--join-pad-less-islands", "spokes": "--no-pour-spokes",
-                "skeleton": "--no-skeleton", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
+                "skeleton": "--no-skeleton", "pour_vias": "--pour-vias", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
                 "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing", "least_angle": "--least-angle",
                 **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
 COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rounds": "--max-rounds", "h_weight": "--heuristic-weight",
@@ -167,7 +167,7 @@ SETTING_FLAGS = {
     "untangle": "--no-untangle", "narrow_to_reach": "--no-narrowing", "taper_to_pins": "--no-taper", "smooth_corners": "--no-smooth", "merge_ends": "--no-merge-ends",
     "least_angle": "--least-angle", "use_vias": "--no-vias", "slide_vias": "--no-slide-vias", "fanout_to_planes": "--no-fanout",
     "pour_reliefs": "--change-reliefs", "pour_narrow_reliefs": "--narrow-reliefs", "join_bare_islands": "--join-pad-less-islands",
-    "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_min_width": "--pour-min-width",
+    "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_vias": "--pour-vias", "pour_min_width": "--pour-min-width",
     "teardrop_style": "--teardrops", "teardrop_max_length": "--teardrop-max-length", "teardrop_max_width": "--teardrop-max-width",
     "teardrop_breathing": "--teardrop-breathing", "routed_board": "--routed-board", "arcs_in_ses": "--no-ses-arcs",
 }
@@ -284,6 +284,9 @@ def main(argv: list[str] | None = None) -> int:
     pours.add_argument("--no-skeleton", action="store_true",
                        help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
                             "traces are routed, which traces move off where they can; design 11.3)")
+    pours.add_argument("--pour-vias", type=int, default=Options.pour_vias, metavar="N",
+                       help="vias a trace moved out of a pour's skeleton's way may take beyond those it had (default 0: none, "
+                            "traces first); more keeps more pours whole, with fewer stitches and starved thermals, and is slower")
     pours.add_argument("--skeleton", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for scripts that ask for it)
     pours.add_argument("--pour-min-width", type=float, default=0.0, metavar="MM",
                        help="the narrowest copper a pour's fill may have, in the estimate of the fill and the skeletons "
@@ -316,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--heuristic-weight: 1 or more")
     if not 0.0 <= args.least_angle <= 90.0:
         ap.error("--least-angle: 0 to 90 degrees (a branch square to its trunk meets it at 90)")
+    if args.pour_vias < 0:
+        ap.error("--pour-vias: 0 or more")
     if args.drc_rounds < 0:
         ap.error("--drc-rounds: not below 0")
     if args.max_rounds is not None and args.max_rounds < 0:
@@ -396,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     style = "none" if args.no_teardrops or args.no_ses_teardrops else args.teardrops
     options = Options(vias=not args.no_vias, teardrops=style != "none", portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout, reliefs=args.change_reliefs, narrow_reliefs=args.narrow_reliefs,
-                      bare_islands=args.join_pad_less_islands, spokes=not args.no_pour_spokes, skeleton=not args.no_skeleton, teardrop_max_length=args.teardrop_max_length,
+                      bare_islands=args.join_pad_less_islands, spokes=not args.no_pour_spokes, skeleton=not args.no_skeleton, pour_vias=args.pour_vias, teardrop_max_length=args.teardrop_max_length,
                       teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing, least_angle=args.least_angle,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)
