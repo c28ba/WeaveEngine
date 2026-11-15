@@ -175,7 +175,9 @@ To do, in order:
    1.6 mm ones take more room) and kicad-tinytapeout (291/349 as before, 85
    to 78 vias, the +5V via now 0.8/0.4 as its class asks); on the others the
    routing is the same to the byte (seven boards hashed), and on these two
-   with `--one-via-size`.
+   with `--one-via-size`. Sweep (b9ca6d8): a third board, kicad-coldfire,
+   KiCad's open items 71 to 60; tinytapeout 61 to 60; interf-u 8 to 11
+   (starved thermals 3 to 8, its larger vias in the planes); DRC 320 to 320.
 9. [x] Most curves still exported as segments, not arcs (branch
    `export-shape`; below).
 10. [x] Curves that are not arcs: few; no Bézier or spline track exists in
