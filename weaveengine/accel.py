@@ -6,6 +6,7 @@ plain Python: identical results, many times slower. ``check()`` finds out which
 it is, once, and puts it in words for the user. Front ends must call it before
 routing and show ``Status.warning`` if there is one.
 """
+import threading
 import time
 import warnings
 from dataclasses import dataclass
@@ -54,8 +55,20 @@ def failed(where: str, error: BaseException) -> None:
     warnings.warn(_status.warning, RuntimeWarning, stacklevel=2)
 
 
+_once = threading.Lock()
+
+
 def check(force: bool = False) -> Status:
-    """Load, compile and run both kernels on a tiny board. Never raises."""
+    """Load, compile and run both kernels on a tiny board. Never raises.
+    One check at a time: the first compiles the kernels, which is not safe in
+    two threads at once (several windows of the app, each checking as it
+    opens, crashed the program), and turns the compiled search off for a moment
+    to compare; one that waited finds the outcome there and returns it."""
+    with _once:
+        return _check(force)
+
+
+def _check(force: bool) -> Status:
     global _status
     if _status is not None and not force:
         return _status
