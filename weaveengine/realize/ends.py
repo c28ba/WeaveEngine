@@ -57,26 +57,39 @@ def _rest(line: LineString, length: float) -> list:
     return list(substring(line, length, line.length).coords)
 
 
-def _sharper(board, lines: dict, new: list, w: int, wire_net: dict, wire_layer: dict, ends: dict, least: float) -> bool:
-    """Whether ``w`` drawn as ``new`` leaves its net meeting itself under ``least`` more often on its layer."""
+def _sharper(board, lines: dict, new: list, w: int, wire_net: dict, wire_layer: dict, ends: dict, least: float,
+             drops: tuple | None = None) -> bool:
+    """Whether ``w`` drawn as ``new`` leaves its net meeting itself under ``least`` more often on its layer,
+    counted, as blunting counts them, with the teardrops the traces would get (``drops``: their limits, if any are made)."""
     from weaveengine.realize.acute import net_meetings
+    from weaveengine.realize.teardrop import teardrops
     layer, net = wire_layer[w], wire_net[w]
-    mine = {x: line for x, line in lines.items() if wire_layer.get(x) == layer and wire_net.get(x) == net and len(line) > 1}
+    here_lines = {x: line for x, line in lines.items() if wire_layer.get(x) == layer and len(line) > 1}
+    mine = {x: line for x, line in here_lines.items() if wire_net.get(x) == net}
+    trial = {**mine, w: new}
+
+    def drawn(lines_now: dict, wires) -> dict:
+        if not drops:
+            return {}
+        got = teardrops(board, {**here_lines, **lines_now}, wire_net, ends, layer, *drops, only=set(wires))
+        return {x: got.get(x, []) for x in wires}
     here = board.pads_on(layer)
-    before = net_meetings(board, layer, net, mine, ends, here, least=least)
-    after = net_meetings(board, layer, net, {**mine, w: new}, ends, here, least=least)
+    was = drawn(mine, mine)
+    before = net_meetings(board, layer, net, mine, ends, here, was, least=least)
+    after = net_meetings(board, layer, net, trial, ends, here, {**was, **drawn(trial, (w,))}, least=least)
     return len(after) > len(before)
 
 
 def merge(board, lines: dict, wire_net: dict, wire_layer: dict, ends: dict, skip=frozenset(),
-          least: float | None = None) -> tuple[dict, int]:
+          least: float | None = None, drops: tuple | None = None) -> tuple[dict, int]:
     """``lines`` (wire -> polyline) with every pair of wires of one net that
     ride together into a pad they share on one layer drawn as one trace from
     it (see the module). ``ends``: wire -> its two pads. ``skip``: wires not to
     touch. ``least``: if given, a way is taken only if the net then meets
     itself under that angle no more often on that layer (``realize.acute``):
     the shorter way first, else the longer (the way blunting drew square into
-    the pad is often the longer). Returns the new lines and how many wire ends
+    the pad is often the longer), counted with the teardrops the traces would
+    get (``drops``: their limits, if they are made). Returns the new lines and how many wire ends
     took another's way."""
     pads = {p.pad_id: p for p in board.pads}
     rules = board.rules
@@ -126,7 +139,7 @@ def merge(board, lines: dict, wire_net: dict, wire_layer: dict, ends: dict, skip
                         way = _start(src, length) + _rest(dline, dlength)
                         new = [tuple(q) for k, q in enumerate(way) if k == 0 or math.dist(q, way[k - 1]) > 1e-9]
                         new = new[::-1] if flip else new
-                        if least is not None and _sharper(board, out, new, dst, wire_net, wire_layer, ends, least):
+                        if least is not None and _sharper(board, out, new, dst, wire_net, wire_layer, ends, least, drops):
                             continue
                         out[dst] = new
                         merged += 1

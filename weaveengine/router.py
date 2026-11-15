@@ -208,7 +208,9 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         # (Not a wire with a violation left: its way is no way for another to take. Nor a way that leaves a sharper meeting:
         # blunting has drawn the traces, and a branch off the way taken can be one, which would be worse than the gap.)
         lines, merged = merge_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer},
-                                   skip={w for v in violations for w in v.wires}, least=options.least_angle or LEAST)
+                                   skip={w for v in violations for w in v.wires}, least=options.least_angle or LEAST,
+                                   drops=(options.teardrop_max_length, options.teardrop_max_width, options.teardrop_breathing)
+                                   if options.teardrops else None)
     # A trace's end on a pad within the edge clearance of a Margin drawing stops inside the pad where it is clear, if it can.
     steps("keeping clear of the margin")
     near_margin, trimmed = trim_ends(work, lines, wire_net, wire_layer, {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer if w in ctx.conns})
