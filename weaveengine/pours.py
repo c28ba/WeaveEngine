@@ -215,7 +215,7 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         if kept and blocked is not None:
             grown = grown.difference(blocked)
         fill = _prune(grown, least)
-        bare = fill.difference(shapely.union_all([p.shape for p in thermal])) if thermal else fill  # (KiCad's stops at the pads)
+        bare = _polygons(fill.difference(shapely.union_all([p.shape for p in thermal])) if thermal else fill)  # (KiCad's stops at the pads)
         # The net's own pads are copper whatever their width, and its traces join what they touch.
         joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] in ("solid", "thermal")]
         joins += [shape for shape in wires_of.get((net, at), ()) if shape.intersects(outline)
@@ -259,7 +259,14 @@ def _polygons(shape):
     """The polygons of ``shape``, as one (Multi)Polygon."""
     if shape.geom_type in ("Polygon", "MultiPolygon"):
         return shape
-    return shapely.MultiPolygon([g for g in shapely.get_parts(shapely.get_parts(shape)) if g.geom_type == "Polygon"])
+    out, todo = [], [shape]
+    while todo:
+        g = todo.pop()
+        if g.geom_type == "Polygon":
+            out.append(g)
+        elif hasattr(g, "geoms"):
+            todo.extend(g.geoms)
+    return shapely.MultiPolygon(out[::-1])
 
 
 REFILL = 3.0  # mm round what is made anew by ``refill`` that it fills too, and does not keep
