@@ -214,7 +214,7 @@ user's board routed with its KiCad files beside the DSN; not yet looked into):
   result and gives back the buttons. Now any failure there is written to
   the log with its traceback and the buttons always come back; the next Mac
   run will name the failing line. Still to do: that run, and the fix.
-- [ ] Two traces of one net that ride together split again just before their
+- [x] Two traces of one net that ride together split again just before their
   pad (seen by the user 2026-11-14). Pads A and B both connect to pad C from
   the same side; their traces join partway and run as one, but right at C
   they part again and enter C at different points. That leaves acid traps,
@@ -232,7 +232,9 @@ user's board routed with its KiCad files beside the DSN; not yet looked into):
   the user's board (a gap 0.07 mm wide); after blunting and before the
   teardrops, the longer of the two ways takes the shorter one's, drawing only
   (`--no-merge-ends`, a setting, on by default). Every such gap on five
-  boards goes. Waiting on the board sweep to merge.
+  boards goes, and none where closing it would leave a sharper meeting.
+  Merged 2026-11-14: the sweep as before on every board, acute meetings
+  castor-mainboard 49 to 47, lumen-blade13 28 to 26, none more.
 
 
 Back burner: bugs seen once that could not be found again. Each waits for a
