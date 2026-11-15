@@ -464,13 +464,14 @@ def via_points(best, extra, bound, gx, gy, onward, tri_v, vx, vy, corner, pitch,
     it reached the middle of triangle t. Five points are tried in each triangle
     reached: the incentre, the centroid, and one towards each corner. A point
     is kept if a via may be there (``legal``, a grid of cells from x0 y0), it
-    has room (``roomy``), it is more than ``apart`` from the vias there are
+    has room (``roomy``), it is more than ``apart[q]`` from each via there is
     (tx ty, in order of x), and its cost, ``best[t] + extra``, plus what the
     way on to gx gy costs at least (``onward`` of the straight line: all of
     it, or ``RIDE`` of it for a wire whose net has copper it may run beside)
     stays under ``bound``.
     Returns (x, y, cost, triangle) of the points kept."""
     nx, ny = legal.shape
+    far = apart.max() if apart.shape[0] else 0.0
     n = 0
     for t in range(best.shape[0]):
         if best[t] + extra < bound:
@@ -501,10 +502,10 @@ def via_points(best, extra, bound, gx, gy, onward, tri_v, vx, vy, corner, pitch,
             if not roomy(tri_v, vx, vy, corner, pitch, keep, least, t, x, y):
                 continue
             free = True
-            for q in range(np.searchsorted(tx, x - apart), tx.shape[0]):
-                if tx[q] > x + apart:
+            for q in range(np.searchsorted(tx, x - far), tx.shape[0]):
+                if tx[q] > x + far:
                     break
-                if np.hypot(tx[q] - x, ty[q] - y) <= apart:
+                if np.hypot(tx[q] - x, ty[q] - y) <= apart[q]:
                     free = False
                     break
             if free:

@@ -280,7 +280,7 @@ class Context:
         self.rounds = 0
         self.next_wire = len(self.conns) + 1             # ids of the pieces of connections through vias; never reused
         self.next_pad = max((p.pad_id for p in board.pads), default=-1) + 1   # pad ids of via sites
-        self._legal = None
+        self._legal: dict = {}
         # The pours' skeletons are put in once the traces have been negotiated (``ripup.settle``), not before.
         self.later = bool(skeletons)
         self.trail: list | None = None  # while recording (``record``): how to take out each commit, in order
@@ -291,13 +291,13 @@ class Context:
     def vias(self) -> bool:
         return self.options.vias and len(self.layers) > 1
 
-    @property
-    def legal(self):
-        """Where a via may be (``plan.path.Legal``); worked out once."""
-        if self._legal is None:
+    def legal(self, net: int):
+        """Where a via of ``net`` may be (``plan.path.Legal``); worked out once for each size of via."""
+        size = self.board.rules.via(net)
+        if size not in self._legal:
             from weaveengine.plan.path import Legal
-            self._legal = Legal(self)
-        return self._legal
+            self._legal[size] = Legal(self, net)
+        return self._legal[size]
 
     def pad_centre(self, pad: int) -> tuple[float, float]:
         for layer in self.layers:
@@ -318,13 +318,12 @@ class Context:
         changed, if the via may not stand there (fixed copper, the board edge,
         another via) or a map refuses the move (``sites.move``). ``sure``: no
         test, to put a via back where it was."""
-        rules = self.board.rules
+        rules, net = self.board.rules, self.layers[0].pmap.sites[pad].net
         if not sure:
-            if not self.legal.exactly(*point):
+            if not self.legal(net).exactly(*point):
                 return False
-            spacing = rules.via_diameter + rules.clearance + 0.02
-            others = [s.centre for s in self.layers[0].pmap.sites.values() if s.active and s.pad != pad]
-            if any(math.dist(point, c) < spacing for c in others + [p.centre for p in self.board.pads if p.is_via]):
+            others = [(s.centre, s.net) for s in self.layers[0].pmap.sites.values() if s.active and s.pad != pad]
+            if any(math.dist(point, c) < rules.via_spacing(net, other) for c, other in others + [(p.centre, p.net_id) for p in self.board.pads if p.is_via]):
                 return False
         marks = [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]
         for n, layer in enumerate(self.layers):
@@ -416,7 +415,7 @@ class Context:
                     self._waiting(conn, True)
                 self.trail.append(take_out)
             return True
-        keep = sites.keep_off(self.board.rules)
+        keep = sites.keep_off(self.board.rules, conn.net_id)
         new = [not isinstance(j, int) for j in joints]     # per joint: a via to be made (else copper that is there)
         pads = [conn.src, *(self.next_pad + sum(new[:n]) if new[n] else j for n, j in enumerate(joints)), conn.dst]
         pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id,
@@ -450,7 +449,7 @@ class Context:
                 if n < len(joints) and new[n]:  # the via this piece ends on: its site, on every layer
                     point = joints[n]
                     where = [int(locate(l.pmap, np.array([point]))[0]) for l in self.layers]
-                    if min(where) < 0 or not self.legal.exactly(*point):
+                    if min(where) < 0 or not self.legal(conn.net_id).exactly(*point):
                         raise ValueError("no via there")
                     before[n] = mark()
                     here = [sites.create(l.pmap, l.state, t, point, pad=pads[n + 1], settle=False) for l, t in zip(self.layers, where)]
@@ -738,8 +737,8 @@ class Context:
             "type": "snapshot", "pass": self.pass_index, "variant": self.variant, "final": lines is not None,
             "wires": wires,
             "open": [(centre(self.conns[w].src), centre(self.conns[w].dst)) for w in self.open],
-            "vias": [p.centre for p in self.board.pads if p.is_via]
-                    + [s.centre for s in self.layers[0].pmap.sites.values() if s.active],
+            "vias": [(*p.centre, self.board.rules.via_radius(p.net_id)) for p in self.board.pads if p.is_via]
+                    + [(*s.centre, self.board.rules.via_radius(s.net)) for s in self.layers[0].pmap.sites.values() if s.active],
             "routed": total - len(self.open), "total": total,
             "overflow": sum(len(l.state.overflowed_gates()) for l in self.layers),
             "rounds": self.rounds, "length": self.estimated_length(),

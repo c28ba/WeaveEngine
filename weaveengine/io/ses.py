@@ -205,6 +205,21 @@ def routed_copper(design: Design, result, teardrops: bool = True, arcs: bool = T
         yield net, items
 
 
+def via_padstack(design: Design, size: tuple[float, float]) -> tuple[str, list]:
+    """(name, shapes) of the padstack of a via of ``size`` (diameter, drill):
+    the DSN's of that size, else one named as KiCad names them, since KiCad's
+    import of a session takes a via's drill from its name, on every copper
+    layer, the routed and those left out (KiCad takes a via of fewer for a
+    blind one)."""
+    for name, (diameter, drill, shapes) in design.via_stacks.items():
+        if abs(diameter - size[0]) < 1e-9 and abs(drill - size[1]) < 1e-9:
+            return name, shapes
+    layers = design.board.layers + design.board.unrouted
+    um = lambda mm: f"{round(mm * 1000.0, 1):g}"
+    return (f"Via[0-{len(layers) - 1}]_{um(size[0])}:{um(size[1])}_um",
+            [["circle", layer, str(size[0] / UNIT_MM[design.unit.lower()])] for layer in layers])
+
+
 def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: bool = True) -> None:
     """Writes the routed traces and vias of ``result``. With ``teardrops``,
     each teardrop is added as a fan of ordinary traces (see ``teardrop_tracks``).
@@ -236,16 +251,15 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: b
     out += ["  )", "  (was_is)", "  (routes", f"    (resolution {design.unit} {design.resolution})",
             "    (parser (host_cad weaveengine))"]
 
-    via_name = design.via_padstack or "via"
+    rules = board.rules
     out.append("    (library_out")
-    if result.vias or design.via_padstack:
-        out.append(f"      (padstack {q(via_name)}")
-        # (on every copper layer, the routed and those left out: KiCad takes a via of fewer for a blind one)
-        shapes = design.via_shapes or [["circle", layer, str(board.rules.via_diameter / UNIT_MM[design.unit.lower()])]
-                                       for layer in board.layers + board.unrouted]
+    # The default class's via, and each other class's that is used: a via names its padstack (``via_padstack``).
+    sizes = dict.fromkeys(([rules.via(-1)] if result.vias or design.via_stacks else []) + [rules.via(v.net_id) for v in result.vias])
+    for size in sizes:
+        name, shapes = via_padstack(design, size)
+        out.append(f"      (padstack {q(name)}")
         for desc in shapes:
-            size = int(round(float(desc[2]) * design.resolution))
-            out.append(f"        (shape (circle {desc[1]} {size} 0 0))")
+            out.append(f"        (shape (circle {desc[1]} {int(round(float(desc[2]) * design.resolution))} 0 0))")
         out += ["        (attach off)", "      )"]
     out.append("    )")
 
@@ -254,7 +268,7 @@ def write_ses(design: Design, result, path: str, teardrops: bool = True, arcs: b
         out.append(f"      (net {q(names.get(net, f'N{net}'))}")
         for item in items:
             if item[0] == "via":
-                out.append(f"        (via {q(via_name)} {n(item[1])} {n(item[2])})")
+                out.append(f"        (via {q(via_padstack(design, rules.via(net))[0])} {n(item[1])} {n(item[2])})")
                 continue
             layer, width = board.layers[item[1]], n(item[2])
             if item[0] == "arc":

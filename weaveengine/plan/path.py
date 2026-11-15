@@ -84,17 +84,19 @@ class Legal:
     that the via copper keeps its clearance from fixed copper and the board
     edge, and not so near an area no via may touch (``Board.no_via``) that its
     copper does. The exact regions, and a coarse grid of them for testing many
-    points at once. Other vias and the traces are checked separately."""
+    points at once. Other vias and the traces are checked separately. For a
+    via of ``net``: of its class's size."""
 
-    def __init__(self, ctx):
+    def __init__(self, ctx, net: int):
         rules = ctx.board.rules
+        radius, asks = rules.via_radius(net), rules.via_clearance(net)
         # (A via that asks more than the rule's clearance of fixed copper keeps that much more off it.)
-        margin = rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) - rules.base_width / 2.0 + 0.01 + rules.apart(rules.via_clearance) - rules.clearance
-        no_via = (shapely.union_all(ctx.board.no_via).buffer(rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + 0.01)
+        margin = radius / math.cos(math.pi / 16.0) - rules.base_width / 2.0 + 0.01 + rules.apart(asks) - rules.clearance
+        no_via = (shapely.union_all(ctx.board.no_via).buffer(radius / math.cos(math.pi / 16.0) + 0.01)
                   if ctx.board.no_via else None)
         drawn = held(ctx.board)  # (Margin drawings held as edge by the routing: a via keeps the edge clearance from them, every way)
         if drawn is not None:
-            far = drawn.buffer(edge_clearance(rules) + rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + 0.01, quad_segs=16)
+            far = drawn.buffer(edge_clearance(rules) + radius / math.cos(math.pi / 16.0) + 0.01, quad_segs=16)
             no_via = far if no_via is None else no_via.union(far)
         self.regions = []
         for layer in ctx.layers:
@@ -107,7 +109,7 @@ class Legal:
         n = len(ctx.layers)
         below = [o.shape for o in ctx.board.obstacles if o.layers and min(o.layers) >= n]
         if below:
-            below = shapely.union_all(below).buffer(rules.via_diameter / 2.0 / math.cos(math.pi / 16.0) + rules.apart(rules.via_clearance) + 0.01)
+            below = shapely.union_all(below).buffer(radius / math.cos(math.pi / 16.0) + rules.apart(asks) + 0.01)
             self.regions = [region.difference(below) for region in self.regions]
             for region in self.regions:
                 shapely.prepare(region)
@@ -123,34 +125,38 @@ class Legal:
         return all(shapely.contains_xy(region, x, y) for region in self.regions)
 
 
-def _taken(ctx, struck) -> np.ndarray:
-    """The points a new via must keep its distance from: the vias there are,
-    and ``struck``. In order of x."""
-    pts = np.array([s.centre for s in ctx.layers[0].pmap.sites.values() if s.active]
-                   + [p.centre for p in ctx.board.pads if p.is_via] + list(struck), dtype=float).reshape(-1, 2)
-    return pts[np.argsort(pts[:, 0], kind="stable")]
+def _taken(ctx, net: int, struck) -> tuple[np.ndarray, np.ndarray]:
+    """The points a new via of ``net`` must keep its distance from: the vias
+    there are, and ``struck`` (as if vias of its net), in order of x; and how
+    far from each (``Rules.via_spacing``)."""
+    vias = [(s.centre, s.net) for s in ctx.layers[0].pmap.sites.values() if s.active]
+    vias += [(p.centre, p.net_id) for p in ctx.board.pads if p.is_via] + [(at, net) for at in struck]
+    pts = np.array([at for at, _ in vias], dtype=float).reshape(-1, 2)
+    apart = np.array([ctx.board.rules.via_spacing(net, other) for _, other in vias], dtype=float)
+    order = np.argsort(pts[:, 0], kind="stable")
+    return pts[order], apart[order]
 
 
-def _via_points(ctx, la: int, seen, goal, bound: float, taken, via_cost: float, onward: float):
+def _via_points(ctx, net: int, la: int, seen, goal, bound: float, taken, via_cost: float, onward: float):
     """Where a route that the search ``seen`` brought this far on layer ``la``
     may change layer: the points it reached where a via is legal and fits,
     each at its cost so far plus a via. Points that cannot lead to a route
     cheaper than ``bound`` are left out. Returns (points, costs, where each
     came from as (layer, triangle)), or None. ``onward``: the part of the
     straight line from a point to the goal that the way on costs at least."""
-    rules, legal, pmap = ctx.board.rules, ctx.legal, ctx.layers[la].pmap
+    rules, legal, pmap = ctx.board.rules, ctx.legal(net), ctx.layers[la].pmap
     # With a layer made dear, a via's own triangle can be the cheapest place for the next one, a way that cannot be
     # read back (``Reach.placeable``). Left as it was otherwise: the filter changes where vias stand on every board,
     # and is to be judged on its own (ROADMAP.md, 1.0.2).
     reach = seen.placeable if ctx.params.layer_cost else seen.best
     x, y, cost, tris = kernel.via_points(reach, via_cost, bound, goal[0], goal[1], onward, pmap.tri_v, pmap.vx, pmap.vy,
-                                         ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules), sites.MIN_ROOM * sites.SITE_RADIUS,
-                                         legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[:, 0]),
-                                         np.ascontiguousarray(taken[:, 1]), rules.via_diameter + rules.clearance + 0.02)
+                                         ctx.layers[la].state.corner, pmap.pitch, sites.keep_off(rules, net), sites.MIN_ROOM * sites.SITE_RADIUS,
+                                         legal.grid, legal.x0, legal.y0, GRID, np.ascontiguousarray(taken[0][:, 0]),
+                                         np.ascontiguousarray(taken[0][:, 1]), taken[1])
     return (np.stack([x, y], axis=1), cost, np.stack([np.full(len(tris), la), tris], axis=1)) if len(x) else None
 
 
-def _seeds(ctx, sources: dict, onto, goal, bound: float, onward: float):
+def _seeds(ctx, net: int, sources: dict, onto, goal, bound: float, onward: float):
     """Where the next search, on layer ``onto``, may start: the via points of
     the other layers (``sources``, per layer) that have room on this one too
     and can still lead to a route cheaper than ``bound``. Returns (triangles
@@ -162,7 +168,7 @@ def _seeds(ctx, sources: dict, onto, goal, bound: float, onward: float):
     pmap = onto.pmap
     tris = locate(pmap, pts)
     at = np.nonzero((tris >= 0) & (cost + onward * np.hypot(pts[:, 0] - goal[0], pts[:, 1] - goal[1]) < bound))[0]
-    at = at[kernel.rooms(pmap.tri_v, pmap.vx, pmap.vy, onto.state.corner, pmap.pitch, sites.keep_off(ctx.board.rules),
+    at = at[kernel.rooms(pmap.tri_v, pmap.vx, pmap.vy, onto.state.corner, pmap.pitch, sites.keep_off(ctx.board.rules, net),
                          sites.MIN_ROOM * sites.SITE_RADIUS, tris[at], np.ascontiguousarray(pts[at, 0]), np.ascontiguousarray(pts[at, 1]))]
     return (tris[at], cost[at], pts[at], source[at]) if len(at) else None
 
@@ -226,11 +232,11 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
         if r is not None and (best is None or r.cost < best[0]):
             best = (r.cost, 0, layer.index, r)
     hops = [reached]
-    taken = _taken(ctx, struck) if max_vias else None
+    taken = _taken(ctx, conn.net_id, struck) if max_vias else None
     had: dict[tuple[int, int], float] = {}  # (layer, pad of the net) -> the least cost at which a search has been at it there
     for hop in range(1, changes + 1):
         limit = best[0] if best else bound
-        sources = {la: _via_points(ctx, la, seen, goal, limit, taken, via_cost, onward)
+        sources = {la: _via_points(ctx, conn.net_id, la, seen, goal, limit, taken, via_cost, onward)
                    for la, (seen, _, _) in reached.items() if seen is not None} if hop <= max_vias else {}
         pads: dict[int, tuple[float, int]] = {}  # copper of the net that was reached: pad -> (cost, on which layer)
         for la, (seen, _, _) in reached.items():
@@ -240,7 +246,7 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
                     pads[pad] = (cost, la)
         reached = {}
         for layer in ctx.layers:
-            seeds = _seeds(ctx, sources, layer, goal, limit, onward)
+            seeds = _seeds(ctx, conn.net_id, sources, layer, goal, limit, onward)
             # A pad the net has on this layer too is where the route may go on here, unless a search has been at it here for less.
             starts = {pad: (cost, la) for pad, (cost, la) in pads.items()
                       if la != layer.index and pad in layer.pmap.pad_edges and cost < had.get((layer.index, pad), math.inf)}

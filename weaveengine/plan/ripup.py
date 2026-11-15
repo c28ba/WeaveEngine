@@ -1,6 +1,7 @@
 """Phase 3: negotiated rip-up and reroute, and Phase 4 refinement (section 10)."""
 import math
 import os
+from collections import Counter
 
 import numpy as np
 
@@ -333,14 +334,15 @@ def untangle(ctx: Context, hold=frozenset(), sweeps: int = 3) -> int:
     if nothing is left open that was not, no gate is over-full, and the copper
     (vias at their worth, as ``replan`` counts them) is less by a pitch;
     otherwise the board is restored exactly. Returns the number kept."""
-    pitch, worth = ctx.layers[0].pmap.pitch, via_worth(ctx)
+    pitch = ctx.layers[0].pmap.pitch
     lone = alone(ctx)
 
     def total(nets: set[int]) -> float:
         """The copper of these nets (a trace's copper depends only on its own net's
         wires beside it), and every via at its worth."""
         copper = sum(ctx.wire_copper(layer, w) for layer in ctx.layers for net in nets for w in layer.state.by_net.get(net, ()))
-        return copper + worth * sum(1 for s in ctx.layers[0].pmap.sites.values() if s.active)
+        sizes = Counter(ctx.board.rules.via(s.net)[0] for s in ctx.layers[0].pmap.sites.values() if s.active)
+        return copper + sum(via_worth(ctx, diameter) * n for diameter, n in sizes.items())
 
     def over() -> dict:
         """Over-full gates, and by how much (repair after the check can leave some for rip-up)."""
@@ -477,15 +479,15 @@ def replan(ctx: Context, passes: int = 3, hold=frozenset()) -> int:
     return moved
 
 
-def via_worth(ctx: Context) -> float:
-    """What a via is worth in length of trace when a routing is tidied: the
+def via_worth(ctx: Context, diameter: float) -> float:
+    """What a via of ``diameter`` is worth in length of trace when a routing is tidied: the
     track it takes away, which is the width it keeps clear, on every layer. A
     route is better without a via if that makes it no more than this much
     longer. (Not the price of a via while the board is negotiated (9): that
     one decides who gets a layer, and would trade a via for a detour of many
     times its size.)"""
     rules = ctx.board.rules
-    return len(ctx.layers) * (rules.via_diameter + 2.0 * rules.clearance + rules.base_width)
+    return len(ctx.layers) * (diameter + 2.0 * rules.clearance + rules.base_width)
 
 
 def _planned(ctx: Context, plan, worth: float) -> float:
@@ -516,7 +518,7 @@ def _replan(ctx: Context, conn, was: float, most: int, margin: float) -> bool:
     net's is longer than a via is worth, and a trace of its own goes where its
     net's copper would do. The connection is lifted for this; if no plan is
     better, or none fits, it is put back exactly."""
-    worth = via_worth(ctx)
+    worth = via_worth(ctx, ctx.board.rules.via(conn.net_id)[0])
     was += worth * _own_vias(ctx, [ctx.conns[w] for w in conn.pieces]) - margin
     # As good as any route could be: the straight line, with the via its pads force. (Only for a
     # net of two pads: one of more may do better still, since beside its own copper a trace is free.)

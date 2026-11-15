@@ -58,8 +58,7 @@ class Design:
     resolution: int = 10
     net_ids: dict[str, int] = field(default_factory=dict)
     placements: list[tuple[str, str, float, float, str, float]] = field(default_factory=list)  # image, ref, x, y, side, rot (file units)
-    via_padstack: str = ""
-    via_shapes: list[list] = field(default_factory=list)  # raw shape descriptors of the via padstack
+    via_stacks: dict[str, tuple[float, float, list]] = field(default_factory=dict)  # the DSN's via padstacks: name -> (diameter, drill, shapes)
     defaulted: dict[str, str] = field(default_factory=dict)  # rule the DSN did not give -> what is used instead
     dropped_wiring: str = ""                                 # what was done with routing already in the file
     net_classes: dict[str, str] = field(default_factory=dict)  # net name -> its class
@@ -286,18 +285,16 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
 
     design = Design(root[1] if len(root) > 1 and isinstance(root[1], str) else "board", board, unit, resolution,
                     defaulted=defaulted, walled=walled)
-    via = _child(structure, "via")
-    circles = []
-    if via and len(via) > 1 and via[1] in padstacks:
-        design.via_padstack = via[1]
-        design.via_shapes = padstacks[via[1]]
-        circles = [float(d[2]) * scale for d in design.via_shapes if d[0] == "circle" and len(d) > 2]
+    # The vias the design may use, round ones only (the size is the largest circle; the drill, which a DSN has no
+    # place for, is in the name KiCad gives it, else half that): the first is the default class's.
+    for name in (_child(structure, "via") or [])[1:]:
+        circles = [float(d[2]) * scale for d in padstacks.get(name, []) if d[0] == "circle" and len(d) > 2]
         if circles:
-            board.rules.via_diameter = max(circles)
-            m = re.search(r"_(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)_um", via[1])
-            board.rules.via_drill = float(m.group(2)) / 1000.0 if m else board.rules.via_diameter / 2.0
-    if not circles:
-        design.via_padstack, design.via_shapes = "", []  # the writer makes a round one of the default size
+            m = re.search(r"_(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)_um", name)
+            design.via_stacks[name] = (max(circles), float(m.group(2)) / 1000.0 if m else max(circles) / 2.0, padstacks[name])
+    if design.via_stacks:
+        board.rules.via_diameter, board.rules.via_drill, _ = next(iter(design.via_stacks.values()))
+    else:  # (the writer makes a round one of the default size)
         defaulted["via_diameter"] = f"via diameter {board.rules.via_diameter:g} mm"
         defaulted["via_drill"] = f"via drill {board.rules.via_drill:g} mm"
 
@@ -318,6 +315,12 @@ def _read_dsn(path: str, layers: list[str] | None = None) -> Design:
             for name in cls[2:]:
                 if isinstance(name, str) and name in design.net_ids:
                     board.rules.net_width[design.net_ids[name]] = w
+        # A class's own via (``Rules.via``): KiCad's export names it in the class's circuit.
+        own = _child(_child(cls, "circuit") or [], "use_via")
+        if own and len(own) > 1 and own[1] in design.via_stacks:
+            size = design.via_stacks[own[1]][:2]
+            if size != (board.rules.via_diameter, board.rules.via_drill):
+                board.rules.net_via.update({design.net_ids[name]: size for name in cls[2:] if isinstance(name, str) and name in design.net_ids})
 
     # Copper planes (zones in the CAD tool): which nets they connect is decided once the pads are known.
     planes = [(design.net_ids[plane[1]], got) for plane in _children(structure, "plane") if plane[1] in design.net_ids

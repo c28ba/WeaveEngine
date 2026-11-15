@@ -163,7 +163,19 @@ To do, in order:
    `plan.fanout`), 13.3a's cross-layer sharp vias, and a junction moved with all
    its connections.
 7. [-] The 45-degree option: moved to 1.2, with the editor (below).
-8. [ ] A via size per net class.
+8. [x] A via size per net class (branch `via-class`; design 12.9). Each net's
+   vias are its class's size, as the DSN's classes name them (`use_via`; the
+   drill from the padstack's name): in the map (a site's keep-off), where a
+   via may stand, how far apart vias stand, fan-out, the check, the app, and
+   the session, where each via names the padstack of its size so KiCad's
+   import drills it right. The default, since it is the board's rule;
+   `--one-via-size` (setting *A via size per net class*) makes every via the
+   default class's. Of the 32 prepared sweep boards two have such classes,
+   kicad-interf-u (159/159 as before, 40 to 52 vias: the Power class's
+   1.6 mm ones take more room) and kicad-tinytapeout (291/349 as before, 85
+   to 78 vias, the +5V via now 0.8/0.4 as its class asks); on the others the
+   routing is the same to the byte (seven boards hashed), and on these two
+   with `--one-via-size`.
 9. [x] Most curves still exported as segments, not arcs (branch
    `export-shape`; below).
 10. [x] Curves that are not arcs: few; no Bézier or spline track exists in

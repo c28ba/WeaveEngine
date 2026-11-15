@@ -51,7 +51,7 @@ def _work(dsn_path: str, settings: Settings, events, resume=None) -> None:
         want_clearance, want_edge, notes = settings.apply_rules(design, dsn_path)
         rules = design.board.rules
         notes.insert(0, f"rules: trace {rules.trace_width:g} mm, clearance {want_clearance:g} mm, "
-                        f"via {rules.via_diameter:g}/{rules.via_drill:g} mm; {len(design.board.layers)} layers, "
+                        f"via {rules.via_text}; {len(design.board.layers)} layers, "
                         f"{len(design.board.pads)} pads")
         for text in notes:
             events.put({"type": "note", "text": text})

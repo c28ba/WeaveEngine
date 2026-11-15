@@ -49,13 +49,16 @@ def _sampled_arc(x1, y1, x2, y2, cx, cy) -> list[tuple[float, float]]:
     return [(x1, y1)] + pts + [(x2, y2)]
 
 
-def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[float, float]]]], list[tuple[str, float, float]]]:
-    """(wires, vias) of a SES file in mm: wires are (net, layer, width, points), vias (net, x, y)."""
+def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[float, float]]]], list[tuple[str, float, float, float]]]:
+    """(wires, vias) of a SES file in mm: wires are (net, layer, width, points), vias (net, x, y, diameter), the
+    diameter the largest circle of its padstack in the session's library (0 if it has none)."""
     root = parse_sexpr(open(path, encoding="utf-8").read())
     routes = _child(root, "routes")
     res = _child(routes, "resolution")
     scale = UNIT_MM[res[1].lower()] / float(res[2])
     wires, vias = [], []
+    stacks = {stack[1]: max([float(c[2]) * scale for shape in _children(stack, "shape") for c in shape[1:2] if c[0] == "circle"], default=0.0)
+              for stack in _children(_child(routes, "library_out") or [], "padstack")}
     for net in _children(_child(routes, "network_out"), "net"):
         for wire in _children(net, "wire"):
             p = _child(wire, "path")
@@ -67,7 +70,7 @@ def read_session(path: str) -> tuple[list[tuple[str, str, float, list[tuple[floa
             nums = [float(v) * scale for v in p[3:]]
             wires.append((net[1], p[1], float(p[2]) * scale, list(zip(nums[0::2], nums[1::2]))))
         for via in _children(net, "via"):
-            vias.append((net[1], float(via[2]) * scale, float(via[3]) * scale))
+            vias.append((net[1], float(via[2]) * scale, float(via[3]) * scale, stacks.get(via[1], 0.0)))
     return wires, vias
 
 
@@ -94,14 +97,15 @@ def measure(design: Design, ses_path: str, clearance: float | None = None, edge:
     keepouts = [o for o in board.obstacles if o.net_id < 0 and not o.copper]
     pad_net = [design.net_names.get(p.net_id, "") if p.net_id >= 0 else None for _, p in pads]
     beyond = [-p.clearance - clearance if p.clearance < 0 else max(0.0, p.clearance - clearance) for _, p in pads]  # (negative: a custom rule asks less)
-    pads += [(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32), None) for _, x, y in vias]
-    pad_net += [net for net, _, _ in vias]
-    beyond += [max(0.0, rules.via_clearance - clearance)] * len(vias)
+    discs = [Point(x, y).buffer(d / 2.0, quad_segs=32) for _, x, y, d in vias]
+    pads += [(disc, None) for disc in discs]
+    pad_net += [net for net, _, _, _ in vias]
+    beyond += [max(0.0, rules.via_clearance(design.net_ids.get(net, -1)) - clearance) for net, _, _, _ in vias]
     # A via goes through every layer, so a keepout on any layer, or an area no via may touch,
     # forbids its copper.
     forbidden = [o.shape for o in keepouts] + list(board.no_via)
-    for _, x, y in vias:
-        if any(Point(x, y).buffer(rules.via_diameter / 2.0, quad_segs=32).intersects(area) for area in forbidden):
+    for disc in discs:
+        if any(disc.intersects(area) for area in forbidden):
             out.vias_in_keepout += 1
     tree = shapely.STRtree([g for g, _ in pads])
     by_layer: dict[str, list] = {}

@@ -163,7 +163,7 @@ def write_routed_board(design, result, source: str, path: str, teardrops: str = 
         name = names.get(net, f"N{net}")
         for item in items:
             if item[0] == "via":
-                added.append(f"\t(via\n\t\t(at {mm(item[1:])})\n\t\t(size {board.rules.via_diameter:g})\n\t\t(drill {board.rules.via_drill:g})\n"
+                added.append(f"\t(via\n\t\t(at {mm(item[1:])})\n\t\t(size {board.rules.via(net)[0]:g})\n\t\t(drill {board.rules.via(net)[1]:g})\n"
                              f"\t\t(layers {via_layers})\n"
                              + f"\t\t{net_ref(name)}\n\t\t(uuid {_quote(str(uuid.uuid4()))})\n\t)")
                 counts["vias"] += 1
