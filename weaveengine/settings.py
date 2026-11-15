@@ -74,6 +74,15 @@ DESCRIPTIONS = {
                         "off unless the keepouts are wrong or you mean to fix them afterwards: crossing them breaks the design's own rules.", "Rules & nets"),
     "skip_nets": ("Nets not to route", "Names separated by commas; * and ? match any text (GND*, say). Treated as a net with a pour "
                   "already: not routed, and not counted as open. Use for nets you will draw by hand.", "Rules & nets"),
+    "direct_pairs": ("Pads joined directly (this board)", "Pairs of pads of one net on the open board that get a trace of their "
+                     "own between them, stored for that board only (each board has its own; none for a board not yet given any), "
+                     "written "
+                     "PAD:PAD and separated by commas (C5-1:U2-7, say), with the pad names the app shows; or pick them in the app "
+                     "(select a pad, then Join directly). Otherwise a net's pads are joined in the shortest tree over them, and "
+                     "on a large net (a supply, say) a decoupling capacitor may be joined to some other pad instead of the pin it "
+                     "is for. The rest of the net joins on wherever is shortest. Works on nets with a pour too: the pair gets its "
+                     "trace, and the pads are still joined to the pour. A pair whose pads are missing or on two nets is left out, "
+                     "and said in the warnings.", "Rules & nets"),
     # -- Routing: Layers ------------------------------------------------------
     "layers": ("Layers to route", "Names of the signal layers that may carry traces, separated by commas (F.Cu, B.Cu, say). Empty: every "
                "layer the board file has. The layers left out still keep vias clear of their copper and reach their planes. Applies "
@@ -233,6 +242,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "show_outlines": ("courtyard", "footprint", "body", "silkscreen", "display", "draw", "parts", "components"),
     "show_names": ("reference", "designator", "refdes", "labels", "text", "display", "parts", "components"),
     "gpu_drawing": ("opengl", "graphics", "acceleration", "hardware", "render", "performance", "fast", "video card"),
+    "direct_pairs": ("decoupling", "bypass", "capacitor", "cap", "force", "pair", "connect", "join", "direct", "close", "pin"),
     "skip_nets": ("ignore", "exclude", "gnd", "ground", "power", "pattern", "wildcard", "glob", "net names", "unrouted"),
     "untangle": ("detour", "wiggle", "shorten", "straighten", "loop", "long way", "tidy", "clean", "length"),
     "narrow_to_reach": ("taper", "neck", "neckdown", "narrow", "thin", "width", "fine pitch", "pin", "pad", "bga", "qfn", "minimum track"),
@@ -346,6 +356,7 @@ class Settings:
     show_pours: bool = True
     show_pour_islands: bool = False
     skip_nets: str = ""  # comma-separated net names or patterns
+    direct_pairs: str = ""  # comma-separated PAD:PAD pairs joined by a trace of their own: the open board's (``board_pairs``), not saved here
     layers: str = ""  # comma-separated signal layers to route; "" = all
     layer_cost: str = ""  # comma-separated LAYER:FACTOR; "" = every layer costs the same
     smooth_corners: bool = True
@@ -372,7 +383,7 @@ class Settings:
         except (OSError, ValueError):
             return settings
         for field in fields(cls):
-            if field.name in data:
+            if field.name in data and field.name not in PER_BOARD:
                 try:
                     setattr(settings, field.name, type(getattr(settings, field.name))(data[field.name]))
                 except (TypeError, ValueError):
@@ -388,7 +399,7 @@ class Settings:
         path = path or default_path()
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(asdict(self), f, indent=2)
+            json.dump({k: v for k, v in asdict(self).items() if k not in PER_BOARD}, f, indent=2)
             f.write("\n")
         return path
 
@@ -448,6 +459,7 @@ class Settings:
         note = skip_nets(design, self.skip_nets.split(","))
         if note:
             notes.append(note)
+        notes += direct_pairs(design, self.direct_pairs.split(","))
         want_clearance = rules.clearance
         want_edge = rules.clearance if rules.edge_clearance is None else rules.edge_clearance
         rules.clearance = want_clearance + self.margin
@@ -490,6 +502,78 @@ def skip_nets(design, patterns) -> str:
         return ""
     return (f"{len(hit)} nets are left unrouted by choice and not counted as open: "
             + ", ".join(sorted(design.net_names[n] for n in hit)))
+
+
+PER_BOARD = ("direct_pairs",)  # settings that belong to one board: kept in ``board_pairs.json``, not in the settings file
+
+
+def _pairs_file(settings_path: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(settings_path)), "board_pairs.json")
+
+
+def _board_key(dsn_path: str) -> str:
+    return os.path.normcase(os.path.abspath(dsn_path))
+
+
+def board_pairs(settings_path: str, dsn_path: str) -> str:
+    """The pads to join directly kept for this board (the ``direct_pairs`` setting), "" if none."""
+    try:
+        with open(_pairs_file(settings_path), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    value = data.get(_board_key(dsn_path), "") if isinstance(data, dict) else ""
+    return value if isinstance(value, str) else ""
+
+
+def keep_board_pairs(settings_path: str, dsn_path: str, pairs: str) -> None:
+    """Keeps ``pairs`` as this board's pads to join directly (none: the board is forgotten). OSError if it cannot be written."""
+    path = _pairs_file(settings_path)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        data = data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        data = {}
+    key = _board_key(dsn_path)
+    if pairs.strip():
+        data[key] = pairs.strip()
+    else:
+        data.pop(key, None)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+def direct_pairs(design, items) -> list[str]:
+    """Sets the board's pairs of pads to join by a trace of their own from
+    ``items`` (each PAD:PAD, by the pads' names). Returns the lines to tell the
+    user: what is joined so, and each item left out and why."""
+    board = design.board
+    by_name = {p.name: p for p in board.pads if p.name and not p.is_via}
+    board.direct, said, left = [], [], []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        a, sep, b = item.partition(":")
+        pa, pb = by_name.get(a.strip()), by_name.get(b.strip())
+        if not sep or pa is None or pb is None:
+            missing = [n.strip() for n, p in ((a, pa), (b, pb)) if p is None and n.strip()] if sep else []
+            left.append(f"{item} (" + (f"no pad {', '.join(missing)} on this board" if missing else "not PAD:PAD") + ")")
+        elif pa is pb:
+            left.append(f"{item} (one pad)")
+        elif pa.net_id < 0 or pa.net_id != pb.net_id:
+            names = design.net_names
+            left.append(f"{item} (on two nets: {names.get(pa.net_id, 'none')}, {names.get(pb.net_id, 'none')})")
+        elif (pa.pad_id, pb.pad_id) not in board.direct and (pb.pad_id, pa.pad_id) not in board.direct:
+            board.direct.append((pa.pad_id, pb.pad_id))
+            said.append(f"{pa.name}-{pb.name}")
+    out = [f"{len(said)} pairs of pads joined directly, by a trace of their own: " + ", ".join(said)] if said else []
+    if left:
+        out.append("WARNING: pads to join directly left out: " + "; ".join(left))
+    return out
 
 
 RULES = ("trace_width", "clearance", "via_diameter", "via_drill", "edge_clearance")  # the rules settings can override

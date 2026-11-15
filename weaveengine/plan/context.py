@@ -42,6 +42,13 @@ class Connection:
     sites: tuple[int, ...] = ()                      # pad ids of the vias between them
     parent: int | None = None
     skeleton: bool = False  # part of a pour's skeleton (``plan.skeleton``): held inside the pour, on its layer, and not drawn
+    direct: bool = False    # joins two pads the user wants joined by a trace of their own (``Board.direct``): it rides no other
+                            # copper of its net and goes through none of its pads, and is never redundant
+
+    @property
+    def search_net(self) -> int:
+        """The net the search is told: a direct connection's is none, so that it keeps to its own way (as a foreign net's would)."""
+        return -1 if self.direct else self.net_id
 
     @property
     def routed(self) -> bool:
@@ -155,13 +162,23 @@ def _locked(board: Board, pads: list) -> tuple[set[tuple[int, int]], set[int]]:
 def decompose(board: Board, layers: list[Layer]) -> tuple[list[tuple[int, int, int]], list[int]]:
     """Multi-pin nets -> 2-pin connections (net, pad, pad). Also returns pads
     that cannot be reached on any layer, other than through copper of their
-    own net that they touch."""
+    own net that they touch. The pairs of ``board.direct`` are connections of
+    their own, the rest of their net joined to them in the shortest tree; on a
+    net that is not routed (a pour's, or skipped) they are its only ones."""
     reachable = set().union(*[set(layer.pmap.pad_edges) for layer in layers])
     centre = {p.pad_id: p.centre for p in board.pads}
     by_id = {p.pad_id: p for p in board.pads}
     pairs: list[tuple[int, int, int]] = []
     buried: list[int] = []
-    for net_id, pads in sorted(board.nets().items()):
+    direct: dict[int, list[tuple[int, int]]] = {}
+    for a, b in board.direct:
+        if a in by_id and b in by_id and by_id[a].net_id == by_id[b].net_id >= 0:
+            direct.setdefault(by_id[a].net_id, []).append((a, b))
+    nets = board.nets()
+    for net_id, pairs_of in sorted(direct.items()):  # (a net routed only for them)
+        if net_id not in nets:
+            pairs += [(net_id, a, b) for a, b in pairs_of if a in reachable and b in reachable]
+    for net_id, pads in sorted(nets.items()):
         touching = _touching([by_id[p] for p in pads]) if len(pads) >= 2 else set()
         # Locked wiring that touches a pad leads out of it, even through a keepout: the pad is not buried, and
         # what the wiring joins needs no trace.
@@ -178,7 +195,12 @@ def decompose(board: Board, layers: list[Layer]) -> tuple[list[tuple[int, int, i
         index = {k: n for n, k in enumerate(keep)}
         if len(keep) >= 2:
             near = {(index[i], index[j]) for i, j in touching if i in index and j in index}
-            pairs += [(net_id, a, b) for a, b, _ in spanning_pairs([pads[k] for k in keep], centre, near)]
+            # The pairs to join directly are joined first, each by a connection of its own; the tree joins what is left to them.
+            at = {pads[k]: index[k] for k in keep}
+            forced = [(at[a], at[b]) for a, b in direct.get(net_id, ()) if a in at and b in at]
+            joined = {tuple(sorted(x)) for x in near}
+            pairs += [(net_id, pads[keep[i]], pads[keep[j]]) for i, j in forced if tuple(sorted((i, j))) not in joined]
+            pairs += [(net_id, a, b) for a, b, _ in spanning_pairs([pads[k] for k in keep], centre, near | set(forced))]
     return pairs, buried
 
 
@@ -233,11 +255,13 @@ class Context:
         rules = board.rules
         centre = {p.pad_id: p.centre for p in board.pads}
         self.conns: dict[int, Connection] = {}
+        direct = {frozenset(pair) for pair in board.direct}
         for i, (net_id, a, b) in enumerate(pairs, 1):
             self.conns[i] = Connection(
                 i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
                 weight=1.0 + (rules.full(net_id) - rules.base_width) / rules.pitch,
-                layers=tuple(l.index for l in layers if a in l.pmap.pad_edges and b in l.pmap.pad_edges))
+                layers=tuple(l.index for l in layers if a in l.pmap.pad_edges and b in l.pmap.pad_edges),
+                direct=frozenset((a, b)) in direct)
         # The pours' skeletons (``plan.skeleton``), (net, pad, pad, layer): connections like the others, on their layer only.
         for i, (net_id, a, b, at) in enumerate(skeletons, len(self.conns) + 1):
             self.conns[i] = Connection(i, net_id, a, b, air_len=math.dist(centre[a], centre[b]),
@@ -332,7 +356,7 @@ class Context:
                 if self.options.demand:
                     # Plain shortest path, congestion off. A connection that may
                     # use several layers spreads its demand over them.
-                    r = route(pmap, layer.state, c.src, c.dst, self.params, congestion=False, weight=c.weight, net=c.net_id)
+                    r = route(pmap, layer.state, c.src, c.dst, self.params, congestion=False, weight=c.weight, net=c.search_net)
                     c.demand_gates[li] = frozenset(r.gates) if r is not None else frozenset()
                     for g in c.demand_gates[li]:
                         layer.demand[g] += c.weight / len(c.layers)
@@ -395,7 +419,7 @@ class Context:
         new = [not isinstance(j, int) for j in joints]     # per joint: a via to be made (else copper that is there)
         pads = [conn.src, *(self.next_pad + sum(new[:n]) if new[n] else j for n, j in enumerate(joints)), conn.dst]
         pieces = [Connection(self.next_wire + n, conn.net_id, pads[n], pads[n + 1], weight=conn.weight, parent=conn.wire_id,
-                             skeleton=conn.skeleton) for n in range(len(routes))]
+                             skeleton=conn.skeleton, direct=conn.direct) for n in range(len(routes))]
         def mark():
             return [(len(sites.log(l.pmap)), len(sites.journal(l.state))) for l in self.layers]
 
@@ -445,7 +469,7 @@ class Context:
                     if n - 1 in made or n in made:
                         raise ValueError("two pieces at a new via use a gate in common")
                     again = route(layer.pmap, layer.state, pads[n], pads[n + 1], self.params, mode="corridor", corridor=set(r.gates),
-                                  weight=conn.weight, net=conn.net_id)
+                                  weight=conn.weight, net=conn.search_net)
                     if again is None:
                         raise ValueError("the pieces do not fit together")
                     steps = again.steps
@@ -629,7 +653,7 @@ class Context:
         for c in list(self.conns.values()):
             c.pieces, c.sites, ends = snap["pieces"].get(c.wire_id, ((), (), []))
             for w, (src, dst) in zip(c.pieces, ends):
-                self.conns[w] = Connection(w, c.net_id, src, dst, weight=c.weight, parent=c.wire_id, skeleton=c.skeleton,
+                self.conns[w] = Connection(w, c.net_id, src, dst, weight=c.weight, parent=c.wire_id, skeleton=c.skeleton, direct=c.direct,
                                            air_len=math.dist(self.pad_centre(src), self.pad_centre(dst)))
         for c in self.conns.values():
             c.layer = next((l.index for l in self.layers if c.wire_id in l.state.wire_path), None)

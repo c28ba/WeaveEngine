@@ -206,7 +206,8 @@ def find(ctx, conn, max_vias: int | None = None, struck=(), penalty: dict | None
         max_vias = changes = 0
     goal = ctx.pad_centre(conn.dst)
     penalty = penalty or {}
-    search = dict(weight=conn.weight, net=conn.net_id, reach=True, target=goal, through=through, **how)
+    through = through and not conn.direct  # (a direct connection goes through no pad of its net: ``Connection.direct``)
+    search = dict(weight=conn.weight, net=conn.search_net, reach=True, target=goal, through=through, **how)
     # What the way on from a via costs at least, of the straight line: all of it if the net has
     # no copper but this connection's; else next to nothing, since it may lead along that copper.
     onward = 1.0 if conn.net_id in ctx.pairs else kernel.RIDE

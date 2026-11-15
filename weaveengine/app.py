@@ -33,7 +33,7 @@ from weaveengine.progress import Estimator, Timings, clock, phrase
 from weaveengine.session import Job
 from weaveengine.plan.context import DRAWN, thin
 from weaveengine.router import redo_teardrops
-from weaveengine.settings import AUTOMATIC, CHOICES, DESCRIPTIONS, RULES, SECTIONS, Settings, matches_search, default_path, detected_rules, layer_list, skip_nets, undetected
+from weaveengine.settings import AUTOMATIC, CHOICES, DESCRIPTIONS, RULES, SECTIONS, Settings, board_pairs, direct_pairs, keep_board_pairs, matches_search, default_path, detected_rules, layer_list, skip_nets, undetected
 from weaveengine.viz.svg import export_result
 
 LAYER_COLORS = ["#e0483c", "#3c7be0", "#35b56a", "#c9a227", "#b06cff", "#22cfcf"]
@@ -955,6 +955,14 @@ class MainWindow(QMainWindow):
         self.selection_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.selection_label.setStyleSheet("background: #20242a; color: #e6e6e6; padding: 6px; border-radius: 4px;")
         col.addWidget(self.selection_label)
+        # Two pads of a net joined by a trace of their own (the ``direct_pairs`` setting): select one, press this, click the other.
+        self.join_button = QPushButton("Join directly to another pad…")
+        self.join_button.setToolTip("Give this pad and the next one you click (of the same net) a trace of their own between them, "
+                                    "as a decoupling capacitor and the pin it is for (Settings, Routing, Rules & nets: Pads joined directly)")
+        self.join_button.clicked.connect(self._start_join)
+        self.join_button.hide()
+        col.addWidget(self.join_button)
+        self._joining = None  # the pad's name, while waiting for the other pad
         self.view.selected.connect(self.show_selection)
 
         self.log = QPlainTextEdit()
@@ -1066,12 +1074,62 @@ class MainWindow(QMainWindow):
         except OSError:
             pass  # a view preference that cannot be saved is not worth interrupting for
 
+    def _pairs(self) -> list[str]:
+        return [item.strip() for item in self.settings.direct_pairs.split(",") if item.strip()]
+
+    def _keep_pairs(self, pairs: str) -> None:
+        """This board's pads to join directly, kept for it (``settings.board_pairs``)."""
+        self.settings.direct_pairs = pairs
+        if self.dsn_path is None:
+            return
+        try:
+            keep_board_pairs(self.settings_path, self.dsn_path, pairs)
+        except OSError as error:
+            self.say(f"Could not keep the pads to join directly for this board: {error}")
+
+    def _start_join(self) -> None:
+        info = self.view.selection
+        if not info or info["kind"] != "pad":
+            return
+        self._joining = info["name"]
+        self.join_button.hide()
+        self.selection_label.setText(f"Click the pad to join <b>{html.escape(self._joining)}</b> to directly (a pad of the same "
+                                     "net). Click anything else to cancel.")
+
+    def _finish_join(self, info) -> None:
+        """Adds the pair the user picked to the ``direct_pairs`` setting, if the two pads can be paired, and says so."""
+        first, self._joining = self._joining, None
+        if not info or info["kind"] != "pad" or info["name"] == first:
+            self.say("Joining pads directly: cancelled")
+            return
+        pair = f"{first}:{info['name']}"
+        if self.design is not None:
+            lines = direct_pairs(self.design, [pair])
+            if any(line.startswith("WARNING") for line in lines):
+                self.say("Not joined directly: " + lines[-1].split(": ", 2)[-1])
+                direct_pairs(self.design, self._pairs())
+                return
+        same = {frozenset(p.split(":")) for p in self._pairs()}
+        if frozenset((first, info["name"])) not in same:
+            self._keep_pairs(", ".join(self._pairs() + [pair]))
+        if self.design is not None:
+            direct_pairs(self.design, self._pairs())
+        self.say(f"{first} and {info['name']} will be joined directly, by a trace of their own, when the board is routed "
+                 "(Settings, Routing, Rules & nets: Pads joined directly)")
+
     def show_selection(self, info) -> None:
+        if self._joining is not None:
+            self._finish_join(info)
+        self.join_button.setVisible(bool(info) and info["kind"] == "pad" and self.design is not None)
         if not info:
             self.selection_label.setText("Nothing there. Click a trace, a pad or a part.")
             return
+        if info["kind"] == "pad":
+            partners = sorted({b if a == info["name"] else a for a, _, b in (p.partition(":") for p in self._pairs())
+                               if info["name"] in (a, b)})
+            info = {**info, "joined directly to": ", ".join(partners)}
         order = {"trace": ["net", "layer", "length", "width", "from", "to", "net total"],
-                 "pad": ["name", "net", "part", "layers", "size"], "via": ["name", "net", "layers", "size"],
+                 "pad": ["name", "net", "part", "layers", "size", "joined directly to"], "via": ["name", "net", "layers", "size"],
                  "part": ["name", "value", "footprint", "side", "position", "rotation", "pads"]}[info["kind"]]
         rows = "".join(f"<tr><td style='color:#9aa'>{key}&nbsp;&nbsp;</td><td>{info[key]}</td></tr>" for key in order if info.get(key))
         self.selection_label.setText(f"<b>{info['kind'].capitalize()}</b><table>{rows}</table>")
@@ -1122,6 +1180,7 @@ class MainWindow(QMainWindow):
         self.stop()
         self.dsn_path, self.design, self.result, self.routed_design = path, design, None, None
         board = design.board
+        self.settings.direct_pairs = board_pairs(self.settings_path, path)  # (this board's own: none if it has not been given any)
         skipped = skip_nets(design, self.settings.skip_nets.split(","))
         self.view.set_board(board)
         nets = board.nets()
@@ -1131,6 +1190,11 @@ class MainWindow(QMainWindow):
         self.say(f"Opened {path}")
         warnings = [f"{text}. Set it in Settings, Routing, Rules & nets" for text in undetected(detected_rules(design, path), self.settings)]
         warnings += design.warnings
+        for line in direct_pairs(design, self._pairs()):
+            if line.startswith("WARNING: "):
+                warnings.append(line[len("WARNING: "):] + " (Settings, Routing, Rules & nets: Pads joined directly)")
+            else:
+                self.say("  " + line)
         for text in warnings:
             self.say(f"  ⚠ {text}")
         self.show_warnings(warnings)
@@ -1458,6 +1522,11 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.settings, self.settings_path, self, *self._detected())
         if dialog.exec() == QDialog.Accepted:
             before, self.settings = self.settings, dialog.settings()
+            if self.settings.direct_pairs != before.direct_pairs:  # (the open board's own: kept for it, not in the settings file)
+                self._keep_pairs(self.settings.direct_pairs if self.dsn_path else "")
+                if self.design is not None:
+                    for line in direct_pairs(self.design, self._pairs()):
+                        self.say("  " + line)
             self._teardrops_again(before)
             self.outline_box.setChecked(self.settings.show_outlines)
             self.name_box.setChecked(self.settings.show_names)

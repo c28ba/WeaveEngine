@@ -561,6 +561,16 @@ new example (a board and where on it); then it moves up to be fixed.
 
 ### Rules
 
+- [x] **Pads joined directly** (asked by the user 2026-11-14; branch
+  `direct-pairs`): two pads of one net the user picks (a decoupling capacitor
+  and the pin it is for) get a trace of their own, which rides no other copper
+  of the net and goes through none of its pads; the rest of the net joins on
+  in the shortest tree. On a net with a pour too. Picked in the app (select a
+  pad, Join directly, click the other), kept per board (`board_pairs.json`
+  beside the settings, by the board's file), or `--connect PAD:PAD`. Pairs
+  that cannot be made are said in the warnings. On a user's board, C10-2 to
+  U3-8 on GND (45 pads): a trace of its own, 12.8 mm with two vias.
+
 - **A via size per net class.** Route each net with its class's via (the
   DSN's `use_via`), not the board's default: room for a larger via has to be
   planned for in the triangulation, not added once the routing is done.
