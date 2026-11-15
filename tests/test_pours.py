@@ -404,6 +404,40 @@ def test_a_pad_whose_spokes_reach_only_fill_that_meets_nothing_else_is_starved_o
     assert pours.starved(board, pour, pad, joined)
 
 
+def boxed_in() -> tuple[Board, Pad, dict, dict, dict]:
+    """A square pad of the pour's net walled in by another net's traces on three sides: one spoke, to the east."""
+    from weaveengine.board import Zone
+    board = board_with_pour()
+    pad = Pad(1, GND, box(19.5, 14.5, 20.5, 15.5), "C3-2", BACK)
+    board.pads = [Pad.circle(0, 16, 15, 0.6, GND, "U1-1", BACK), pad, Pad.circle(2, 30, 8, 0.6, GND, "U1-2", BACK)]
+    board.pour_zone[(GND, 1)] = Zone(gap=0.3, spoke=0.3, connect="thermal")
+    lines = {0: [(21, 14), (19, 14), (19, 16), (21, 16)]}
+    return board, pad, lines, {0: SIG}, {0: 1}
+
+
+def starved_with(board, pad, lines, nets, layers) -> bool:
+    [pour] = pours.estimate(board, lines, nets, layers)
+    wires = pours.copper_of(board, lines, nets, layers)
+    return pours.starved(board, pour, pad, wires, [(layers[w], pts) for w, pts in lines.items() if nets[w] == GND])
+
+
+def test_a_trace_counts_as_a_spoke_only_into_the_zones_own_fill():
+    """KiCad counts a track from inside the pad to a point in the zone's fill: not to another pad of the net that the
+    zone joins by spokes (its fill stops at that pad's edge), and a trace of the net over where a spoke would be is no
+    fill."""
+    board, pad, lines, nets, layers = boxed_in()
+    assert starved_with(board, pad, lines, nets, layers)              # (one spoke)
+    lines[1], nets[1], layers[1] = [(20, 15), (16, 15)], GND, 1         # (a trace west, to U1-1's centre)
+    assert starved_with(board, pad, lines, nets, layers)
+    lines[1] = [(20, 15), (17, 15)]                                     # (west, into the fill short of U1-1)
+    assert not starved_with(board, pad, lines, nets, layers)
+    lines[1] = [(20, 15), (19.25, 15), (19.25, 15.75)]                  # (into the bare gap inside the walls)
+    [pour] = pours.estimate(board, lines, nets, layers)
+    spot = Point(19.25, 15.6)
+    assert any(x.shape.contains(spot) for x in pour.pieces) and not pour.zone.contains(spot)  # (copper, not fill)
+    assert starved_with(board, pad, lines, nets, layers)
+
+
 def test_a_rule_area_that_keeps_pours_out_is_not_filled():
     """A KiCad rule area that does not allow copper pour (traces and vias allowed): no fill there."""
     board = board_with_pour()
