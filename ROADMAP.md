@@ -205,6 +205,32 @@ Next (the user, 2026-11-15): pours that pass KiCad's DRC.
   and perhaps pours first (a trace that can only cut a pour is left open and
   said); measured on the sweep boards by KiCad's thermal and island counts.
   Changing a pad's relief stays off (the user: it breaks the zone's rules).
+  Found (2026-11-15, branch `pour-drc`, on seven boards' 27 starved pads,
+  judged by KiCad's own refill: `kicad-cli pcb drc --refill-zones
+  --save-board`; the fill pcbnew's Python saves differs from it):
+  - The estimate counted a pad's spokes on a fill that held the net's own
+    pads and traces, so a trace over a spoke, or a trace to the next pad of
+    the net, counted as joining it; KiCad looks at the zone's fill alone.
+    Now each fill keeps both (`pours.Fill`), and `pours.starved` counts as
+    KiCad does: a spoke per stretch of the pad grown by half its gap that
+    the fill crosses, isolated islands by the fill polygon they are, tracks
+    into the zone's fill. Agrees with KiCad on 20 pads (was 15), missing 3
+    (was 8), 3 false (was 4). Sweep: starved/mask 37 to 34, nothing worse.
+  - Most pads left starved were already seen as starved: the spoke pass
+    found no room, traces of other nets passing right beside the pad. And
+    the skeletons give way often (tiers 1-3: 373 joins of pads through
+    their pour; openair 61, cm5-minima 52, olimex 36 and 37, castor 34).
+    On interf-u most give way because a trace moved off one could go back
+    only through more vias than it had (17 of 36), or there is no way at
+    all wide enough for the skeleton (14).
+  - Setting "Extra vias for traces moved off a pour" (`--pour-vias N`, 0 by
+    default): such a trace may take N more. At 2 on tiers 1-3: skeletons
+    given way 373 to 263, KiCad open items 613 to 595, but starved/mask 34
+    to 43 and two boards route a connection or two fewer (the routing goes
+    otherwise from there on); olimex-poe-m2 cut-off pads 73 to 7, olimex-
+    poe-c 19 to 51. A choice per board, not a default.
+  Next: a skeleton that reaches each pad along its spokes (11.3, "Not
+  done"), so that KiCad's spokes have room.
 
 Fix first (seen by the user 2026-11-14, macOS app built from main f2db5c8, a
 user's board routed with its KiCad files beside the DSN; not yet looked into):

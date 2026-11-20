@@ -180,6 +180,11 @@ DESCRIPTIONS = {
     "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which traces "
                        "move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it. Off "
                        "lets traces cut a pour freely, which leaves more pieces to join.", "Pours & planes"),
+    "pour_vias": ("Extra vias for traces moved off a pour", "How many vias a trace moved out of a pour's way may take "
+                  "beyond those it had. 0 (the default): a trace moves for a pour only as it is, so traces stay short and on "
+                  "dense boards pours are cut where they must be (and joined after, often by stitching vias). 1 or 2: traces "
+                  "go further round, through more vias, so more pours stay in one piece, with fewer stitches and starved "
+                  "thermals. A trace is never given up for a pour either way. Slower.", "Pours & planes"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
                        "pours' skeletons are drawn to. Automatic takes each zone's own minimum thickness from the board (0.25 mm where "
                        "there is none); set it to "
@@ -257,6 +262,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "join_bare_islands": ("island", "isolated", "copper", "pour", "zone", "plane", "stitch", "via", "whole", "return path", "fill"),
     "pour_spokes": ("thermal", "spoke", "starved", "relief", "pad", "pour", "zone", "drc", "connection", "trace"),
     "pour_skeletons": ("zone", "plane", "copper fill", "fill", "connectivity", "split", "cut", "thermal", "spoke", "whole"),
+    "pour_vias": ("zone", "plane", "whole", "stitch", "stitching", "island", "thermal", "starved", "balance", "weight", "priority"),
     "pour_min_width": ("zone", "fill", "minimum thickness", "min width", "sliver", "copper fill", "thin", "narrowest"),
     "show_pours": ("zone", "plane", "copper fill", "fill", "display", "draw", "ground plane", "polygon"),
     "show_pour_islands": ("zone", "orphan", "dead copper", "isolated", "unconnected", "fill", "display", "remnant"),
@@ -358,6 +364,7 @@ class Settings:
     join_bare_islands: bool = False
     pour_spokes: bool = True
     pour_skeletons: bool = True
+    pour_vias: int = 0  # vias a trace moved for a pour's skeleton may add; 0 = none (traces first)
     pour_min_width: float = 0.0  # mm; 0 = from the board's zones
     show_pours: bool = True
     show_pour_islands: bool = False
@@ -414,7 +421,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, merge_ends=self.merge_ends, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, skeleton=self.pour_skeletons, teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, merge_ends=self.merge_ends, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, skeleton=self.pour_skeletons, pour_vias=max(0, int(self.pour_vias)), teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        least_angle=min(max(self.least_angle, 0.0), 90.0), portfolio=self.portfolio)
 

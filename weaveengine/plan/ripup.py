@@ -251,9 +251,10 @@ def make_way(ctx: Context, hold=frozenset()) -> int:
     pour stays there. Here, for each open skeleton whose cheapest way, with
     crossings allowed and capacity ignored, is barred by at most ``MOST_MOVED``
     connections, those are taken out, the skeleton put in and they put back
-    where they now fit, with no more vias than they had. Kept only if every
-    trace among them goes back in and no gate is over-full, else undone
-    exactly: no trace is lost to a skeleton. Returns the skeletons placed."""
+    where they now fit, with no more vias than they had (and
+    ``Options.pour_vias`` more). Kept only if every trace among them goes back
+    in and no gate is over-full, else undone exactly: no trace is lost to a
+    skeleton. Returns the skeletons placed."""
     placed = 0
     for w in sorted((w for w in ctx.unrouted - set(hold) if ctx.conns[w].skeleton and not ctx.conns[w].dead),
                     key=lambda w: (ctx.conns[w].air_len, w)):
@@ -282,7 +283,7 @@ def make_way(ctx: Context, hold=frozenset()) -> int:
         if not move or len(move) > MOST_MOVED:
             continue
         lifted = [(ctx.conns[x], ctx.lift(ctx.conns[x])) for x in sorted(move) if ctx.conns[x].routed]
-        vias = {c.wire_id: len(c.pieces) - 1 if c.pieces else 0 for c, _ in lifted}
+        vias = {c.wire_id: (len(c.pieces) - 1 if c.pieces else 0) + (0 if c.skeleton else ctx.options.pour_vias) for c, _ in lifted}
         ctx.record()
         ok = place(ctx, conn, find(ctx, conn, hard_cap=True), hard_cap=True)
         for c in sorted((c for c, _ in lifted), key=lambda c: (c.skeleton, c.air_len, c.wire_id)):

@@ -4,6 +4,7 @@ pieces; the piece with most of the net's pads is the main one, and the others ho
 are cut off, or none (islands)."""
 import math
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import shapely
 from shapely import affinity
@@ -20,12 +21,19 @@ class Piece:
     pad_ids: set = field(default_factory=set)       # and the ids of those and of its vias
 
 
+class Fill(NamedTuple):
+    """A pour's fill as ``fills`` makes it."""
+    copper: object  # with its net's own pads and traces joined in: what hangs together (its pieces)
+    zone: object    # the zone's fill alone, spokes and all, less the pads it joins by spokes: KiCad's filled polygons, which its check of a pad's spokes looks at
+
+
 @dataclass
 class Pour:
     net: int
     layer: int
     outline: object
     pieces: list[Piece] = field(default_factory=list)
+    zone: object = None                             # the zone's fill alone (``Fill.zone``)
     reach: tuple | None = None                      # how the copper of its net hangs together (``reach``)
     left: list = field(default_factory=list)        # the groups of its net's pads (ids) not joined to the rest: the same on each pour of the net
 
@@ -79,8 +87,8 @@ def copper_of(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: d
 def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict | None = None,
           clearance: float | None = None, min_width: float | None = None, widths: dict | None = None,
           nets: set | None = None, wires: list | None = None, window=None) -> tuple[dict, list]:
-    """The fill of each pour (its index in ``board.pours`` -> its copper, with the net's own pads and traces in it, as
-    one shape: ``estimate``), and the routing's copper (``copper_of``). ``nets``: only the pours of these nets (the
+    """The fill of each pour (its index in ``board.pours`` -> a ``Fill``: its copper, with the net's own pads and traces
+    in it, as one shape, ``estimate``; and the zone's fill alone), and the routing's copper (``copper_of``). ``nets``: only the pours of these nets (the
     zones of other nets that fill before them, which they keep clear of, are filled but not returned); ``wires``: the
     routing's copper, if known already; ``window``: only the fill within this shape (``refill``). The other zones
     (``Board.areas``: teardrops, copper on one pad) are filled as KiCad fills them, and not returned."""
@@ -207,6 +215,7 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         if kept and blocked is not None:
             grown = grown.difference(blocked)
         fill = _prune(grown, least)
+        bare = _polygons(fill.difference(shapely.union_all([p.shape for p in thermal])) if thermal else fill)  # (KiCad's stops at the pads)
         # The net's own pads are copper whatever their width, and its traces join what they touch.
         joins = [p.shape.intersection(inside) for p in own if how[p.pad_id] in ("solid", "thermal")]
         joins += [shape for shape in wires_of.get((net, at), ()) if shape.intersects(outline)
@@ -214,7 +223,7 @@ def fills(board, lines: dict, wire_net: dict, wire_layer: dict, teardrops: dict 
         fill = shapely.union_all([fill, *joins])
         filled.setdefault(at, []).append((net, zone.priority, fill, fill.bounds))
         if k < len(board.pours):
-            found[k] = fill
+            found[k] = Fill(fill, bare)
     if nets is not None:
         found = {k: fill for k, fill in found.items() if board.pours[k][0] in nets}
     return found, wires
@@ -233,20 +242,38 @@ def pour_area(board, clearance: float | None = None):
 
 
 def refill(board, fill_of: dict, nets: set, wires: list, near, reach: float) -> dict:
-    """The fills of ``nets``' pours (``fill_of``: pour index -> fill, ``fills``) made again where something changed
+    """The fills of ``nets``' pours (``fill_of``: pour index -> ``Fill``, ``fills``) made again where something changed
     within ``near`` (a shape): within ``reach`` of it, the fill is made anew (from a window a little larger, so that
     what is made at its edge is as the whole fill makes it), and the rest is as it was."""
     inner = near.buffer(reach, join_style="mitre")
     outer = inner.buffer(REFILL, join_style="mitre")
     local, _ = fills(board, {}, {}, {}, nets=nets, wires=wires, window=outer)
-    return {k: shapely.union_all([fill_of[k].difference(inner), local[k].intersection(inner)]) for k in local}
+    out = {}
+    for k in local:
+        copper, zone = (shapely.union_all([was.difference(inner), now.intersection(inner)]) for was, now in zip(fill_of[k], local[k]))
+        out[k] = Fill(copper, _polygons(zone))  # (the zone's fill as polygons only: the pieces joined can leave a line or point)
+    return out
+
+
+def _polygons(shape):
+    """The polygons of ``shape``, as one (Multi)Polygon."""
+    if shape.geom_type in ("Polygon", "MultiPolygon"):
+        return shape
+    out, todo = [], [shape]
+    while todo:
+        g = todo.pop()
+        if g.geom_type == "Polygon":
+            out.append(g)
+        elif hasattr(g, "geoms"):
+            todo.extend(g.geoms)
+    return shapely.MultiPolygon(out[::-1])
 
 
 REFILL = 3.0  # mm round what is made anew by ``refill`` that it fills too, and does not keep
 
 
 def with_copper(board, fill_of: dict, shapes) -> dict:
-    """``fill_of`` (pour index -> fill, ``fills``) with more copper of the pours' net joined in as ``fills`` joins it
+    """``fill_of`` (pour index -> ``Fill``, ``fills``) with more copper of the pours' net joined in as ``fills`` joins it
     (``shapes``: (shape, layer), layer None for a via, on every layer): where it meets a pour's outline. Copper of
     its own net takes nothing from a fill, so the rest of it is as it was."""
     out = dict(fill_of)
@@ -254,7 +281,7 @@ def with_copper(board, fill_of: dict, shapes) -> dict:
         _, at, outline = board.pours[k]
         more = [shape for shape, layer in shapes if (layer is None or layer == at) and shape.intersects(outline)]
         if more:
-            out[k] = shapely.union_all([fill, *more])
+            out[k] = fill._replace(copper=shapely.union_all([fill.copper, *more]))  # (the zone's fill is as it was)
     return out
 
 
@@ -325,16 +352,16 @@ def reach(board, pours: list, wires: list, net: int) -> tuple[dict, list, object
 
 
 def classify(board, fill_of: dict, wires: list) -> list[Pour]:
-    """The pieces of each pour's fill (``fills``: pour index -> fill, with all the pours of each net in it) and their
+    """The pieces of each pour's fill (``fills``: pour index -> ``Fill``, with all the pours of each net in it) and their
     kinds; the pours in the order of ``board.pours``."""
     pours = []
     for k in sorted(fill_of):
         net, at, outline = board.pours[k]
         zone = board.zone(net, at)
         own = [p for p in board.pads if p.net_id == net and p.on(at) and p.shape.intersects(outline) and joined(p, zone) != "none"]
-        fill = fill_of[k]
+        fill = fill_of[k].copper
         parts = sorted(getattr(fill, "geoms", [fill]), key=lambda g: -g.area)
-        pour = Pour(net, at, outline)
+        pour = Pour(net, at, outline, zone=fill_of[k].zone)
         index = shapely.STRtree([p.shape for p in own])  # (the pads each part meets, in the order of ``own``)
         has = [[own[i] for i in sorted(index.query(g, predicate="intersects").tolist())] for g in parts]
         main = max(range(len(parts)), key=lambda j: (sum(not p.is_via for p in has[j]), parts[j].area), default=None)
@@ -387,8 +414,6 @@ def _prune(fill, least: float):
 GAP, SPOKE = 0.5, 0.5  # mm: KiCad's default thermal relief gap and spoke width
 ERROR = 0.005          # mm: KiCad's default maximum error, which its spokes reach past the gap
 EPSILON = 0.001        # mm: what KiCad's fill leaves of the least width, so that copper just that wide stays
-LONE = 3.0            # mm round a pad within which fill that meets nothing but the pad is looked for (``starved``)
-HELD = 0.65           # of a spoke beyond its pad in a piece of fill: it joins the pad to that piece (fills cut some spokes short)
 
 
 def joined(pad, zone) -> str:
@@ -409,63 +434,64 @@ def relief(pad, zone) -> tuple[float, float]:
 def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = None) -> bool:
     """Whether KiCad's check of thermal reliefs finds ``pad`` starved in ``pour`` (its pieces, ``classify``): fewer
     spokes join it to the fill than the board asks (``Board.min_spokes``). As KiCad counts them
-    (``DRC_TEST_PROVIDER_ZONE_CONNECTIONS``): its spokes that the fill keeps; those into a stretch of fill that meets
-    nothing else of the net (no other pad or via, nor a trace: ``wires``, shape, net, layer) only if there are no
-    others; and, if still too few, the traces of its net on the pour's layer (``traces``: (layer, points)) from inside
-    the pad to a point in the fill. A stretch of fill is a piece less the pad: KiCad's fill does not hold the pad, so
-    two spokes into one piece only through the pad are two stretches. A pad no spoke reaches at all is not checked:
-    it is not joined (or by traces alone). ``pads``: pad id -> Pad, if known."""
+    (``DRC_TEST_PROVIDER_ZONE_CONNECTIONS``): a spoke for each stretch of the pad grown by half its relief gap that
+    the zone's fill crosses (``Pour.zone``: a trace of the net over a spoke is no fill); those into a polygon of fill
+    that meets nothing else of the net (no other pad or via, nor a trace: ``wires``, shape, net, layer) only if there
+    are none into others; and, if still too few, the traces of its net on the pour's layer (``traces``: (layer,
+    points)) from inside the pad to a point in the zone's fill. A pad no spoke reaches at all is not checked: it is
+    not joined (or by traces alone). ``pads``: pad id -> Pad, if known."""
     zone = board.zone(pour.net, pour.layer)
     if pad.net_id != pour.net or pad.is_via or not pad.on(pour.layer) or joined(pad, zone) != "thermal":
         return False
     pads = pads if pads is not None else {p.pad_id: p for p in board.pads}
-    # (fill that meets nothing else is small, round its pad: what reaches out of ``LONE`` round the pad meets more)
-    near = shapely.box(*pad.shape.buffer(LONE).bounds)
-    mine = [shape_ for shape_, net, at in wires if net == pour.net and at == pour.layer and shape_.intersects(near)]
+    parts, tree = _parts(pour)
     real = alone = 0
-    cut: dict = {}  # piece -> its stretches round the pad
-    for shape, _ in spokes(pad, zone, board.pour_width(pour.net, pour.layer)):
-        out = shape.difference(pad.shape)
-        if out.area <= 0:
-            continue
-        piece = next((x for x in pour.pieces if x.shape.intersects(out) and x.shape.intersection(out).area >= HELD * out.area), None)
-        if piece is None:
-            continue
-        if id(piece) not in cut:
-            rest = piece.shape.intersection(near).difference(pad.shape)
-            cut[id(piece)] = [g for g in getattr(rest, "geoms", [rest]) if g.area > 0]
-        stretch = max(cut[id(piece)], key=lambda g: g.intersection(out).area, default=None)
-        if stretch is None:
-            continue
-        lone = not stretch.intersects(near.exterior) and not any(
-            i != pad.pad_id and i in pads and stretch.intersects(pads[i].shape) for i in piece.pad_ids) and not any(
-            stretch.intersects(shape_) for shape_ in mine)
+    grown = pad.shape.buffer(relief(pad, zone)[0] / 2.0, quad_segs=8)
+    ring = grown.exterior
+    near = _polygons(pour.zone.intersection(shapely.box(*ring.bounds)))  # (a clip can leave a line or point)
+    lines = [g for g in shapely.get_parts(ring.intersection(near)) if g.geom_type in ("LineString", "LinearRing") and not g.is_empty]
+    met = shapely.line_merge(shapely.MultiLineString(lines)) if lines else shapely.MultiLineString()
+    for arc in getattr(met, "geoms", [met]):
+        if arc.is_empty or arc.length <= 0 or not any(x.shape.intersects(arc) for x in pour.pieces):
+            continue  # (nothing, or an island KiCad removes)
+        k = int(tree.query(arc, predicate="intersects")[0])
+        lone = not (_meets(pour, k, pads, wires) - {pad.pad_id})
         alone += lone
         real += not lone
     if real == alone == 0 or real >= board.min_spokes:
         return False
-    fill = []
+    def in_fill(point) -> bool:  # (and not in an island KiCad removes)
+        return len(tree.query(point, predicate="intersects")) > 0 and any(x.shape.intersects(point) for x in pour.pieces)
 
-    def in_fill(point) -> bool:
-        """Whether ``point`` is in the fill less the pad (made when first asked: the estimate's pieces hold the pad,
-        KiCad's fill does not)."""
-        if not fill:
-            fill.append(_whole(pour).difference(pad.shape))
-        return fill[0].contains(point)
-
-    for layer, pts in traces:  # (each straight piece is a track to KiCad: one end in the pad, the other in the fill)
+    for layer, pts in traces:  # (each straight piece is a track to KiCad: one end in the pad grown so, the other in the fill)
         if layer == pour.layer:
             for a, b in zip(map(Point, pts), map(Point, pts[1:])):
-                real += (pad.shape.contains(a) and in_fill(b)) or (pad.shape.contains(b) and in_fill(a))
+                real += (grown.contains(a) and in_fill(b)) or (grown.contains(b) and in_fill(a))
     return (real or alone) < board.min_spokes
 
 
-def _whole(pour: Pour):
-    """The pieces of ``pour`` as one shape (made once for its pieces as they are: ``starved`` asks it of each pad)."""
-    made = pour.__dict__.get("_whole")
-    if made is None or made[0] is not pour.pieces or made[1] != len(pour.pieces):
-        made = pour.__dict__["_whole"] = (pour.pieces, len(pour.pieces), shapely.union_all([x.shape for x in pour.pieces]))
-    return made[2]
+def _parts(pour: Pour) -> tuple[list, object]:
+    """The polygons of ``pour``'s zone fill (``Pour.zone``) and a tree of them, made once."""
+    made = pour.__dict__.get("_parts")
+    if made is None:
+        parts = [g for g in getattr(pour.zone, "geoms", [pour.zone]) if not g.is_empty]
+        made = pour.__dict__["_parts"] = (parts, shapely.STRtree(parts))
+    return made
+
+
+def _meets(pour: Pour, k: int, pads: dict, wires: list) -> set:
+    """What of its net the ``k``-th polygon of ``pour``'s zone fill meets on its layer: the ids of pads and vias,
+    and -1 for a trace (``wires``); made once for those wires."""
+    cache = pour.__dict__.setdefault("_meets", {})
+    key = (k, id(wires), id(pads))
+    if key not in cache:
+        part = pour.__dict__["_parts"][0][k]
+        shapely.prepare(part)
+        got = {i for i, p in pads.items() if p.net_id == pour.net and p.on(pour.layer) and part.intersects(p.shape)}
+        if any(net == pour.net and at == pour.layer and part.intersects(shape) for shape, net, at in wires):
+            got.add(-1)
+        cache[key] = got
+    return cache[key]
 
 
 def _turn(pad) -> float:

@@ -597,7 +597,7 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
     # (only where it comes within their clearance and least width of their fill: else their fill is as it was)
     copper = [(v.shape, None) for v in vias] + [(shape, layer) for shape, _, layer in added]
     others = {other for k, (other, at, _) in enumerate(board.pours) if other != net and k in fill_of
-              and any((layer is None or layer == at) and fill_of[k].distance(shape) < _reach_of(board, other) for shape, layer in copper)}
+              and any((layer is None or layer == at) and fill_of[k].copper.distance(shape) < _reach_of(board, other) for shape, layer in copper)}
     theirs = estimates.refill(board, _of(board, fill_of, others), others, new_wires, shapely.union_all([c for c, _ in copper]),
                               max(_reach_of(board, other) for other in others)) if others else {}
     near = shapely.union_all([c for c, _ in copper] + [p.shape for p in board.pads if p.pad_id in way.relief])
@@ -623,7 +623,7 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
 def _starved(board: Board, pours: list, wires: list, traces: list, net: int, near) -> int:
     """How many (pad, pour) of ``net`` KiCad's check finds starved of thermal spokes (``pours.starved``) in ``pours``,
     of those a change at ``near`` (a shape) may touch: pads within ``STARVED`` of it (their spokes, or fill round them
-    that met nothing else, ``pours.LONE``)."""
+    that meets nothing else)."""
     from weaveengine import pours as estimates
     mine = [(layer, pts) for other, layer, pts in traces if other == net]
     by_id = {p.pad_id: p for p in board.pads if p.net_id == net}
