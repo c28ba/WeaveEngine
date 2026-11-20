@@ -24,8 +24,13 @@ Left over from it:
   boards (design 24): the finishing steps said and timed, and counted by
   pads; refinement and repair against what the run has measured; a likely
   second heat counted in. Truth inside the range 16 to 77 per cent of the
-  time, middle figure off by 3.96 to 1.21 times in the median. Left: the
-  rip-up that keeps improving (design 24, Open).
+  time, middle figure off by 3.96 to 1.21 times in the median. The rip-up
+  that keeps improving: done (2026-11-20, branch `estimate-ripup`, design 24):
+  the rounds left counted by a chance of improvement fitted on 232 rip-ups
+  (it falls with the rounds gone and since the last improvement), and the
+  middle figure a sum of the parts' middles, rip-up's its median count. The
+  middle falls 1.01 rounds for each round the truth falls (was 0.57);
+  whole runs unchanged (77 % in range, median 1.22).
 - [x] **The board sweep on GitHub** keeps each board's prepared DSN in the
   Actions cache, so its runs route the same DSNs: two runs of tiers 1-3 came
   out identical (Linux baseline: `sweep-cache-a-d4de30f` on sweep-results).
