@@ -63,15 +63,16 @@ def test_time_left_is_a_range_that_holds_and_narrows():
         if est.left(t) is None:
             assert t <= 2.0                                         # nothing to go on before commit is under way: it says nothing
             continue
-        lo, hi = est.left(t)
+        lo, mid, hi = est.left(t)
         assert lo <= total - t + 1e-9 <= hi + 1e-9, (t, lo, hi)     # the run ends inside the range, all the way through
+        assert lo <= mid <= hi     # the run ends inside the range, all the way through
         shares.append(est.progress(t))
         widths.append(hi - lo)
     assert shares == sorted(shares) and shares[-1] > 0.95           # the bar never moves backwards, and ends at the end
     assert widths[-1] < 0.05 * total < widths[3] < widths[1]       # the range narrows (to the finishing's, at the end)
     assert est.more(total) == 0.0                                   # a variant connected everything: no other heat
-    assert phrase((50.0, 60.0)) == "about 0:55 left" and phrase((10.0, 90.0)) == "about 0:30 left (0:10 to 1:30)"
-    assert "more if no variant connects everything" in phrase((10.0, 12.0), 30.0)
+    assert phrase((50.0, 54.0, 60.0)) == "about 0:55 left" and phrase((10.0, 30.0, 90.0)) == "about 0:30 left (0:10 to 1:30)"
+    assert "more if no variant connects everything" in phrase((10.0, 11.0, 12.0), 30.0)
 
 
 def test_another_heat_is_said_beside_the_range():
@@ -83,9 +84,24 @@ def test_another_heat_is_said_beside_the_range():
     for n, t in enumerate(_run(est, rounds=12, at=end, heat="racing variants 5-8 of 8", complete=False)):
         assert est.more(t) == 0.0                                   # the last heat: nothing can follow
         if n == 5:
-            lo, hi = est.left(t)
+            lo, _, hi = est.left(t)
             assert lo <= 2 * end - t <= hi
             assert est.status().startswith("variants 5 to 8")
+
+
+def test_rip_up_that_keeps_improving_is_counted_down():
+    """Each improvement puts back the rounds the stop rule allows, but the
+    rounds left are counted by how likely improvements still are: fewer the
+    longer rip-up has run, so the middle falls with the truth (design 24)."""
+    from weaveengine.progress import rounds_left
+    rounds = [rounds_left(n, 8, 8, 1000, 100) for n in (1, 10, 20, 30)]  # an improvement every time
+    assert all(r[0] == 8 for r in rounds)                           # at least: none improves from here
+    mids = [r[1] for r in rounds]
+    assert mids == sorted(mids, reverse=True) and mids[0] > 2 * mids[-1] and mids[-1] >= 8
+    assert all(r[0] <= r[1] <= r[2] for r in rounds)
+    assert rounds_left(10, 3, 8, 1000, 100)[1] < rounds_left(10, 8, 8, 1000, 100)[1]  # long since the last: soon over
+    assert rounds_left(10, 8, 8, 20, 100)[1] < rounds_left(10, 8, 8, 5000, 100)[1]   # more to clear: longer
+    assert rounds_left(1, 5, 8, 1000, 5) == (5, 5, 5)                 # never past the rounds still allowed
 
 
 def test_a_run_on_record_is_estimated_by_the_time_it_took(tmp_path):
@@ -97,7 +113,7 @@ def test_a_run_on_record_is_estimated_by_the_time_it_took(tmp_path):
     assert timings.last(key) is None and key != Timings.key(str(board), {"seed": 1})
     timings.record(key, 100.0)
     est = Estimator(now=0.0, last=timings.last(key))
-    lo, hi = est.left(40.0)
+    lo, _, hi = est.left(40.0)
     assert est.as_before(40.0) and 45.0 < lo < 60.0 < hi < 80.0     # close to the 60 s that are left
     assert not est.as_before(120.0)                                 # outlasted: back to what the run itself says
 
@@ -131,11 +147,11 @@ def test_the_finishing_is_counted_by_the_board_and_said_step_by_step():
     est.event({"type": "progress", "pass": 1, "variant": -1, "phase": "setup", "done": 0, "total": 1, "pads": 1000, "poured": 400}, 0.0)
     times = list(_run(est, rounds=20))
     end = times[-1]
-    lo, hi = est.left(end)                                          # the variants are done; the finishing is all that is left
+    lo, _, hi = est.left(end)                                       # the variants are done; the finishing is all that is left
     assert (lo, hi) == (FINISH_POURED[0] * 1000, FINISH_POURED[1] * 1000)
     est.event({"type": "progress", "pass": 1, "variant": -1, "phase": "finishing: joining pours", "done": 0, "total": 1}, end)
     assert est.status() == "finishing: joining pours"
-    lo2, hi2 = est.left(end + 10.0)
+    lo2, _, hi2 = est.left(end + 10.0)
     assert lo2 == max(lo - 10.0, 0.0) and hi2 == hi - 10.0         # it counts down from when the finishing began
     assert est.left(end + 10 * hi)[1] > 0.0                         # never says done while it is not
 
@@ -149,4 +165,4 @@ def test_another_heat_is_counted_in_when_every_variant_has_connections_open():
         open_.event({"type": "snapshot", "variant": v, "total": 50, "routed": 45}, times[-1])
     t = times[-1]
     assert plain.more(t) > 0.0 and open_.more(t) == 0.0             # counted in, so not said beside
-    assert open_.left(t)[1] > plain.left(t)[1] + 0.5 * plain.more(t)
+    assert open_.left(t)[2] > plain.left(t)[2] + 0.5 * plain.more(t)
