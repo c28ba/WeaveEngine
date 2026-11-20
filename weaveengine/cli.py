@@ -263,7 +263,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="never route a net narrower than its class, even where its pads cannot be reached otherwise")
     shape.add_argument("--least-angle", type=float, default=Options.least_angle, metavar="DEG",
                        help="the least angle at which copper of one net may meet itself (a trace and its pad, traces at a via or "
-                            "pad, a branch off a trunk): sharper meetings, which trap etchant, are redrawn where there is room; "
+                            "pad, a branch off a trunk): sharper meetings, which trap etchant, are redrawn where there is room, and the "
+                            "joins to the pours placed to make none where another way joins as well; "
                             "0: not (default %(default)g)")
 
     vias.add_argument("--no-vias", action="store_true", help="never use vias: every connection stays on one layer")

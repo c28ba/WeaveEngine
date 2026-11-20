@@ -150,7 +150,9 @@ DESCRIPTIONS = {
                    "pads.", "Traces & shape"),
     "least_angle": ("Least angle where a net meets itself (degrees)", "Where a trace meets its pad, or traces of one net meet at a via, "
                     "a pad or a branch, at a sharper angle than this, the copper makes an acid trap (a wedge that holds etchant). It "
-                    "is redrawn where there is room: square into the pad, or along the other trace before it branches off. At most "
+                    "is redrawn where there is room: square into the pad, or along the other trace before it branches off; and the "
+                    "vias and traces that join pads to their pour are placed so as to make no such meeting, where another way "
+                    "joins them as well. At most "
                     "90, the default, redraws any meeting sharper than square; lower leaves meetings above that angle as drawn; "
                     "zero turns it off.", "Traces & shape"),
     # -- Routing: Vias --------------------------------------------------------

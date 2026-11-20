@@ -41,6 +41,7 @@ import shapely.ops
 from shapely.geometry import LineString, Point, Polygon
 
 from weaveengine.board import Board, Pad, circle_polygon
+from weaveengine.realize import acute
 
 DIRECTIONS = 32    # rays round a pad, or a via in a cut-off piece, a join is looked for along
 FAR = 4.0          # mm: the longest trace of a join (beyond the pad)
@@ -73,6 +74,7 @@ class Join:
     vias: list = field(default_factory=list)       # (x, y) of each via it adds
     traces: list = field(default_factory=list)     # (layer, [(x, y), (x, y)]) of each trace it adds
     relief: dict = field(default_factory=dict)     # pad id -> {Pad field: value}: its thermal relief as changed
+    sharp: bool = False                            # leaves its net meeting itself under the least angle more often (``_rays``)
 
 
 @dataclass
@@ -112,7 +114,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
 
 
 def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), teardrops=None, widths: dict | None = None,
-         reliefs: bool = False, narrow: bool = False, islands: bool = False, spokes: bool = True) -> Joined:
+         reliefs: bool = False, narrow: bool = False, islands: bool = False, spokes: bool = True, least: float = 0.0) -> Joined:
     """For the routed ``board`` (its vias among its pads), its traces and other copper ``shapes`` (shape, net,
     layer: teardrops; and the same as ``teardrops``, wire -> polygons, for the fill): the pads of plane nets not
     joined to the rest of their net, joined by the cheapest way (see the module). ``widths``: wire -> [(points,
@@ -120,7 +122,9 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     its spokes turned; ``narrow``: its relief gap narrowed to the zone's clearance and its spokes to the zone's
     least width. ``islands``: pieces of pour with no pad that their zone keeps are joined too (KiCad reports them as
     isolated copper; joined, the pour is whole under the traces). ``spokes``: a pad short of thermal spokes gets
-    traces from it into the fill, which KiCad counts as spokes."""
+    traces from it into the fill, which KiCad counts as spokes. ``least``: the least angle copper of a net may meet
+    at (``realize.acute``; 0: any): of the joins to try, those that leave their net meeting itself under it no more
+    often go first, and the others only if none of those does (``ordered``)."""
     from weaveengine import pours as estimates
     rules = board.rules
     out = Joined()
@@ -156,6 +160,17 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         return insides[r]
 
     margin = shapely.union_all([m.buffer(edge) for m in board.margin]) if board.margin else None  # (KiCad holds copper off these too)
+    routed: dict = {}  # (net, layer) -> its traces and teardrops there, as ``realize.acute`` measures them (``ordered``)
+    if least > 0.0:
+        for w, line in lines.items():
+            if len(line) >= 2 and w in wire_layer:
+                for piece, width in (widths or {}).get(w) or [(line, rules.drawn(wire_net[w]))]:
+                    if len(piece) >= 2:
+                        routed.setdefault((wire_net[w], wire_layer[w]), []).append(
+                            LineString(piece).buffer(width / 2.0, quad_segs=acute.ROUND))
+        for shape, net, layer in shapes:
+            routed.setdefault((net, layer), []).append(shape)
+        routed_trees = {key: shapely.STRtree(got) for key, got in routed.items()}
     no_via = shapely.union_all(board.no_via) if board.no_via else None  # (areas no via may touch)
     nlayers = len(board.layers)
     every = nlayers + len(board.unrouted)  # (a via goes through the layers left out of the routing too, and lands in their planes)
@@ -323,6 +338,48 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
 
     grown: dict = {}  # (layer, thing, grow, need) -> the thing grown so (``free``; things are only added to)
 
+    def sharper(net: int, way: Join, work: Board) -> bool:
+        """Whether the copper of ``way`` leaves ``net`` meeting itself under ``least`` more often on a layer
+        (``realize.acute``): a trace of it across a via of the net off its middle, say, or a via of it on a trace."""
+        half, r = rules.drawn(net) / 2.0, rules.via_radius(net)
+        discs = [Point(x, y).buffer(r, quad_segs=acute.ROUND) for x, y in way.vias]
+        for layer in range(nlayers):
+            new = discs + [LineString(pts).buffer(half, quad_segs=acute.ROUND) for at, pts in way.traces if at == layer and len(pts) > 1]
+            if not new:
+                continue
+            reach_ = shapely.union_all(new).buffer(acute.REACH)
+            near = [acute.copper(p) for p in work.pads if p.net_id == net and p.on(layer) and p.shape.intersects(reach_)]
+            if (net, layer) in routed:
+                near += [routed[net, layer][i] for i in routed_trees[net, layer].query(reach_, predicate="intersects").tolist()]
+            near += [shape for other, at, pts in out.traces if other == net and at == layer and len(pts) > 1
+                     for shape in [LineString(pts).buffer(half, quad_segs=acute.ROUND)] if shape.intersects(reach_)]
+            if not near:
+                continue
+            if acute.sharp(shapely.union_all(near + new), least) > acute.sharp(shapely.union_all(near), least):
+                return True
+        return False
+
+    def sharp_of(net: int, work: Board):
+        """``sharper`` for joins of ``net`` on ``work`` (None: any angle will do)."""
+        return (lambda way: sharper(net, way, work)) if least > 0.0 else None
+
+    def ordered(net: int, ways: list, work: Board) -> list:
+        """The joins to try, the cheapest first: up to ``TRIES`` that leave the net meeting itself under ``least`` no
+        more often (``sharper``), and then up to ``TRIES`` of those that do (the cheapest that do, if no other does)."""
+        ways = sorted(ways, key=lambda j: j.cost)
+        if least <= 0.0:
+            return ways[:TRIES]
+        clean, sharp = [], []
+        for way in ways:
+            if len(clean) >= TRIES:
+                break
+            if sharper(net, way, work):
+                if len(sharp) < TRIES:
+                    sharp.append(way)
+            else:
+                clean.append(way)
+        return clean + sharp
+
     state = {"work": work, "fill_of": fill_of, "wires": wires, "reach": reach}
 
     def attempt(net: int, unit: list, deep: bool) -> float | None:
@@ -361,10 +418,10 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         land = {key: t.buffer(-(r - LANDING)) for key, t in target.items()}
         into = {key: t.buffer(-(half + GAP)) for key, t in target.items() if key[0] < nlayers}
         ways = _candidates(work, net, unit, pieces, target, land, into, ends, tfree, vfree, r, keep, half, nlayers,
-                           reliefs, narrow, trace_ok, via_ok)
+                           reliefs, narrow, trace_ok, via_ok, sharp_of(net, work))
         before = _groups(work, reach[net][0], net)
         direct, through = None, []  # the cheapest join that does it; cheaper ones to a plane joined to nothing
-        for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
+        for way in ordered(net, ways, work):
             if not stays(net, way, work):
                 continue
             done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces, classified)
@@ -456,8 +513,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             room = room.difference(margin.buffer(half)) if margin is not None else room
             s = Sizes(r, half, keep, rules.clearance, every)
             ways = _rays(net, pad.centre, layer, pad, {layer: room}, into, Polygon(), {}, [], s, None, None, trace_ok, via_ok,
-                         straight=True)
-            for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
+                         straight=True, sharp=sharp_of(net, work))
+            for way in ordered(net, ways, work):
                 done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces, classified)
                 if done is not None and _coarser(_groups(work, reach[net][0], net), _groups(done[0], done[3][net][0], net)):
                     make(net, dataclasses.replace(way, kind="spoke"), done)
@@ -495,10 +552,10 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         land = {key: t.buffer(-(r - LANDING)) for key, t in target.items()}
         into = {key: t.buffer(-(half + GAP)) for key, t in target.items() if key[0] < nlayers}
         ways = _candidates(work, net, [], [(layer, shape)], target, land, into, [], tfree, vfree, r, keep, half, nlayers,
-                           False, False, trace_ok, via_ok)
+                           False, False, trace_ok, via_ok, sharp_of(net, work))
         spot = shape.representative_point()
         before = _groups(work, comp, net)
-        for way in sorted(ways, key=lambda j: j.cost)[:TRIES]:
+        for way in ordered(net, ways, work):
             if not stays(net, way, work):
                 continue
             done = _apply(work, way, net, fill_of, wires, reach, area, r, half, now, out.traces, classified)
@@ -665,12 +722,14 @@ def _depth(region, x: float, y: float) -> float:
 
 def _candidates(board: Board, net: int, unit: list, pieces: list, target: dict, land: dict, into: dict, ends: list,
                 tfree: dict, vfree, r: float, keep: float, half: float, nlayers: int, reliefs: bool, narrow: bool,
-                trace_ok, via_ok) -> list[Join]:
+                trace_ok, via_ok, sharp=None) -> list[Join]:
     """The ways to join ``unit`` (pads of ``net`` in one group, with its ``pieces`` of fill: (layer, shape)) to another
     group of its net (``target``: (layer, group) -> its fill there; ``land``: that drawn in for a via's middle;
     ``into``: for a trace's end; ``ends``: the pads and vias of the other groups, and fixed vias, as (thing, centre,
     group)), each clear and priced, the cheapest of each kind to each group. ``tfree`` (layer -> where a trace's middle
-    may run) and ``vfree`` (where a via's) find them; ``trace_ok`` and ``via_ok`` check them."""
+    may run) and ``vfree`` (where a via's) find them; ``trace_ok`` and ``via_ok`` check them; ``sharp`` (a join ->
+    whether it leaves the net meeting itself under the least angle more often), if given, puts those after the others
+    (``_rays``)."""
     from weaveengine import pours as estimates
     rules = board.rules
     out: list[Join] = []
@@ -730,7 +789,8 @@ def _candidates(board: Board, net: int, unit: list, pieces: list, target: dict, 
     for p in unit:
         for layer in range(nlayers):
             if p.on(layer):
-                out += _rays(net, p.centre, layer, p, tfree, into, vland, land, ends, s, landed, via_cost, trace_ok, via_ok)
+                out += _rays(net, p.centre, layer, p, tfree, into, vland, land, ends, s, landed, via_cost, trace_ok, via_ok,
+                             sharp=sharp)
     # From a cut-off piece: a via in it and a trace on any layer (a jumper), or a trace over a gap on its own layer.
     aims = [g for g in [*land.values(), *into.values()] if not g.is_empty]
     for layer, shape in pieces:
@@ -740,7 +800,7 @@ def _candidates(board: Board, net: int, unit: list, pieces: list, target: dict, 
                 if via_ok(net, x, y):
                     for other in range(nlayers):
                         out += _rays(net, (x, y), other, None, tfree, into, vland, land, ends, s, landed, via_cost,
-                                     trace_ok, via_ok, (VIA + ROOM * s.via_room, layer))
+                                     trace_ok, via_ok, (VIA + ROOM * s.via_room, layer), sharp=sharp)
         start = shape.buffer(-(half + GAP)).intersection(tfree.get(layer, Polygon())).buffer(-INSET) if layer < nlayers else Polygon()
         for key, aim in into.items():
             if key[0] != layer or start.is_empty or aim.is_empty:
@@ -801,14 +861,15 @@ def _nearest(region, aims: list, count: int) -> list[tuple[float, float]]:
 
 
 def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land: dict, ends: list, s: Sizes, landed,
-          via_cost, trace_ok, via_ok, via_start=None, straight: bool = False) -> list[Join]:
+          via_cost, trace_ok, via_ok, via_start=None, straight: bool = False, sharp=None) -> list[Join]:
     """The joins by one straight trace on ``layer`` from ``start`` (a ``pad``'s centre, or, with ``via_start`` (its
     cost, and the layer of the piece it is in), a via in a cut-off piece): into another group's fill there, to its pad
     or via, or to a via that lands in its fill on another layer; the cheapest of each kind to each group, along
     ``DIRECTIONS`` rays. From a pad that is not round, a trace leaves square to a side (a slant is an acute meeting,
     ``realize.acute``): out square from each side to just past it, and from there along each ray that turns by no
     more than a right angle; ``straight``: only square out of a side, no turn (a spoke, which KiCad counts by a
-    track's two ends)."""
+    track's two ends). ``sharp``: a join -> whether it leaves the net meeting itself under the least angle more often
+    (``realize.acute``); such a join is kept after any that does not (``Join.sharp``)."""
     free = tfree.get(layer)
     if free is None or free.is_empty:
         return []
@@ -874,23 +935,26 @@ def _rays(net: int, start, layer: int, pad, tfree: dict, into: dict, vland, land
 
     def offer(join: Join, group) -> None:
         """Keeps the ``KEPT`` cheapest of a kind to a group, each ending apart from the others (if the cheapest is
-        refused, by what it takes from another net's pour, say, one elsewhere may do)."""
+        refused, by what it takes from another net's pour, say, one elsewhere may do); those that leave the net meeting
+        itself at an acute angle more often (``sharp``) only after the others."""
+        join.sharp = bool(sharp is not None and sharp(join))
+        rank = lambda j: (j.sharp, j.cost)  # noqa: E731
         kept = best.setdefault((join.kind, group), [])
         end = join.traces[-1][1][-1] if join.traces else join.vias[-1]
         if any(math.dist(end, other.traces[-1][1][-1] if other.traces else other.vias[-1]) < APART for other in kept):
             same = [other for other in kept if math.dist(end, other.traces[-1][1][-1] if other.traces else other.vias[-1]) < APART]
-            if all(join.cost < other.cost for other in same):
+            if all(rank(join) < rank(other) for other in same):
                 kept[:] = [other for other in kept if other not in same] + [join]
         else:
             kept.append(join)
-        kept.sort(key=lambda j: j.cost)
+        kept.sort(key=rank)
         del kept[KEPT:]
 
     def dead(kind: str, group, cost: float) -> bool:
         """Whether ``offer`` would keep nothing of a join of ``kind`` to ``group`` that costs ``cost`` or more (so it
         need not be checked)."""
         kept = best.get((kind, group))
-        return kept is not None and len(kept) >= KEPT and cost >= kept[-1].cost
+        return kept is not None and len(kept) >= KEPT and not kept[-1].sharp and cost >= kept[-1].cost
 
     for (at, group), aim in into.items():  # into another group's fill on this layer: a little past its edge, where the ray stays clear
         if at != layer:

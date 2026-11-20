@@ -97,6 +97,21 @@ def corners(shape, least: float = LEAST, reach: float = REACH) -> list[tuple[tup
     return out
 
 
+def sharp(shape, least: float = LEAST) -> int:
+    """How many meetings ``shape`` (copper of one net) has: its ``corners``
+    under ``least``, one corner drawn as two vertices counted once."""
+    seen: list = []
+    for at, _, _, _ in corners(shape, least):
+        if not any(math.dist(at, s) < 2.0 * REACH for s in seen):
+            seen.append(at)
+    return len(seen)
+
+
+def copper(pad):
+    """A pad's copper as measured: a round one with ``ROUND`` segments a quarter."""
+    return Point(pad.centre).buffer(pad.radius, quad_segs=ROUND) if pad.radius is not None else pad.shape
+
+
 def meetings(board: Board, lines: dict, wire_net: dict, wire_layer: dict, ends: dict, drawn: dict | None = None,
              widths: dict | None = None, least: float = LEAST) -> list[Meeting]:
     """Every place copper of one net meets itself under ``least`` degrees,
@@ -133,8 +148,7 @@ def net_meetings(board: Board, layer: int, net: int, lines: dict, ends: dict, pa
     pads = {}
     for p in pads_here:
         if p.net_id == net:
-            shape = Point(p.centre).buffer(p.radius, quad_segs=ROUND) if p.radius is not None else p.shape
-            pieces.append((shape, "pad", p.pad_id))
+            pieces.append((copper(p), "pad", p.pad_id))
             pads[p.pad_id] = p
     if not pieces:
         return []

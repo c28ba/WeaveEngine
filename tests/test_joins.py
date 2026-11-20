@@ -119,3 +119,27 @@ def test_an_island_its_zone_keeps_is_stitched_and_a_via_its_import_would_give_an
     assert join(board, lines, nets, layers, islands=True).kinds == {}
     board.saved_fills.append((GND, 1, box(15, 10, 25, 20)))  # (and ground's own there too: the import keeps it ground)
     assert join(board, lines, nets, layers, islands=True).kinds == {"stitch": 1}
+
+
+def test_a_via_beside_a_pad_is_joined_without_an_acute_meeting_when_the_least_angle_asks():
+    """A square ground pad on the front, ground poured on the back: a via beside it, joined by a trace out square
+    from a side. The cheapest turns under the via, off its middle, so the trace's edge meets the via's at an acute
+    angle (``realize.acute``); with a least angle the next way that leaves no such meeting is taken, and with none
+    (0) the cheapest is."""
+    import shapely
+    from shapely.geometry import LineString
+
+    from weaveengine.realize import acute
+
+    def meetings(least: float) -> int:
+        board = poured(1)
+        board.pads.append(Pad.rect(10, 20, 15, 1.0, 1.0, GND, name="U1-1", layers=FRONT))
+        done = join(board, {}, {}, {}, least=least)
+        assert not done.left and done.kinds == {"via": 1}
+        half = board.rules.drawn(GND) / 2.0
+        copper = [acute.copper(board.pads[-1])] + [acute.copper(v) for v in done.vias]
+        copper += [LineString(points).buffer(half, quad_segs=acute.ROUND) for _, layer, points in done.traces if layer == 0]
+        return acute.sharp(shapely.union_all(copper))
+
+    assert meetings(0.0) == 1
+    assert meetings(90.0) == 0
