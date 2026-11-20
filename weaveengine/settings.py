@@ -64,10 +64,12 @@ DESCRIPTIONS = {
                     "to route with something other than the board's own rule.", "Rules & nets"),
     "clearance": ("Clearance (mm)", "The gap kept between copper of different nets. Automatic takes the board's rule. A larger value "
                   "routes with more room and so leaves more connections open; a smaller one than the board's will fail KiCad's check.", "Rules & nets"),
-    "via_diameter": ("Via diameter (mm)", "Outer diameter of a via. Automatic takes the board's own. Larger vias need more room and "
+    "via_diameter": ("Via diameter (mm)", "Outer diameter of the default net class's via. Automatic takes the board's own. Larger vias need more room and "
                      "route less easily.", "Rules & nets"),
     "via_drill": ("Via drill (mm)", "Hole diameter of a via. Automatic takes the board's own. The ring of copper left around the hole "
                   "is the via diameter less this.", "Rules & nets"),
+    "class_vias": ("A via size per net class", "Give the vias of each net the size its net class sets on the board, as KiCad's "
+                   "rules ask. Off, every via is the default class's size (the via diameter and drill above).", "Rules & nets"),
     "margin": ("Safety margin (mm)", "Extra clearance routed with, so that nothing sits exactly on a limit and the board passes KiCad's "
               "check despite rounding. Raise it for more slack at the cost of room; the checks themselves still use the real rules.", "Rules & nets"),
     "ignore_keepouts": ("Ignore keepout areas", "Drop the keepout areas the board file carries, so traces and vias may cross them. Leave "
@@ -242,6 +244,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "clearance": ("spacing", "gap", "isolation", "distance", "copper", "net class", "design rule"),
     "via_diameter": ("via size", "via pad", "annular ring", "size", "outer", "pad size"),
     "via_drill": ("via size", "hole", "drill size", "hole size", "bore", "plated"),
+    "class_vias": ("via size", "net class", "netclass", "class", "power", "per net", "one size", "drill"),
     "layers": ("layer", "layers", "copper layers", "signal", "single sided", "top", "bottom", "inner", "f.cu", "b.cu", "restrict", "only"),
     "layer_cost": ("layer", "prefer", "avoid", "penalty", "weight", "plane layer", "inner", "cost", "factor", "dearer"),
     "edge_clearance": ("board edge", "outline", "border", "keepout", "edge cut", "edge cuts", "margin", "boundary"),
@@ -350,6 +353,7 @@ class Settings:
     clearance: float = 0.0
     via_diameter: float = 0.0
     via_drill: float = 0.0
+    class_vias: bool = True
     edge_clearance: float = 0.0
     margin: float = 0.01
     ignore_keepouts: bool = False
@@ -447,6 +451,8 @@ class Settings:
             rules.via_diameter = self.via_diameter
         if self.via_drill > 0:
             rules.via_drill = self.via_drill
+        if not self.class_vias:
+            rules.net_via.clear()
         # Rules the board does not give and the settings do not set either: say what is used instead.
         notes += [f"WARNING: {text}" for text in undetected(found, self)]
         if design.dropped_wiring:

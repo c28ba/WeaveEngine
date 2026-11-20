@@ -142,10 +142,19 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         return got[3]
 
     reach = {net: _reach(work, classified(work, fill_of, wires, net), wires, net) for net in nets}
-    r = rules.via_diameter / 2.0
-    keep = rules.apart(rules.via_clearance)  # what a via keeps from foreign copper
+    def size(net: int) -> tuple[float, float]:
+        """A via of ``net``'s radius (its class's) and what it keeps from foreign copper."""
+        return rules.via_radius(net), rules.apart(rules.via_clearance(net))
+
     edge = (rules.clearance if rules.edge_clearance is None else rules.edge_clearance)
-    inside_via = board.outline.buffer(-(edge + r))
+    insides: dict = {}
+
+    def inside_via(r: float):
+        """Where the centre of a via of radius ``r`` keeps the edge clearance."""
+        if r not in insides:
+            insides[r] = board.outline.buffer(-(edge + r))
+        return insides[r]
+
     margin = shapely.union_all([m.buffer(edge) for m in board.margin]) if board.margin else None  # (KiCad holds copper off these too)
     no_via = shapely.union_all(board.no_via) if board.no_via else None  # (areas no via may touch)
     nlayers = len(board.layers)
@@ -156,7 +165,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     for p in board.pads:
         for i in range(every):
             if p.on(i):
-                things[i].append((p.shape, p.net_id, keep if p.is_via else rules.apart(p.clearance)))
+                things[i].append((p.shape, p.net_id, size(p.net_id)[1] if p.is_via else rules.apart(p.clearance)))
     for o in board.obstacles:
         for i in range(every):
             if o.on(i):
@@ -178,7 +187,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         if 0 <= at < every:
             saved[at].append((shape, other))
     saved_trees = [shapely.STRtree([s for s, _ in ss]) if ss else None for ss in saved]
-    widest = max([keep, rules.clearance] + [t[2] for ts in things for t in ts])
+    widest = max([size(net)[1] for net in [-1, *rules.net_via]] + [rules.clearance] + [t[2] for ts in things for t in ts])
     within = board.outline.buffer(-edge)
 
     def clear(shape, net: int, layer: int, need: float, drilled: bool = False) -> bool:
@@ -261,7 +270,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
 
     def _via_ok(net: int, x: float, y: float) -> bool:
         """Whether a via of ``net`` may stand at (x, y) among everything there and the vias added."""
-        if not inside_via.contains(Point(x, y)):
+        r, keep = size(net)
+        if not inside_via(r).contains(Point(x, y)):
             return False
         disc = circle_polygon(x, y, r)
         if margin is not None and disc.intersects(margin):
@@ -269,7 +279,9 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         if no_via is not None and disc.intersects(no_via):
             return False
         # (two vias of the net may touch, but their holes keep ``HOLES`` apart: KiCad's hole to hole)
-        if any(math.dist((x, y), at) < max(2 * r + (0.0 if other == net else keep), rules.via_drill + HOLES) - 1e-9 for at, other in placed()):
+        drill = rules.via(net)[1]
+        if any(math.dist((x, y), at) < max(r + rules.via_radius(other) + (0.0 if other == net else max(keep, size(other)[1])),
+                                           (drill + rules.via(other)[1]) / 2.0 + HOLES) - 1e-9 for at, other in placed()):
             return False
         return all(clear(disc, net, i, keep, drilled=True) for i in range(every))
 
@@ -278,7 +290,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         with the zones' fills of before the routing still in (``Board.saved_fills``), copper that touches another
         net's fill there and nothing of its own net (a pad, a via, its fill) is given that net (a via with no trace,
         in another net's plane)."""
-        half = rules.drawn(net) / 2.0
+        half, r = rules.drawn(net) / 2.0, rules.via_radius(net)
         shapes = [(circle_polygon(x, y, r), None) for x, y in way.vias]
         shapes += [(LineString(pts).buffer(half, quad_segs=4), layer) for layer, pts in way.traces]
         foreign = False
@@ -319,7 +331,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         and no pads, a plane joined to nothing yet, if a second join then takes that on to one of those, and the two
         cost less). Returns what the join cost, or None if none was made."""
         work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
-        half = rules.drawn(net) / 2.0
+        half, (r, keep) = rules.drawn(net) / 2.0, size(net)
         comp = reach[net][0]
         root = comp[("pad", unit[0].pad_id)]
         now = classified(work, fill_of, wires, net)
@@ -341,7 +353,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         for i in range(nlayers):
             g = free(net, window, half, rules.clearance, [i]).intersection(within.buffer(-half).intersection(window))
             tfree[i] = g.difference(margin.buffer(half)) if margin is not None else g
-        vfree = free(net, window, r, keep, range(every)).intersection(inside_via.intersection(window))
+        vfree = free(net, window, r, keep, range(every)).intersection(inside_via(r).intersection(window))
         if no_via is not None:
             vfree = vfree.difference(no_via.buffer(r))
         if margin is not None:
@@ -401,7 +413,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         state.update(work=done[0], fill_of=done[1], wires=done[2], reach=done[3])
         for via in out.vias[len(out.vias) - len(way.vias):]:
             for i in range(every):
-                things[i].append((via.shape, net, keep))
+                things[i].append((via.shape, net, size(net)[1]))
         for layer, pts in way.traces:
             things[layer].append((LineString(pts).buffer(half, quad_segs=4), net, rules.clearance))
         trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
@@ -426,7 +438,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         """Gives ``pad``, which KiCad's check would find starved of thermal spokes in its pour on ``layer``
         (``pours.starved``), traces from inside it into the fill of the net's main group there, each a spoke that
         check counts, the cheapest first, until it is not starved; none if that cannot be done."""
-        half = rules.drawn(net) / 2.0
+        half, (r, keep) = rules.drawn(net) / 2.0, size(net)
         kept = snapshot()
         for _ in range(rules_spokes + 1):  # (the last round only finds whether the spokes made do)
             work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
@@ -460,7 +472,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         estimate finds does so and splits nothing; none if none does."""
         work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
         comp, _, main = reach[net]
-        half = rules.drawn(net) / 2.0
+        half, (r, keep) = rules.drawn(net) / 2.0, size(net)
         now = classified(work, fill_of, wires, net)
         window = shapely.box(*shape.bounds).buffer(FAR + r + 1.0, join_style="mitre")
         target: dict = {}
@@ -475,7 +487,7 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         for i in range(nlayers):
             g = free(net, window, half, rules.clearance, [i]).intersection(within.buffer(-half).intersection(window))
             tfree[i] = g.difference(margin.buffer(half)) if margin is not None else g
-        vfree = free(net, window, r, keep, range(every)).intersection(inside_via.intersection(window))
+        vfree = free(net, window, r, keep, range(every)).intersection(inside_via(r).intersection(window))
         if no_via is not None:
             vfree = vfree.difference(no_via.buffer(r))
         if margin is not None:

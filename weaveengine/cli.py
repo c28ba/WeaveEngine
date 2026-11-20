@@ -157,7 +157,7 @@ COST_FLAGS = {"K": "--candidates", "K_reroute": "--reroute-candidates", "max_rou
 
 # The flag of each setting that has one (all of Routing, and the App's workers); the rest are display settings of the app.
 SETTING_FLAGS = {
-    "workers": "--workers", "trace_width": "--trace-width", "clearance": "--clearance", "via_diameter": "--via", "via_drill": "--via",
+    "workers": "--workers", "trace_width": "--trace-width", "clearance": "--clearance", "via_diameter": "--via", "via_drill": "--via", "class_vias": "--one-via-size",
     "margin": "--margin", "ignore_keepouts": "--ignore-keepouts", "skip_nets": "--skip-net", "direct_pairs": "--connect", "layers": "--layers",
     "layer_cost": "--layer-cost", "edge_clearance": "--edge-clearance", "margin_drawings": "--margin-drawings",
     "portfolio": "--portfolio", "seed": "--seed", "time_limit": "--time-limit", "drc_rounds": "--drc-rounds",
@@ -202,7 +202,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="gap kept between copper of different nets (default: from the DSN); below the board's own it will fail "
                             "KiCad's check")
     rules.add_argument("--via", nargs=2, type=float, metavar=("DIAMETER", "DRILL"),
-                       help="via outer diameter and hole, in mm (default: from the DSN)")
+                       help="via outer diameter and hole of the default net class, in mm (default: from the DSN)")
+    rules.add_argument("--one-via-size", action="store_true",
+                       help="give every via the default class's size, not each net its class's (default: each its class's, "
+                            "where the board sets them)")
     rules.add_argument("--margin", type=float, default=0.01, metavar="MM",
                        help="extra clearance to route with, so nothing sits exactly on a limit and the board passes KiCad's check "
                             "despite rounding (default 0.01)")
@@ -345,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
         rules.clearance = args.clearance
     if args.via:
         rules.via_diameter, rules.via_drill = args.via
+    if args.one_via_size:
+        rules.net_via.clear()
     given = {"trace_width": args.trace_width, "clearance": args.clearance, "via_diameter": args.via, "via_drill": args.via}
     missing = [text for name, text in design.defaulted.items() if not given[name]]
     if missing:
@@ -359,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         print(walled_note(design.walled))
     if design.board.unrouted:
         print(f"not routed: {', '.join(design.board.unrouted)} (vias still keep clear of their copper, and reach their planes)")
-    print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_diameter:g}/{rules.via_drill:g} mm; "
+    print(f"rules: trace {rules.trace_width:g} mm, clearance {rules.clearance:g} mm, via {rules.via_text}; "
           f"{len(design.board.layers)} layers, {len(design.board.pads)} pads")
     pro = args.kicad_pro or args.dsn.rsplit(".", 1)[0] + ".kicad_pro"
     if args.edge_clearance is not None:

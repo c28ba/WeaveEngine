@@ -20,9 +20,10 @@ class Rules:
     clearance: float = 0.2
     edge_clearance: float | None = None  # defaults to ``clearance``
     net_width: dict[int, float] = field(default_factory=dict)
-    via_diameter: float = 0.6
+    via_diameter: float = 0.6            # the default class's via; ``net_via`` holds those of nets in other classes
     via_drill: float = 0.3
-    via_clearance: float = 0.0           # what a via asks of foreign copper beyond ``clearance`` (0: nothing; see ``apart``)
+    net_via: dict[int, tuple[float, float]] = field(default_factory=dict)  # net -> (diameter, drill) of its class's via
+    hole_clearance: float = 0.0          # what a hole keeps from foreign copper (KiCad's hole clearance; ``via_clearance``)
     margin: float = 0.0                  # safety margin, already in ``clearance``; added to every clearance an item asks for itself
     min_width: float = 0.0               # narrowest trace the board's rules allow (0: not known); see ``router.reach``
     net_drawn: dict[int, float] = field(default_factory=dict)  # width written for a net routed narrower than drawn (``router.reach``)
@@ -50,6 +51,36 @@ class Rules:
         if any(math.hypot(x - cx, y - cy) <= r for cx, cy, r in self.fine.get(net_id, ())):
             return self.width(net_id)
         return self.net_full[net_id]
+
+    def via(self, net_id: int) -> tuple[float, float]:
+        """(diameter, drill) of a via of the net: its class's."""
+        return self.net_via.get(net_id, (self.via_diameter, self.via_drill))
+
+    def via_radius(self, net_id: int) -> float:
+        return self.via(net_id)[0] / 2.0
+
+    def via_clearance(self, net_id: int) -> float:
+        """What a via of the net asks of foreign copper beyond ``clearance``
+        (0: nothing; see ``apart``): where its ring is narrower than the hole
+        clearance, the rest of that."""
+        diameter, drill = self.via(net_id)
+        ring = (diameter - drill) / 2.0
+        return self.hole_clearance - ring if self.hole_clearance > ring + 1e-9 else 0.0
+
+    def via_spacing(self, a: int, b: int) -> float:
+        """How far apart the centres of vias of nets ``a`` and ``b`` are kept by the routing (12.3)."""
+        return self.via_radius(a) + self.via_radius(b) + self.clearance + 0.02
+
+    @property
+    def via_text(self) -> str:
+        """The vias, in words: "0.6/0.3 mm", and the other classes' sizes if any."""
+        others = sorted(set(self.net_via.values()) - {(self.via_diameter, self.via_drill)})
+        return f"{self.via_diameter:g}/{self.via_drill:g} mm" + (
+            f" ({', '.join(f'{d:g}/{h:g}' for d, h in others)} mm in other net classes)" if others else "")
+
+    @property
+    def widest_via(self) -> float:
+        return max([self.via_diameter, *(d for d, _ in self.net_via.values())])
 
     @property
     def base_width(self) -> float:

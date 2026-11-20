@@ -66,7 +66,7 @@ def test_read_kicad_style_dsn(tmp_path):
     design = read_dsn(str(path))
     board = design.board
     assert board.layers == ["F.Cu", "B.Cu"]
-    assert design.via_padstack == "Via[0-1]_800:400_um" or design.via_padstack == ""
+    assert set(design.via_stacks) <= {"Via[0-1]_800:400_um"}
     assert abs(board.rules.trace_width - 0.25) < 1e-9 and abs(board.rules.clearance - 0.2001) < 1e-9
     assert board.outline.bounds == (0.0, -10.0, 20.0, 0.0)
     pads = {p.name: p for p in board.pads}
@@ -858,7 +858,7 @@ def test_measure_reports_a_via_inside_a_keepout_or_a_no_via_area(tmp_path, monke
     wires, _ = check.read_session(ses)
     x, y = wires[0][3][0]
     far = (x, y + 1000.0)
-    monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", x, y)]))
+    monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", x, y, 0.6)]))
     area = box(x - 0.05, y - 0.05, x + 0.05, y + 0.05)
     assert check.measure(design, ses).vias_in_keepout == 0
     design.board.no_via = [area]
@@ -867,7 +867,7 @@ def test_measure_reports_a_via_inside_a_keepout_or_a_no_via_area(tmp_path, monke
     design.board.no_via = []
     design.board.add_keepout(list(area.exterior.coords))
     assert check.measure(design, ses).vias_in_keepout == 1
-    monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", *far)]))
+    monkeypatch.setattr(check, "read_session", lambda path: (wires, [("N", *far, 0.6)]))
     assert check.measure(design, ses).vias_in_keepout == 0
 
 

@@ -66,7 +66,7 @@ def export_svg(board: Board, filename: str, polylines: dict[int, list[tuple[floa
                    f'<title>{"via" if pad.is_via else "pad"} {pad.name or pad.pad_id} (net {board.net_names.get(pad.net_id, pad.net_id)})</title></polygon>')
         if pad.is_via:
             x, y = xy(pad.centre)
-            out.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{board.rules.via_drill / 2 * scale:.2f}" fill="#121212"/>')
+            out.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{board.rules.via(pad.net_id)[1] / 2 * scale:.2f}" fill="#121212"/>')
     for v in violations or []:
         x, y = xy(v.at)
         out.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="7" fill="none" stroke="#ff00ff" stroke-width="2"><title>{v.kind} {v.wires}</title></circle>')

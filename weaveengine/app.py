@@ -258,7 +258,7 @@ class BoardView(QGraphicsView):
             # DSN file at all, so it is drawn at half the pad's smaller side: a
             # sign that there is a hole, not its size.
             x0, y0, x1, y1 = pad.shape.bounds
-            r = self.board.rules.via_drill / 2.0 if pad.is_via else 0.25 * min(x1 - x0, y1 - y0)
+            r = self.board.rules.via(pad.net_id)[1] / 2.0 if pad.is_via else 0.25 * min(x1 - x0, y1 - y0)
             x, y = pad.centre
             hole = self.scene().addEllipse(QRectF(x - r, -y - r, 2 * r, 2 * r), QPen(Qt.NoPen), QBrush(QColor(BACKGROUND)))
             hole.setZValue(51)
@@ -449,7 +449,7 @@ class BoardView(QGraphicsView):
     # -- traces ---------------------------------------------------------------
     def show_routing(self, wires, open_pairs=(), vias=(), teardrops=(), violations=(), rough: bool = False,
                      changed=()) -> None:
-        """``wires``: (layer, net, points). ``teardrops``: (layer, outline). ``vias``: centres or Pad objects.
+        """``wires``: (layer, net, points). ``teardrops``: (layer, outline). ``vias``: (x, y, radius) or Pad objects.
         ``changed``: wires just placed or rerouted, drawn highlighted on top."""
         self.last = (wires, open_pairs, vias, teardrops, violations, rough, changed)
         scene = self.scene()
@@ -512,8 +512,8 @@ class BoardView(QGraphicsView):
             if hasattr(via, "shape"):
                 if via.centre not in known:
                     self._add_pad(via, live=True)
-            elif tuple(via) not in known:
-                r = rules.via_diameter / 2.0
+            elif tuple(via[:2]) not in known:
+                r = via[2]
                 item = scene.addEllipse(QRectF(via[0] - r, -via[1] - r, 2 * r, 2 * r), QPen(Qt.NoPen), QBrush(QColor("#b8c2cc")))
                 item.setZValue(50)
                 self.live_items.append(item)

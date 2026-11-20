@@ -96,7 +96,7 @@ def test_waking_a_site_takes_its_keep_off_from_the_spokes(grid):
     t = max(range(pmap.num_triangles), key=lambda t: sites.room(pmap, t, sites.incentre(pmap, t)))
     site = sites.create(pmap, state, t, sites.incentre(pmap, t))
     asleep = [state.cap[e] for e in site.spokes]
-    keep = sites.keep_off(board.rules)
+    keep = sites.keep_off(board.rules, -1)
     sites.set_net(pmap, state, site, 3, keep)
     assert site.active and pmap.pad_net[site.pad] == 3
     # Asleep it already keeps half a pitch (wires pass it on both sides); awake, the via's keep-off.
@@ -118,7 +118,7 @@ def test_a_trace_against_a_via_of_its_net_takes_no_room_there(grid):
     state = TopoState(pmap)
     t = max(range(pmap.num_triangles), key=lambda t: sites.room(pmap, t, sites.incentre(pmap, t)))
     site = sites.create(pmap, state, t, sites.incentre(pmap, t))
-    sites.set_net(pmap, state, site, 3, sites.keep_off(board.rules))
+    sites.set_net(pmap, state, site, 3, sites.keep_off(board.rules, -1))
     r = route(pmap, state, 0, site.pad, net=3)
     state.insert(1, r.steps, net=3)
     spokes = [e for e in r.gates if e in site.spokes]
@@ -148,7 +148,7 @@ def test_random_operations_keep_the_invariants():
     first_edges = pmap.num_edges
     state = TopoState(pmap)
     rng = random.Random(11)
-    keep = sites.keep_off(board.rules)
+    keep = sites.keep_off(board.rules, -1)
     pads = sorted(pmap.pad_edges)
     live: dict[int, tuple[int, int]] = {}
     made: list = []
@@ -291,7 +291,7 @@ def two_layer_case(via_at: tuple[float, float], wraps: int = 2):
     for pmap, state in zip(maps, states):
         t = int(locate(pmap, np.array([via_at]))[0])
         site = sites.create(pmap, state, t, via_at, pad=via)
-        sites.set_net(pmap, state, site, 1, sites.keep_off(board.rules))
+        sites.set_net(pmap, state, site, 1, sites.keep_off(board.rules, -1))
     for wire, (layer, a, b) in enumerate([(0, 0, via), (1, via, 1)] + plan, 1):
         r = route(maps[layer], states[layer], a, b, hard_cap=True)
         assert r is not None
@@ -371,7 +371,7 @@ def test_a_site_can_be_taken_out_again():
     for t in roomy_triangles(pmap, 12):
         if t < pmap.num_triangles and sites.room(pmap, t, sites.incentre(pmap, t)) > 0.3:
             made.append(sites.create(pmap, state, t, sites.incentre(pmap, t)))
-            sites.set_net(pmap, state, made[-1], 500 + len(made), sites.keep_off(board.rules) if sites.fits(pmap, state, made[-1], 0.5) else 0.0)
+            sites.set_net(pmap, state, made[-1], 500 + len(made), sites.keep_off(board.rules, -1) if sites.fits(pmap, state, made[-1], 0.5) else 0.0)
     assert len(made) >= 8 and sum(len(s.spokes) for s in made) > 6 * len(made)        # flips happened
     assert any(state.gate_order[e] for s in made for e in s.spokes)                    # and wires were carried
     assert fingerprint(pmap) != before_map
@@ -504,8 +504,8 @@ def test_a_move_is_logged_like_everything_else():
     route(theirs, state, 0, 1)   # the compiled search's tables exist and must follow
     made = [sites.create(theirs, state, t, sites.incentre(theirs, t)) for t in roomy_triangles(theirs, 8, seed=5)]
     for n, site in enumerate(made):
-        if sites.fits(theirs, state, site, sites.keep_off(board.rules)):
-            sites.set_net(theirs, state, site, 700 + n, sites.keep_off(board.rules))
+        if sites.fits(theirs, state, site, sites.keep_off(board.rules, -1)):
+            sites.set_net(theirs, state, site, 700 + n, sites.keep_off(board.rules, -1))
     assert any(state.gate_order[e] for s in made for e in s.spokes)      # wires pass the sites that move
     middle = (len(sites.log(theirs)), len(sites.journal(state)), fingerprint(theirs), state.snapshot(), state.cap.copy(),
               theirs.edge_width.copy(), [s.centre for s in made])
@@ -612,14 +612,14 @@ def test_a_trace_goes_round_a_via_site_only_where_it_is_copper(off, net):
     at = (6.0, 5.0 + off)
     site = sites.create(pmap, state, int(locate(pmap, np.array([at]))[0]), at, pad=1000)
     if net is not None:
-        sites.set_net(pmap, state, site, net, sites.keep_off(board.rules))
+        sites.set_net(pmap, state, site, net, sites.keep_off(board.rules, -1))
     assert any(1 in state.gate_order[e] for e in site.spokes)  # the wire passes it
     with_via = copy.copy(board)
     with_via.pads = board.pads + sites.via_pads(pmap, board.rules)
     lines, violations, _ = realize(state, with_via, own_vias=True)
     assert violations == []
     if net == 2:
-        assert LineString(lines[1]).distance(Point(at)) >= sites.keep_off(board.rules) - 0.01
+        assert LineString(lines[1]).distance(Point(at)) >= sites.keep_off(board.rules, -1) - 0.01
     else:
         assert len(lines[1]) == 2  # pad centre to pad centre, straight
     if net == 1:  # while routing, and for a net with a pour, the trace goes round its via as planned
@@ -639,7 +639,7 @@ def test_a_site_a_wire_passes_on_both_sides_is_deleted():
     pmap = planar_map.build(board)
     state = TopoState(pmap)
     rng = random.Random(12)
-    keep = sites.keep_off(board.rules)
+    keep = sites.keep_off(board.rules, -1)
     pads = sorted(pmap.pad_edges)
     live, made, wire = {}, [], 0
     for _ in range(2000):

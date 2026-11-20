@@ -449,7 +449,7 @@ def _over_own_vias(work: Board, lines: dict, straight: dict, wire_net: dict, wir
             return [(shape, at) for key, shape, at in found if (key not in had if key is not None else
                                                                 not any(at == a and shape.intersects(s) for s, a in islands))]
 
-        reach = work.rules.via_diameter + 4.0 * work.rules.pitch  # (room for a via and the traces round it)
+        reach = work.rules.widest_via + 4.0 * work.rules.pitch  # (room for a via and the traces round it)
         for _ in range(OWN_VIA_TRIES):
             new = fresh(trouble(trial))
             if not new:

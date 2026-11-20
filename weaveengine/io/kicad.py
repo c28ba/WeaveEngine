@@ -659,16 +659,20 @@ def apply(design, kicad: KicadBoard) -> str:
     if r.get("min_clearance", 0.0) > rules.clearance + 1e-9:
         rules.clearance = r["min_clearance"]
         said.append(f"the board's minimum clearance, {rules.clearance:g} mm")
-    drill = max(rules.via_drill, r.get("min_drill", 0.0))
-    diameter = max(rules.via_diameter + drill - rules.via_drill, drill + 2.0 * r.get("via_annulus", 0.0), r.get("via_diameter", 0.0))
+    def least(diameter: float, drill: float) -> tuple[float, float]:
+        """A via grown to the board's minimum drill, ring and diameter (its ring kept if that is more)."""
+        hole = max(drill, r.get("min_drill", 0.0))
+        return max(diameter + hole - drill, hole + 2.0 * r.get("via_annulus", 0.0), r.get("via_diameter", 0.0)), hole
+
+    diameter, drill = least(rules.via_diameter, rules.via_drill)
     if diameter > rules.via_diameter + 1e-9 or drill > rules.via_drill + 1e-9:
         rules.via_diameter, rules.via_drill = diameter, drill
-        design.via_shapes = []
-        design.via_padstack = f"Via[0-{len(board.layers) + len(board.unrouted) - 1}]_{round(diameter * 1000)}:{round(drill * 1000)}_um"
         said.append(f"vias of {diameter:g}/{drill:g} mm, the board's minimum ring and drill")
-    hole = r.get("hole_clearance", 0.0)
-    if hole > (rules.via_diameter - rules.via_drill) / 2.0 + 1e-9:
-        rules.via_clearance = hole - (rules.via_diameter - rules.via_drill) / 2.0
+    for net, (d, h) in rules.net_via.items():  # (each class's via too)
+        grown = least(d, h)
+        if grown[0] > d + 1e-9 or grown[1] > h + 1e-9:
+            rules.net_via[net] = grown
+    hole = rules.hole_clearance = r.get("hole_clearance", 0.0)
     # Custom pads: their own copper. A DSN gives only its convex hull, which can
     # cover another pad (a reversible part's jumpers, bent round each other's pins).
     customs: dict[tuple[str, str], list[KicadPad]] = {}
@@ -752,7 +756,7 @@ def apply(design, kicad: KicadBoard) -> str:
             board.obstacles.append(Obstacle(kp.hole, layers=None if bare == every else bare, clearance=max(hole, kp.clearance), copper=True,
                                             hole=not kp.plated))
             holes += 1
-    kept = [x for x in ("vias" if rules.via_clearance else "", f"{narrow} pads with a narrow ring" if narrow else "",
+    kept = [x for x in ("vias" if any(rules.via_clearance(net) for net in [-1, *rules.net_via]) else "", f"{narrow} pads with a narrow ring" if narrow else "",
                         f"{holes} holes" if holes else "") if x]
     if kept and hole > 0:
         said.append(f"the hole clearance, {hole:g} mm, kept from " + ", ".join(kept))
