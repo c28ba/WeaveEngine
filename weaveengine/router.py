@@ -232,6 +232,7 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         pieces, wedges = make_tapers(work, full_rules, lines, wire_net, wire_layer,
                                      {w: (ctx.conns[w].src, ctx.conns[w].dst) for w in wire_layer}, narrowed, fine)
     planed, unplaned, reliefs, kinds = [], [], {}, {}
+    hop_pads: dict[int, tuple] = {}  # wire -> its two pads, for the pieces of traces hopped over a pour's gap
     if options.fanout and work.pours:  # pads and pour pieces joined to their net, by the cheapest way (``plan.fanout``)
         # (the traces as drawn: tapered ones in their pieces, with their wedges)
         steps("joining pours")
@@ -244,11 +245,16 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         vias = vias + planed
         w = max(list(ctx.conns) + list(lines), default=-1) + 1
         for hopped, parts in done.moved.items():  # (a foreign trace taken over a gap: a piece on its layer keeps its wire)
+            src, dst = (ctx.conns[hopped].src, ctx.conns[hopped].dst) if hopped in ctx.conns else (None, None)
+            def via_at(point):  # (the via a piece ends on, at the door)
+                return next((v.pad_id for v in planed if math.dist(v.centre, point) < 1e-6), None)
             keep = next(i for i, (at, _) in enumerate(parts) if at == wire_layer[hopped])
-            lines[hopped] = parts[keep][1]
-            for layer_index, points in parts[:keep] + parts[keep + 1:]:
-                lines[w], wire_net[w], wire_layer[w] = points, wire_net[hopped], layer_index
-                w += 1
+            for i, (layer_index, points) in enumerate(parts):
+                at = hopped if i == keep else w
+                lines[at], wire_net[at], wire_layer[at] = points, wire_net[hopped], layer_index
+                hop_pads[at] = (src if i == 0 else via_at(points[0]), dst if i == len(parts) - 1 else via_at(points[-1]))
+                if i != keep:
+                    w += 1
         for net, layer_index, points in done.traces:
             lines[w], wire_net[w], wire_layer[w] = points, net, layer_index
             w += 1
@@ -310,7 +316,8 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         "acute": count_acute(acute),  # kind -> meetings of copper of one net under the least angle (``realize.acute``)
         "improved": better,  # None: routed from nothing; else whether going on from the earlier routing gained anything
     }
-    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing)
+    return Result(work, ctx.layers, ctx.conns, lines, wire_net, wire_layer, violations, sorted(ctx.open), vias, drops, stats, widths=pieces, wedges=wedges, kept=routing,
+                  wire_pads=hop_pads)
 
 
 class _Steps:

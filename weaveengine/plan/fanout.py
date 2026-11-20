@@ -67,6 +67,7 @@ HOP_NEAR = 0.5     # mm past how far a change reaches into a fill (``_reach_of``
 HOP_PAST = (0.0, 0.5, 1.5)  # mm more a hop's door is opened at each side than the fill needs
 HOP_STEP = 0.5     # mm between the places along a wall a door is tried at
 HOP_PLACES = 12    # places tried along each wall, the nearest the cut-off copper first
+HOP_EACH = 2       # hops of one wire checked against the estimate for one group, the cheapest
 HOP_END = 0.3      # mm: a hop's stretch that comes this near an end of its trace runs to it (to the via there)
 INSET = 0.03       # mm a place is taken inside a region where copper may stand (its edge is drawn with polygons: the check is exact)
 
@@ -469,7 +470,9 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
                 door = 2.0 * (r_o + max(keep_o, board.pour_clearance(net, layer))) + board.pour_width(net, layer) + GAP
                 found += _hops(work, w, lines[w], layer, other, cut, rest, far, door, nlayers, rules, trace_ok, via_ok,
                                size, not (teardrops or {}).get(w))
-        for cost, w, layer, parts, vias, other in sorted(found, key=lambda h: h[0])[:TRIES]:
+        each: dict = {}  # (the cheapest few of each wire: the doors in one wire are alike, and another wall may be the one)
+        tries = [h for h in sorted(found, key=lambda h: h[0]) if each.setdefault(h[1], []).append(h) or len(each[h[1]]) <= HOP_EACH]
+        for cost, w, layer, parts, vias, other in tries[:TRIES]:
             done = _hopped(work, net, other, w, layer, parts, vias, fill_of, wires, reach, wire_of, rules, now, out.traces,
                            classified)
             if done is None:
