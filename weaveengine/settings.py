@@ -187,8 +187,8 @@ DESCRIPTIONS = {
                   "dense boards pours are cut where they must be (and joined after, often by stitching vias). 1 or 2: traces "
                   "go further round, through more vias, so more pours stay in one piece, with fewer stitches and starved "
                   "thermals. A trace is never given up for a pour either way. Slower.", "Pours & planes"),
-    "pour_spoke_room": ("Room for thermal spokes", "Other nets' traces and vias keep off two of the thermal spokes of each pad "
-                        "a pour joins by a relief, so KiCad's check finds the pad with spokes enough. Off: traces may pass "
+    "pour_spoke_room": ("Room for thermal spokes", "Other nets' traces and vias stay clear of two of the thermal spokes of each pad "
+                        "a zone joins by a relief, so KiCad's check finds the pad with spokes enough. Off: traces may pass "
                         "close to such pads, and KiCad may report them as starved thermals.", "Pours & planes"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
                        "pours' skeletons are drawn to. Automatic takes each zone's own minimum thickness from the board (0.25 mm where "
