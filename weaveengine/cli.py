@@ -147,7 +147,7 @@ OPTION_SWITCHES = {
 }
 OPTION_FLAGS = {"vias": "--no-vias", "narrow": "--no-narrowing", "fanout": "--no-fanout", "teardrops": "--no-teardrops",
                 "reliefs": "--change-reliefs", "narrow_reliefs": "--narrow-reliefs",
-                "bare_islands": "--join-pad-less-islands", "spokes": "--no-pour-spokes",
+                "bare_islands": "--join-pad-less-islands", "spokes": "--no-pour-spokes", "hops": "--no-pour-hops",
                 "skeleton": "--no-skeleton", "pour_vias": "--pour-vias", "portfolio": "--portfolio", "teardrop_max_length": "--teardrop-max-length",
                 "teardrop_max_width": "--teardrop-max-width", "teardrop_breathing": "--teardrop-breathing", "least_angle": "--least-angle",
                 **{name: flag for name, (flag, _) in OPTION_SWITCHES.items()}}
@@ -167,7 +167,7 @@ SETTING_FLAGS = {
     "untangle": "--no-untangle", "narrow_to_reach": "--no-narrowing", "taper_to_pins": "--no-taper", "smooth_corners": "--no-smooth", "merge_ends": "--no-merge-ends",
     "least_angle": "--least-angle", "use_vias": "--no-vias", "slide_vias": "--no-slide-vias", "fanout_to_planes": "--no-fanout",
     "pour_reliefs": "--change-reliefs", "pour_narrow_reliefs": "--narrow-reliefs", "join_bare_islands": "--join-pad-less-islands",
-    "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_vias": "--pour-vias", "pour_min_width": "--pour-min-width",
+    "pour_spokes": "--no-pour-spokes", "pour_hops": "--no-pour-hops", "pour_skeletons": "--no-skeleton", "pour_vias": "--pour-vias", "pour_min_width": "--pour-min-width",
     "teardrop_style": "--teardrops", "teardrop_max_length": "--teardrop-max-length", "teardrop_max_width": "--teardrop-max-width",
     "teardrop_breathing": "--teardrop-breathing", "routed_board": "--routed-board", "arcs_in_ses": "--no-ses-arcs",
 }
@@ -284,6 +284,10 @@ def main(argv: list[str] | None = None) -> int:
     pours.add_argument("--no-pour-spokes", action="store_true",
                        help="no traces from a pad short of thermal spokes into its pour's fill (KiCad counts each as a spoke): "
                             "such pads are left as KiCad's starved thermals")
+    pours.add_argument("--no-pour-hops", action="store_true",
+                       help="no trace of another net taken to another layer, between two vias of its net, where it walls off "
+                            "a piece of a pour that nothing else joins (the fill then passes over where it was): such pieces "
+                            "are left cut off")
     pours.add_argument("--no-skeleton", action="store_true",
                        help="no skeleton in each pour: traces may cut a pour into pieces (by default each pour gets one once the "
                             "traces are routed, which traces move off where they can; design 11.3)")
@@ -406,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     style = "none" if args.no_teardrops or args.no_ses_teardrops else args.teardrops
     options = Options(vias=not args.no_vias, teardrops=style != "none", portfolio=args.portfolio, narrow=not args.no_narrowing,
                       fanout=not args.no_fanout, reliefs=args.change_reliefs, narrow_reliefs=args.narrow_reliefs,
-                      bare_islands=args.join_pad_less_islands, spokes=not args.no_pour_spokes, skeleton=not args.no_skeleton, pour_vias=args.pour_vias, teardrop_max_length=args.teardrop_max_length,
+                      bare_islands=args.join_pad_less_islands, spokes=not args.no_pour_spokes, hops=not args.no_pour_hops, skeleton=not args.no_skeleton, pour_vias=args.pour_vias, teardrop_max_length=args.teardrop_max_length,
                       teardrop_max_width=args.teardrop_max_width, teardrop_breathing=args.teardrop_breathing, least_angle=args.least_angle,
                       **{name: not getattr(args, "no_" + name) for name in OPTION_SWITCHES})
     # (As the app makes them from its settings: scaled to the board, with the round limit and layer costs set.)

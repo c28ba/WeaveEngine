@@ -225,6 +225,7 @@ class Options:
     narrow_reliefs: bool = False    # a join may narrow a pad's relief gap and spokes, to the zone's clearance and least width
     bare_islands: bool = False      # pieces of pour with no pad, that KiCad keeps and reports, joined to their net too
     spokes: bool = True             # a pad short of thermal spokes gets traces from it into its pour's fill (``plan.fanout``)
+    hops: bool = True               # a foreign trace walling off a pour piece may be taken over it to another layer (``plan.fanout``)
     teardrops: bool = True          # teardrops where traces meet pads and vias
     teardrop_max_length: float = 1.0   # mm beyond the pad
     teardrop_max_width: float = 2.0    # mm across

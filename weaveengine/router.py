@@ -238,11 +238,17 @@ def route_board(board: Board, params: CostParams | None = None, options: Options
         drawn = with_wedges(drops, wedges)
         shapes = [(Polygon(poly[:5]).buffer(0), wire_net[w], wire_layer[w]) for w, polys in drawn.items() if w in wire_layer for poly in polys]
         done = join_pours(work, lines, wire_net, wire_layer, shapes, drawn, pieces, options.reliefs, options.narrow_reliefs,
-                          options.bare_islands, options.spokes)
+                          options.bare_islands, options.spokes, options.hops)
         planed, unplaned, reliefs, kinds = done.vias, done.left, done.reliefs, done.kinds
         work.pads = [replace(p, **reliefs[p.pad_id]) if p.pad_id in reliefs else p for p in work.pads] + planed
         vias = vias + planed
         w = max(list(ctx.conns) + list(lines), default=-1) + 1
+        for hopped, parts in done.moved.items():  # (a foreign trace taken over a gap: a piece on its layer keeps its wire)
+            keep = next(i for i, (at, _) in enumerate(parts) if at == wire_layer[hopped])
+            lines[hopped] = parts[keep][1]
+            for layer_index, points in parts[:keep] + parts[keep + 1:]:
+                lines[w], wire_net[w], wire_layer[w] = points, wire_net[hopped], layer_index
+                w += 1
         for net, layer_index, points in done.traces:
             lines[w], wire_net[w], wire_layer[w] = points, net, layer_index
             w += 1

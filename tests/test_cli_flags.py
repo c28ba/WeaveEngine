@@ -54,7 +54,7 @@ def test_every_option_is_a_setting_too():
     flipped = {"taper_to_pins": "taper", "smooth_corners": "smooth", "slide_vias": "slide", "untangle": "untangle",
                "narrow_to_reach": "narrow", "fanout_to_planes": "fanout", "use_vias": "vias",
                "global_selection": "global_selection", "regret_order": "regret_order", "lookahead": "lookahead",
-               "demand": "demand", "ripup": "ripup", "refine": "refine", "pour_spokes": "spokes",
+               "demand": "demand", "ripup": "ripup", "refine": "refine", "pour_spokes": "spokes", "pour_hops": "hops",
                "merge_ends": "merge_ends"}
     for setting, option in flipped.items():
         t = Settings(**{setting: False})

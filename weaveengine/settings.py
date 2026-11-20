@@ -179,6 +179,9 @@ DESCRIPTIONS = {
     "pour_spokes": ("Add spokes to starved thermal pads", "A pad joined to its pour by fewer thermal spokes than the board asks (KiCad's "
                     "starved thermal) gets traces from it into the fill, each a spoke KiCad counts. Clears those KiCad warnings; off "
                     "leaves the pads as they are.", "Pours & planes"),
+    "pour_hops": ("Hop traces over cut-off pour pieces", "Where a trace of another net walls off a piece of a pour and no via "
+                  "or trace of the pour's net can join it, a stretch of that trace is taken to another layer between two vias "
+                  "of its net, so the fill passes over where it was. Off leaves such pieces cut off.", "Pours & planes"),
     "pour_skeletons": ("Keep pours whole", "Once the traces are routed, a thin path through each pour joining its pads, which traces "
                        "move off where they can, so that no trace cuts the pour into pieces. A trace is never given up for it. Off "
                        "lets traces cut a pour freely, which leaves more pieces to join.", "Pours & planes"),
@@ -264,6 +267,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "pour_narrow_reliefs": ("thermal", "relief", "gap", "spoke", "width", "clearance", "narrow", "starved", "pad", "override"),
     "join_bare_islands": ("island", "isolated", "copper", "pour", "zone", "plane", "stitch", "via", "whole", "return path", "fill"),
     "pour_spokes": ("thermal", "spoke", "starved", "relief", "pad", "pour", "zone", "drc", "connection", "trace"),
+    "pour_hops": ("zone", "plane", "island", "cut off", "jumper", "via", "layer", "fill", "connection", "trace"),
     "pour_skeletons": ("zone", "plane", "copper fill", "fill", "connectivity", "split", "cut", "thermal", "spoke", "whole"),
     "pour_vias": ("zone", "plane", "whole", "stitch", "stitching", "island", "thermal", "starved", "balance", "weight", "priority"),
     "pour_min_width": ("zone", "fill", "minimum thickness", "min width", "sliver", "copper fill", "thin", "narrowest"),
@@ -367,6 +371,7 @@ class Settings:
     pour_narrow_reliefs: bool = False
     join_bare_islands: bool = False
     pour_spokes: bool = True
+    pour_hops: bool = True
     pour_skeletons: bool = True
     pour_vias: int = 0  # vias a trace moved for a pour's skeleton may add; 0 = none (traces first)
     pour_min_width: float = 0.0  # mm; 0 = from the board's zones
@@ -425,7 +430,7 @@ class Settings:
     def options(self) -> Options:
         return Options(global_selection=self.global_selection, regret_order=self.regret_order, lookahead=self.lookahead,
                        demand=self.demand, ripup=self.ripup, refine=self.refine, vias=self.use_vias,
-                       slide=self.slide_vias, smooth=self.smooth_corners, merge_ends=self.merge_ends, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, skeleton=self.pour_skeletons, pour_vias=max(0, int(self.pour_vias)), teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
+                       slide=self.slide_vias, smooth=self.smooth_corners, merge_ends=self.merge_ends, untangle=self.untangle, narrow=self.narrow_to_reach, taper=self.taper_to_pins, fanout=self.fanout_to_planes, reliefs=self.pour_reliefs, narrow_reliefs=self.pour_narrow_reliefs, bare_islands=self.join_bare_islands, spokes=self.pour_spokes, hops=self.pour_hops, skeleton=self.pour_skeletons, pour_vias=max(0, int(self.pour_vias)), teardrops=self.teardrop_style != "none", teardrop_max_length=self.teardrop_max_length,
                        teardrop_max_width=self.teardrop_max_width, teardrop_breathing=self.teardrop_breathing,
                        least_angle=min(max(self.least_angle, 0.0), 90.0), portfolio=self.portfolio)
 
