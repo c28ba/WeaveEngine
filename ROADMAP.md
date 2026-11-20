@@ -36,8 +36,23 @@ Left over from it:
   out identical (Linux baseline: `sweep-cache-a-d4de30f` on sweep-results).
   Results differ slightly between macOS and Linux, from floating point:
   compare runs only on one platform.
-- [ ] Whether a DSN's power layers should be left out of the routing by
-  default, and plane layers made dearer, measured with the pour counts.
+- [x] Whether a DSN's power layers should be left out of the routing by
+  default, and plane layers made dearer, measured with the pour counts:
+  kept as is. Four swept boards have `(type power)` layers (kicad-complex-hierarchy,
+  kicad-openair, lumen-mobo, olimex-poe-m2); each routed with all layers,
+  with `--layers` naming only the signal layers, and with `--layer-cost` 2
+  and 4 on the power layers (KiCad's open items, cut-off pads; one run each
+  on Windows, 6 workers). Leaving the power layers out lost routes on
+  olimex-poe-m2 (222/227 -> 204/227 routed, open 33 -> 50) and left
+  complex-hierarchy with one layer (open 0 -> 7, cut off 0 -> 17); on openair it
+  was level (open 43 -> 42, faster). Dearer power layers gave more open items
+  on lumen-mobo (51 -> 59 at 2, 70 at 4; 332/332 routed only at 4, and 1.2 to
+  1.3 times slower) and nothing on complex-hierarchy; on openair 2 was level
+  (open 43 -> 44) and 4 lost a route (229/230). The default's islands, starved
+  thermals and DRC kinds were never worse than the variants'. Neither helps
+  on one board without costing on another, so both stay settings
+  (`--layers`, `--layer-cost`), off by default. olimex-poe-m2 and
+  lumen-mobo layer-cost 2/4 and layers-off runs not made for every pair.
 - Tried and kept as is: where vias may stand on every board. #5's filter
   (`Reach.placeable`) stays on only with a layer cost: applied always it lost
   a connection on kicad-openair and solo-a, and letting via seeds not record
