@@ -246,6 +246,7 @@ class Board:
                                                        # .kicad_pro's and custom rules'), not the traces' (None: the traces')
     margin: list = field(default_factory=list)         # drawings on KiCad's Margin layer (lines): kept clear of by ``plan.fanout`` and the pours
     margin_edge: str = "off"                           # how they are held as board edge besides: "edge", "added", "off" (``geom.margin``)
+    spoke_room: bool = False                           # room kept for the pours' thermal spokes, other nets' traces kept off it (``pours.spoke_room``)
     no_via: list = field(default_factory=list)         # areas no via may touch and traces may cross (a DSN's via_keepout)
     components: list[Component] = field(default_factory=list)
 

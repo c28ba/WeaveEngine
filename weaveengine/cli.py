@@ -167,7 +167,7 @@ SETTING_FLAGS = {
     "untangle": "--no-untangle", "narrow_to_reach": "--no-narrowing", "taper_to_pins": "--no-taper", "smooth_corners": "--no-smooth", "merge_ends": "--no-merge-ends",
     "least_angle": "--least-angle", "use_vias": "--no-vias", "slide_vias": "--no-slide-vias", "fanout_to_planes": "--no-fanout",
     "pour_reliefs": "--change-reliefs", "pour_narrow_reliefs": "--narrow-reliefs", "join_bare_islands": "--join-pad-less-islands",
-    "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_vias": "--pour-vias", "pour_min_width": "--pour-min-width",
+    "pour_spokes": "--no-pour-spokes", "pour_skeletons": "--no-skeleton", "pour_vias": "--pour-vias", "pour_spoke_room": "--spoke-room", "pour_min_width": "--pour-min-width",
     "teardrop_style": "--teardrops", "teardrop_max_length": "--teardrop-max-length", "teardrop_max_width": "--teardrop-max-width",
     "teardrop_breathing": "--teardrop-breathing", "routed_board": "--routed-board", "arcs_in_ses": "--no-ses-arcs",
 }
@@ -290,6 +290,9 @@ def main(argv: list[str] | None = None) -> int:
     pours.add_argument("--pour-vias", type=int, default=Options.pour_vias, metavar="N",
                        help="vias a trace moved out of a pour's skeleton's way may take beyond those it had (default 0: none, "
                             "traces first); more keeps more pours whole, with fewer stitches and starved thermals, and is slower")
+    pours.add_argument("--spoke-room", action="store_true",
+                       help="keep room for two thermal spokes of each pad a pour joins by a relief, which other nets' traces "
+                            "and vias then go round (fewer starved thermals in KiCad's check, at some cost in room)")
     pours.add_argument("--skeleton", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for scripts that ask for it)
     pours.add_argument("--pour-min-width", type=float, default=0.0, metavar="MM",
                        help="the narrowest copper a pour's fill may have, in the estimate of the fill and the skeletons "
@@ -386,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         design.board.pour_override = args.pour_min_width
         print(f"pour minimum width {args.pour_min_width:g} mm, set with --pour-min-width (the zones' own are not used)")
     design.board.margin_edge = args.margin_drawings
+    design.board.spoke_room = args.spoke_room
     note = skip_nets(design, args.skip_net)
     if note:
         print(note)

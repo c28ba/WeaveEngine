@@ -122,3 +122,24 @@ def test_layers_and_layer_cost_are_settings(tmp_path):
         with pytest.raises(ValueError):
             layer_costs(design, [bad])
     assert Settings().layers == "" and Settings().layer_cost == ""
+
+
+def test_room_for_thermal_spokes_is_a_flag_and_a_setting(tmp_path, monkeypatch):
+    """--spoke-room, and the setting pour_spoke_room, keep other nets off pads' thermal spokes (``pours.spoke_room``)."""
+    from tests.conftest import demo_board
+    from weaveengine.io.dsn import read_dsn, write_dsn
+    dsn = str(tmp_path / "b.dsn")
+    write_dsn(demo_board(), dsn)
+    seen = []
+
+    def fake(board, params=None, options=None, **kwargs):
+        seen.append(board.spoke_room)
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cli, "route_board", fake)
+    cli.main([dsn, "--quiet", "--workers", "1"])
+    cli.main([dsn, "--quiet", "--workers", "1", "--spoke-room"])
+    assert seen == [False, True]
+    for on in (False, True):
+        design = read_dsn(dsn)
+        Settings(pour_spoke_room=on).apply_rules(design, dsn)
+        assert design.board.spoke_room == on

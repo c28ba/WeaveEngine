@@ -374,6 +374,15 @@ def _local_clearance(item) -> float:
     return 0.0
 
 
+def _spoke_angle(item) -> float:
+    """The angle of a pad's thermal spokes to its sides: its own, else KiCad's default for its shape, 45 degrees for a
+    circle and 90 for every other (an oval or rounded square as wide as it is long too, which the DSN gives as a circle)."""
+    angle = _number(item, "thermal_bridge_angle")
+    if angle is not None:
+        return angle
+    return 45.0 if len(item) > 3 and item[3] == "circle" else 90.0
+
+
 def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) -> None:
     number = item[1] if len(item) > 1 and isinstance(item[1], str) else ""
     kind = item[2] if len(item) > 2 else ""
@@ -389,7 +398,7 @@ def _pad(item, place, fp_angle: float, ref: str, own: float, out: KicadBoard) ->
             layers.add(name)
     pad = KicadPad(ref, number, x, y, layers, plated=kind != "np_thru_hole", size=min(size) if size else 0.0,
                    clearance=_local_clearance(item) or own, turn=at[2] if len(at) > 2 else 0.0,
-                   spoke_angle=_number(item, "thermal_bridge_angle"))
+                   spoke_angle=_spoke_angle(item))
     bared = [MASKED[l] for l in _layers(item) if l in MASKED] or \
         [c for m, c in MASKED.items() if "*.Mask" in _layers(item) or "F&B.Mask" in _layers(item)]
     if not layers and bared and len(size) == 2:  # a pad of mask only: copper bared where there is no pad

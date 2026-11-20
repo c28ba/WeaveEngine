@@ -36,6 +36,10 @@ def preprocess(board: Board, layer: int = 0, max_segment: float = 2.0) -> FreeSp
 
     # (An item that asks more than the rule's clearance of foreign copper is inflated by that much more.)
     inflated_pads = {p.pad_id: _inflate(p.shape, delta + rules.apart(p.clearance) - rules.clearance) for p in board.pads_on(layer)}
+    if board.spoke_room:  # (room for the pours' thermal spokes, part of the pad: other nets keep clear, ``pours.spoke_room``)
+        from weaveengine.pours import spoke_room
+        for pad_id, shapes in spoke_room(board, layer).items():
+            inflated_pads[pad_id] = unary_union([inflated_pads[pad_id], *(_inflate(s, delta) for s in shapes)])
     inflated = list(inflated_pads.values())
     inflated += [_inflate(o.shape, delta + rules.apart(o.clearance) - rules.clearance) for o in board.obstacles_on(layer)]
 
