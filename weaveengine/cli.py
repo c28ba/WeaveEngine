@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     pours.add_argument("--pour-vias", type=int, default=Options.pour_vias, metavar="N",
                        help="vias a trace moved out of a pour's skeleton's way may take beyond those it had (default 0: none, "
                             "traces first); more keeps more pours whole, with fewer stitches and starved thermals, and is slower")
-    pours.add_argument("--spoke-room", action="store_true",
+    pours.add_argument("--spoke-room", action="store_true", default=True,
                        help="keep room for two thermal spokes of each pad a pour joins by a relief, which other nets' traces "
                             "and vias then go round (fewer starved thermals in KiCad's check, at some cost in room)")
     pours.add_argument("--skeleton", action="store_true", help=argparse.SUPPRESS)  # (the default now; kept for scripts that ask for it)
