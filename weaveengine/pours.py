@@ -448,7 +448,9 @@ def starved(board, pour: Pour, pad, wires: list, traces=(), pads: dict | None = 
     real = alone = 0
     grown = pad.shape.buffer(relief(pad, zone)[0] / 2.0, quad_segs=8)
     ring = grown.exterior
-    met = shapely.line_merge(ring.intersection(pour.zone.intersection(shapely.box(*ring.bounds))))
+    near = _polygons(pour.zone.intersection(shapely.box(*ring.bounds)))  # (a clip can leave a line or point)
+    lines = [g for g in shapely.get_parts(ring.intersection(near)) if g.geom_type in ("LineString", "LinearRing") and not g.is_empty]
+    met = shapely.line_merge(shapely.MultiLineString(lines)) if lines else shapely.MultiLineString()
     for arc in getattr(met, "geoms", [met]):
         if arc.is_empty or arc.length <= 0 or not any(x.shape.intersects(arc) for x in pour.pieces):
             continue  # (nothing, or an island KiCad removes)
