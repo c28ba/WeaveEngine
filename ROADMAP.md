@@ -263,8 +263,32 @@ Next (the user, 2026-11-15): pours that pass KiCad's DRC.
     to 43 and two boards route a connection or two fewer (the routing goes
     otherwise from there on); olimex-poe-m2 cut-off pads 73 to 7, olimex-
     poe-c 19 to 51. A choice per board, not a default.
-  Next: a skeleton that reaches each pad along its spokes (11.3, "Not
-  done"), so that KiCad's spokes have room.
+  Found (2026-11-20, branch `pour-spokes`, on the 24 pads five boards'
+  routing leaves starved: interf-u, lily58-pro, sweep-v2, upduino,
+  complex-hierarchy): of their 96 spokes, 57 are taken by a trace or via of
+  another net, 14 by another net's pad, 20 reach fill and 5 have none. So it
+  is room near the pad, not the skeleton's way to it, and a skeleton arriving
+  along one spoke would give one spoke of the two KiCad asks.
+  - KiCad's default spoke angle is 45 degrees only for a `circle` pad; an
+    oval or rounded pad as wide as it is long (which the DSN gives as a
+    circle) gets 90. The estimate used 45 for every round pad, and so missed
+    or invented starved pads (interf-u's 1.6 mm pins are ovals). Now read
+    from the pad's shape (`io.kicad._spoke_angle`). Sweep of tiers 1-3 at
+    a7a9497: nothing worse, mask/thermal 41 to 39, the same routing.
+  - Setting "Room for thermal spokes" (`--spoke-room`, off by default):
+    two spokes of each pad a zone joins by a relief, where nothing fixed
+    blocks them, made part of the pad in the map, so other nets' traces and
+    vias go round them (`pours.spoke_room`). Locally on the five boards (3
+    workers): starved 19 to 7, KiCad open items 65 to 58 (interf-u 7 to 0
+    and 52 to 44 vias). Sweep of tiers 1-3 with it on (2bf4b9e): mask/
+    thermal 41 to 30 (interf-u 8 to 0, lily58-pro 3 to 1, castor 1 to 0),
+    but the walls cost dense boards their room: olimex-poe-c routes 201 to
+    194, olimex-poe-m2 222 to 210, cm5-minima 157 to 156, KiCad open items
+    696 to 717. A choice per board, not a default. What stays starved with
+    it: a pad whose kept spokes reach a piece the routing cut off (sweep-v2's
+    switch pads), or no fill at all there.
+  Next: room kept only where it is cheap, or only for the pads the estimate
+  finds starved after a first routing, so that dense boards keep theirs.
 
 Fix first (seen by the user 2026-11-14, macOS app built from main f2db5c8, a
 user's board routed with its KiCad files beside the DSN; not yet looked into):
