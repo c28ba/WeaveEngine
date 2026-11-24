@@ -765,6 +765,23 @@ even where the board has space, so they bunch in narrow places and leave open
 areas empty. Where a gap holds fewer traces than it could, spread them across
 it: easier to make, less crosstalk, and easier to read.
 
+### Left over from 1.1's last merges
+
+Merged for 1.1 (user, 2026-11-23: better overall, one board a little worse
+each; to look at again here):
+- Fan-out's joins with no acute meeting first (`fanout-blunt`, `--least-angle`):
+  3 to 7 fewer acute meetings on 9 boards of the sweep, but kicad-coldfire's
+  KiCad open items 60 to 62.
+- Hops over a pour's gap (`pour-join-cost`, `--no-pour-hops`): KiCad open items
+  696 to 692 and cut-off pads 286 to 281 over tiers 1 to 3, but sweep-half-swept
+  islands 34 to 36. Still to do from item 12: choosing a stitching via or a
+  trace back to the pour by the router's own costs. The agent's unswept next
+  step (an island check for the pour net, and no hop that turns sharply at a
+  via) was saved as a patch, not committed.
+- Room for thermal spokes (`--spoke-room`, off): reserve it only for the pads
+  the estimate finds starved after a first routing, so dense boards keep
+  their room.
+
 ## Later
 
 - **A KiCad plugin.** Route from inside KiCad's PCB editor: one button that

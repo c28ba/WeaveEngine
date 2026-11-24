@@ -39,10 +39,16 @@ def assert_clean(board, result):
         for obs in board.obstacles_on(layer):
             assert line.distance(obs.shape) >= rules.clearance + half[w] - 1.1e-3
         assert board.outline.exterior.distance(line) >= rules.clearance + half[w] - 1.1e-3
-        conn = result.connections[w]
-        assert pads[conn.src].on(layer) and pads[conn.dst].on(layer)
-        assert math.dist(line.coords[0], pads[conn.src].centre) < 1e-6
-        assert math.dist(line.coords[-1], pads[conn.dst].centre) < 1e-6
+        src, dst = ends(result)[w]
+        assert pads[src].on(layer) and pads[dst].on(layer)
+        assert math.dist(line.coords[0], pads[src].centre) < 1e-6
+        assert math.dist(line.coords[-1], pads[dst].centre) < 1e-6
+
+
+def ends(result) -> dict:
+    """Wire -> the two pads it joins: its connection's, or for a piece of a trace hopped over a pour's gap
+    (``plan.fanout``'s hops) the vias it ends on, as the router keeps them (``Result.wire_pads``)."""
+    return {**{w: (c.src, c.dst) for w, c in result.connections.items()}, **result.wire_pads}
 
 
 def net_is_connected(result, net_id: int) -> bool:
@@ -56,9 +62,9 @@ def net_is_connected(result, net_id: int) -> bool:
         return x
 
     for w in result.polylines:
-        conn = result.connections[w]
-        if conn.net_id == net_id:
-            parent[find(conn.src)] = find(conn.dst)
+        if result.wire_net[w] == net_id:
+            src, dst = ends(result)[w]
+            parent[find(src)] = find(dst)
     return len({find(p) for p in pads}) == 1
 
 
