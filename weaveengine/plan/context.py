@@ -232,7 +232,7 @@ class Options:
     portfolio: int = 0              # routing variants raced per pass; 0 = one per worker (at most 8), 1 = off
     skeleton: bool = True           # a skeleton in each pour, so that no trace cuts it (``plan.skeleton``, design 11.3)
     pour_vias: int = 0              # vias a trace moved out of a skeleton's way may take beyond those it had (``ripup.make_way``)
-    least_angle: float = 90.0       # degrees: traces redrawn where copper of one net meets itself under this (``realize.acute``); 0 = not
+    least_angle: float = 90.0       # degrees: traces redrawn where copper of one net meets itself under this (``realize.acute``), and fan-out's joins that make no such meeting tried first (``plan.fanout``); 0 = not
 
 
 class Context:
