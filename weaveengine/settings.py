@@ -187,6 +187,9 @@ DESCRIPTIONS = {
                   "dense boards pours are cut where they must be (and joined after, often by stitching vias). 1 or 2: traces "
                   "go further round, through more vias, so more pours stay in one piece, with fewer stitches and starved "
                   "thermals. A trace is never given up for a pour either way. Slower.", "Pours & planes"),
+    "pour_spoke_room": ("Room for thermal spokes", "Other nets' traces and vias stay clear of two of the thermal spokes of each pad "
+                        "a zone joins by a relief, so KiCad's check finds the pad with spokes enough. Off: traces may pass "
+                        "close to such pads, and KiCad may report them as starved thermals.", "Pours & planes"),
     "pour_min_width": ("Pour minimum width (mm)", "The narrowest copper a pour's fill may have, which the estimate of the fill and the "
                        "pours' skeletons are drawn to. Automatic takes each zone's own minimum thickness from the board (0.25 mm where "
                        "there is none); set it to "
@@ -266,6 +269,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "pour_spokes": ("thermal", "spoke", "starved", "relief", "pad", "pour", "zone", "drc", "connection", "trace"),
     "pour_skeletons": ("zone", "plane", "copper fill", "fill", "connectivity", "split", "cut", "thermal", "spoke", "whole"),
     "pour_vias": ("zone", "plane", "whole", "stitch", "stitching", "island", "thermal", "starved", "balance", "weight", "priority"),
+    "pour_spoke_room": ("thermal", "spoke", "starved", "relief", "pad", "zone", "drc", "incomplete", "room"),
     "pour_min_width": ("zone", "fill", "minimum thickness", "min width", "sliver", "copper fill", "thin", "narrowest"),
     "show_pours": ("zone", "plane", "copper fill", "fill", "display", "draw", "ground plane", "polygon"),
     "show_pour_islands": ("zone", "orphan", "dead copper", "isolated", "unconnected", "fill", "display", "remnant"),
@@ -369,6 +373,7 @@ class Settings:
     pour_spokes: bool = True
     pour_skeletons: bool = True
     pour_vias: int = 0  # vias a trace moved for a pour's skeleton may add; 0 = none (traces first)
+    pour_spoke_room: bool = False  # keep other nets off two thermal spokes of each pad (``pours.spoke_room``)
     pour_min_width: float = 0.0  # mm; 0 = from the board's zones
     show_pours: bool = True
     show_pour_islands: bool = False
@@ -465,6 +470,7 @@ class Settings:
             notes.append(walled_note(design.walled))
         board.pour_override = self.pour_min_width
         board.margin_edge = self.margin_drawings
+        board.spoke_room = self.pour_spoke_room
         if self.pour_min_width > 0:
             notes.append(f"pour minimum width {self.pour_min_width:g} mm, set here (the zones' own are not used)")
         if self.edge_clearance > 0:

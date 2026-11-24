@@ -338,7 +338,9 @@ def test_a_zones_island_removal_and_a_pads_angle_and_spoke_angle_are_read(tmp_pa
   (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
   (footprint "R" (layer "F.Cu") (at 5 5 90) (property "Reference" "R1")
     (pad "1" smd rect (at -1 0 90) (size 1 1) (layers "F.Cu") (thermal_bridge_angle 45))
-    (pad "2" smd rect (at 1 0 120) (size 1 1) (layers "F.Cu")))
+    (pad "2" smd rect (at 1 0 120) (size 1 1) (layers "F.Cu"))
+    (pad "3" thru_hole oval (at 0 2) (size 1.6 1.6) (drill 0.8) (layers "*.Cu"))
+    (pad "4" thru_hole circle (at 0 -2) (size 1.6 1.6) (drill 0.8) (layers "*.Cu")))
   (zone (net 1) (net_name "GND") (layer "B.Cu") (fill yes (island_removal_mode 2) (island_area_min 4))
     (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
   (zone (net 1) (net_name "GND") (layer "F.Cu") (fill yes)
@@ -349,8 +351,10 @@ def test_a_zones_island_removal_and_a_pads_angle_and_spoke_angle_are_read(tmp_pa
     kicad = read_kicad(str(tmp_path / "z.kicad_pcb"))
     back, front = sorted(kicad.zones, key=lambda z: z[1])
     assert (back[3].islands, back[3].island_area, front[3].islands) == (2, 4.0, 0)  # (KiCad's default: every island removed)
-    one, two = kicad.pads
-    assert (one.turn, one.spoke_angle, two.turn, two.spoke_angle) == (90.0, 45.0, 120.0, None)
+    one, two, oval, circle = kicad.pads
+    assert (one.turn, one.spoke_angle, two.turn, two.spoke_angle) == (90.0, 45.0, 120.0, 90.0)
+    # (KiCad's default angle is 45 degrees only for a circle; an oval as wide as it is long, a circle in the DSN, gets 90)
+    assert (oval.spoke_angle, circle.spoke_angle) == (90.0, 45.0)
 
 
 def test_one_open_item_for_each_group_of_pads_cut_off_and_pieces_joined_by_any_copper_of_the_net():

@@ -539,6 +539,46 @@ def spokes(pad, zone, least: float) -> list[tuple[object, Point]]:
     return out
 
 
+def spoke_room(board, layer: int) -> dict:
+    """Room kept for thermal spokes on ``layer``, pad id -> shapes other nets' copper keeps its clearance from
+    (``geom.inflate`` makes them part of the pad in the map, so its own traces may still end there): for each pad a pour there joins by a thermal relief, up to ``Board.min_spokes`` of
+    its spokes (``spokes``), each with the fill's least width round its end and the zone's clearance beyond the
+    board's. Only spokes that nothing fixed already blocks (another net's pad or copper, the pour's edge), the ones
+    with most room first: KiCad counts a pad starved with fewer (``starved``), and on most boards what takes the rest
+    is a trace of another net passing close by."""
+    from weaveengine.plan.skeleton import area
+    out: dict = {}
+    fixed = [(p.net_id, p.shape) for p in board.pads_on(layer)] + [(o.net_id, o.shape) for o in board.obstacles_on(layer)]
+    shapes = [s for _, s in fixed]
+    tree = shapely.STRtree(shapes) if shapes else None
+    for k, (net, at, _) in enumerate(board.pours):
+        if at != layer:
+            continue
+        zone = board.zone(net, at)
+        least = board.pour_width(net, at)
+        extra = max(0.0, board.pour_clearance(net, at) - board.rules.clearance)
+        room = area(board, k)
+        shapely.prepare(room)
+        for pad in board.pads:
+            if pad.net_id != net or not pad.on(at) or joined(pad, zone) != "thermal" or not room.intersects(pad.shape):
+                continue
+            free = []
+            for spoke, end in spokes(pad, zone, least):
+                keep = spoke.union(end.buffer(least / 2.0, quad_segs=4)).buffer(extra, quad_segs=4) if extra else \
+                    spoke.union(end.buffer(least / 2.0, quad_segs=4))
+                if not room.contains(end):
+                    continue
+                near = tree.query(keep.buffer(board.rules.clearance), predicate="intersects") if tree is not None else []
+                if any(fixed[i][0] != net or fixed[i][0] < 0 for i in near.tolist() if fixed[i][1] is not pad.shape):
+                    continue
+                gap = min((shapes[i].distance(end) for i in tree.query(end.buffer(5.0)).tolist()
+                           if fixed[i][1] is not pad.shape and fixed[i][0] != net), default=5.0) if tree is not None else 5.0
+                free.append((-gap, len(free), keep))
+            if free:
+                out.setdefault(pad.pad_id, []).extend(keep for _, _, keep in sorted(free)[:board.min_spokes])
+    return out
+
+
 def of_result(result) -> list[Pour]:
     return estimate(result.board, result.polylines, result.wire_net, result.wire_layer, with_wedges(result.teardrops, result.wedges), widths=result.widths)
 
