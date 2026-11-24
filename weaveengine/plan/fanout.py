@@ -64,6 +64,12 @@ SAMPLES = 12       # places in a cut-off piece a via (a jumper's, or a bridge's 
 KEPT = 6           # joins of each kind to each group kept from one place, the cheapest, ending ``APART``
 APART = 1.0        # mm
 STARVED = 4.0      # mm round a join within which a pad's spokes may change, or fill round it that met nothing else (``_starved``)
+HOP_NEAR = 0.5     # mm past how far a change reaches into a fill (``_reach_of``) a foreign trace walls off a group from
+HOP_PAST = (0.0, 0.5, 1.5)  # mm more a hop's door is opened at each side than the fill needs
+HOP_STEP = 0.5     # mm between the places along a wall a door is tried at
+HOP_PLACES = 12    # places tried along each wall, the nearest the cut-off copper first
+HOP_EACH = 2       # hops of one wire checked against the estimate for one group, the cheapest
+HOP_END = 0.3      # mm: a hop's stretch that comes this near an end of its trace runs to it (to the via there)
 INSET = 0.03       # mm a place is taken inside a region where copper may stand (its edge is drawn with polygons: the check is exact)
 
 
@@ -84,6 +90,7 @@ class Joined:
     left: list = field(default_factory=list)       # Pads: those still not joined to the rest of their net
     reliefs: dict = field(default_factory=dict)    # pad id -> {Pad field: value}: thermal reliefs changed (``reliefs``, ``narrow``)
     kinds: dict = field(default_factory=dict)      # kind of join -> how many were made
+    moved: dict = field(default_factory=dict)      # wire -> [(layer, points)]: a foreign trace hopped over a gap (``hops``)
 
 
 def covered(board: Board, pad: Pad, cut=frozenset()) -> bool:
@@ -114,7 +121,7 @@ def fanout(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(
 
 
 def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(), teardrops=None, widths: dict | None = None,
-         reliefs: bool = False, narrow: bool = False, islands: bool = False, spokes: bool = True, least: float = 0.0) -> Joined:
+         reliefs: bool = False, narrow: bool = False, islands: bool = False, spokes: bool = True, least: float = 0.0, hops: bool = True) -> Joined:
     """For the routed ``board`` (its vias among its pads), its traces and other copper ``shapes`` (shape, net,
     layer: teardrops; and the same as ``teardrops``, wire -> polygons, for the fill): the pads of plane nets not
     joined to the rest of their net, joined by the cheapest way (see the module). ``widths``: wire -> [(points,
@@ -124,7 +131,9 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
     isolated copper; joined, the pour is whole under the traces). ``spokes``: a pad short of thermal spokes gets
     traces from it into the fill, which KiCad counts as spokes. ``least``: the least angle copper of a net may meet
     at (``realize.acute``; 0: any): of the joins to try, those that leave their net meeting itself under it no more
-    often go first, and the others only if none of those does (``ordered``)."""
+    often go first, and the others only if none of those does (``ordered``). ``hops``: where nothing else joins a
+    group, a stretch of a foreign trace walling it off may be taken to another layer between two vias of its net, so
+    the fill passes over (``hop``)."""
     from weaveengine import pours as estimates
     rules = board.rules
     out = Joined()
@@ -186,12 +195,23 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             if o.on(i):
                 # (copper drawn on a part is of no net to KiCad, even where it touches a pad of this one)
                 things[i].append((o.shape, -1 if o.copper else o.net_id if o.net_id >= 0 else -2, rules.apart(o.clearance)))
+    thing_of: dict = {}  # wire drawn in one piece -> its index in ``things`` on its layer (``hop``)
     for w, line in lines.items():
         if len(line) >= 2 and w in wire_layer:
             net = wire_net[w]
             for piece, width in (widths or {}).get(w) or [(line, rules.drawn(net))]:
                 if len(piece) >= 2:
+                    if not (widths or {}).get(w):
+                        thing_of[w] = len(things[wire_layer[w]])
                     things[wire_layer[w]].append((LineString(piece).buffer(width / 2.0, quad_segs=4), net, rules.clearance))
+    wire_of: dict = {}  # the same -> its index in ``wires`` (``pours.copper_of``'s order)
+    at = 0
+    for w, line in lines.items():
+        if len(line) >= 2 and w in wire_layer:
+            got = (widths or {}).get(w)
+            if not got:
+                wire_of[w] = at
+            at += len(got) if got else 1
     for shape, net, layer in shapes:
         things[layer].append((shape, net, rules.clearance))
     through = {p.shape for p in board.pads if not p.is_via and (p.layers is None or len(p.layers) == nlayers > 1)}
@@ -476,6 +496,67 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
         trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
         out.kinds[way.kind] = out.kinds.get(way.kind, 0) + 1
 
+    def hop(net: int, unit: list) -> bool:
+        """Joins the group of ``unit`` (pads of ``net`` no other way joins) by taking a stretch of a foreign trace that
+        walls it off on a layer to another layer, between two vias of the trace's net (or a via it ends on), so that
+        the fill passes over where it was: the cheapest such hop the estimate finds joins the group, splits nothing and
+        starves nothing (``_hopped``). Only a trace drawn in one piece, once. Whether one was made."""
+        nonlocal trees
+        work, fill_of, wires, reach = state["work"], state["fill_of"], state["wires"], state["reach"]
+        comp, _, main = reach[net]
+        root = comp[("pad", unit[0].pad_id)]
+        now = classified(work, fill_of, wires, net)
+        far = _reach_of(board, net) + HOP_NEAR
+        found: list = []  # (cost, wire, layer, [(layer, points)], [(x, y) of each via], foreign net)
+        for layer in range(nlayers):
+            mine = [x.shape for pour in now if pour.layer == layer for x in pour.pieces
+                    if comp.get(estimates.piece_key(pour, x)) == root]
+            mine += [p.shape for p in unit if p.on(layer)]
+            others = [x.shape for pour in now if pour.layer == layer for x in pour.pieces
+                      if comp.get(estimates.piece_key(pour, x)) not in (None, root)]
+            if not mine or not others or trees[layer] is None:
+                continue
+            cut, rest = shapely.union_all(mine), shapely.union_all(others)
+            back = {i: w for w, i in thing_of.items() if wire_layer[w] == layer}
+            for i in trees[layer].query(cut, predicate="dwithin", distance=far).tolist():
+                w = back.get(i)
+                if w is None or w in out.moved or wire_net[w] == net or things[layer][i][0].distance(rest) > far:
+                    continue
+                other = wire_net[w]
+                r_o, keep_o = size(other)
+                door = 2.0 * (r_o + max(keep_o, board.pour_clearance(net, layer))) + board.pour_width(net, layer) + GAP
+                found += _hops(work, w, lines[w], layer, other, cut, rest, far, door, nlayers, rules, trace_ok, via_ok,
+                               size, not (teardrops or {}).get(w))
+        each: dict = {}  # (the cheapest few of each wire: the doors in one wire are alike, and another wall may be the one)
+        tries = [h for h in sorted(found, key=lambda h: h[0]) if each.setdefault(h[1], []).append(h) or len(each[h[1]]) <= HOP_EACH]
+        for cost, w, layer, parts, vias, other in tries[:TRIES]:
+            done = _hopped(work, net, other, w, layer, parts, vias, fill_of, wires, reach, wire_of, rules, now, out.traces,
+                           classified)
+            if done is None:
+                continue
+            after = _groups(done[0], done[3][net][0], net)
+            before = _groups(work, comp, net)
+            if not _coarser(before, after):
+                continue
+            if len(set(after.values())) < len(set(before.values())) or after[unit[0].pad_id] == done[3][net][2]:
+                checked.clear()
+                state.update(work=done[0], fill_of=done[1], wires=done[2], reach=done[3])
+                made = done[0].pads[len(done[0].pads) - len(vias):] if vias else []
+                out.vias += made
+                out.moved[w] = parts
+                kept = [shapely.LineString(pts).buffer(rules.drawn(other) / 2.0, quad_segs=4) for at, pts in parts if at == layer]
+                things[layer][thing_of[w]] = (shapely.union_all(kept) if kept else Polygon(), other, rules.clearance)
+                for at, pts in parts:
+                    if at != layer:
+                        things[at].append((LineString(pts).buffer(rules.drawn(other) / 2.0, quad_segs=4), other, rules.clearance))
+                for via in made:
+                    for i in range(every):
+                        things[i].append((via.shape, other, size(other)[1]))
+                trees = [shapely.STRtree([t[0] for t in ts]) if ts else None for ts in things]
+                out.kinds["hop"] = out.kinds.get("hop", 0) + 1
+                return True
+        return False
+
     tried: set = set()
     for net in nets:
         while True:
@@ -490,7 +571,8 @@ def join(board: Board, lines: dict, wire_net: dict, wire_layer: dict, shapes=(),
             if not todo:
                 break
             tried.add(frozenset(p.pad_id for p in todo[0]))
-            attempt(net, todo[0], True)
+            if attempt(net, todo[0], True) is None and hops:
+                hop(net, todo[0])
     def spoke(net: int, pad: Pad, layer: int, outline) -> None:
         """Gives ``pad``, which KiCad's check would find starved of thermal spokes in its pour on ``layer``
         (``pours.starved``), traces from inside it into the fill of the net's main group there, each a spoke that
@@ -687,6 +769,125 @@ def _apply(work: Board, way: Join, net: int, fill_of: dict, wires: list, reach: 
             if not _coarser(_groups(work, reach[other][0], other), _groups(board, changed[other][0], other)):
                 return None
     return board, {**fill_of, **mine, **theirs}, new_wires, {**reach, **changed}
+
+
+def _hops(board: Board, w: int, line: list, layer: int, net: int, cut, rest, far: float, door: float, nlayers: int,
+          rules, trace_ok, via_ok, size, to_ends: bool) -> list[tuple]:
+    """The ways to open a door in wire ``w`` (``line``, of ``net`` on ``layer``) where it runs between ``cut`` (a cut-off
+    group's copper there) and ``rest`` (the other groups' fill), within ``far`` of both: a stretch of it, ``door`` mm
+    long or more, taken to another layer between a via of ``net`` at each end (or the via the trace ends on), as a
+    straight trace there, or one along the stretch. Each as (cost, w, layer, [(layer, points)] of the wire's pieces in
+    order, [(x, y)] of each via added, net), clear (``trace_ok``, ``via_ok``). ``to_ends``: the stretch may run to a
+    via the trace ends on (not if the trace has teardrops: one would be left there)."""
+    whole = LineString(line)
+    length = whole.length
+    wall = whole.intersection(cut.buffer(far)).intersection(rest.buffer(far))
+    if wall.is_empty or length < 1e-6:
+        return []
+    r = size(net)[0]
+    # Where a door may stand: along the wall, a place every ``HOP_STEP``, the nearest the cut-off copper first.
+    centres = set()
+    for g in getattr(wall, "geoms", [wall]):
+        if g.geom_type != "LineString" or g.is_empty:
+            continue
+        s0, s1 = whole.project(Point(g.coords[0])), whole.project(Point(g.coords[-1]))
+        s0, s1 = min(s0, s1), max(s0, s1)
+        n = max(1, int((s1 - s0) / HOP_STEP))
+        centres |= {round(s0 + (s1 - s0) * (k + 0.5) / n, 6) for k in range(n)}
+    centres = sorted(centres, key=lambda c: cut.distance(whole.interpolate(c)))[:HOP_PLACES]
+
+    def via_at(x: float, y: float):
+        return next((p for p in board.pads if p.is_via and p.net_id == net and p.shape.distance(Point(x, y)) < 1e-6), None)
+
+    def standing(x: float, y: float) -> bool:
+        """A via of the trace's net may stand here: clear, and off its pads (not in a pad: solder runs down it)."""
+        disc = circle_polygon(x, y, r)
+        return via_ok(net, x, y) and not any(p.net_id == net and not p.is_via and p.shape.distance(disc) < rules.clearance
+                                             for p in board.pads)
+
+    out, seen = [], set()
+    for c in centres:
+        for extra in HOP_PAST:
+            half_door = door / 2.0 + extra
+            a_s, b_s = max(0.0, c - half_door), min(length, c + half_door)
+            if a_s < HOP_END:
+                a_s = 0.0 if to_ends else HOP_END
+            if b_s > length - HOP_END:
+                b_s = length if to_ends else length - HOP_END
+            if (a_s, b_s) in seen or b_s - a_s < door - 1e-6 or (a_s == 0.0 and b_s == length):
+                continue
+            seen.add((a_s, b_s))
+            a, b = whole.interpolate(a_s), whole.interpolate(b_s)
+            ends = []  # (point, the via it ends on, or None, whether it is an end of the trace)
+            for s_, q in ((a_s, a), (b_s, b)):
+                at_end = s_ == 0.0 or s_ == length
+                ends.append(((q.x, q.y), via_at(q.x, q.y) if at_end else None, at_end))
+            if any(at_end and v is None for _, v, at_end in ends):
+                continue  # (the stretch runs to a pad: no hop there)
+            add = [pt for pt, v, at_end in ends if not at_end]
+            if not all(standing(*pt) for pt in add):
+                continue
+            stretch = [tuple(q) for q in shapely.ops.substring(whole, a_s, b_s).coords]
+            for other in range(nlayers):
+                if other == layer or any(v is not None and not v.on(other) for _, v, _ in ends):
+                    continue
+                for mid in ([ends[0][0], ends[1][0]], stretch):
+                    if len(mid) >= 2 and all(trace_ok(net, other, p, q) for p, q in zip(mid, mid[1:])):
+                        parts = []
+                        if a_s > 0.0:
+                            parts.append((layer, [tuple(q) for q in shapely.ops.substring(whole, 0.0, a_s).coords]))
+                        parts.append((other, [tuple(q) for q in mid]))
+                        if b_s < length:
+                            parts.append((layer, [tuple(q) for q in shapely.ops.substring(whole, b_s, length).coords]))
+                        cost = VIA * len(add) + LineString(mid).length + cut.distance(whole.interpolate(c))
+                        out.append((cost, w, layer, parts, add, net))
+                        break
+    return out
+
+
+def _hopped(work: Board, net: int, other: int, w: int, layer: int, parts: list, vias: list, fill_of: dict, wires: list,
+            reach: dict, wire_of: dict, rules, now: list, traces: list, classified):
+    """``_apply`` for a hop (``_hops``): the board, fills, routing copper and groups with wire ``w`` (of ``other``, on
+    ``layer``) drawn as ``parts`` and the ``vias`` of ``other`` added, if the estimate finds that it leaves every pad of
+    every net as joined as it was, no more islands in other nets' pours, and no more pads starved; else None."""
+    from weaveengine import pours as estimates
+    board = copy.copy(work)
+    board.pads = list(work.pads)
+    next_id = max((p.pad_id for p in board.pads), default=-1) + 1
+    r, half = rules.via_radius(other), rules.drawn(other) / 2.0
+    made = []
+    for x, y in vias:
+        via = Pad.circle(next_id, x, y, r, other, name=f"via{next_id}", is_via=True)
+        via.fanout = True
+        next_id += 1
+        made.append(via)
+    board.pads += made
+    new_wires = list(wires)
+    old = new_wires[wire_of[w]][0]
+    kept = [LineString(pts).buffer(half, quad_segs=4) for at, pts in parts if at == layer]
+    new_wires[wire_of[w]] = (shapely.union_all(kept) if kept else Polygon(), other, layer)
+    added = [(LineString(pts).buffer(half, quad_segs=4), other, at) for at, pts in parts if at != layer]
+    new_wires += added
+    freed = old.difference(new_wires[wire_of[w]][0])
+    changed = [(freed, layer)] + [(v.shape, None) for v in made] + [(shape, at) for shape, _, at in added]
+    nets = {o for k, (o, at, _) in enumerate(board.pours) if k in fill_of
+            and any((on is None or on == at) and fill_of[k].copper.distance(shape) < _reach_of(board, o) for shape, on in changed)}
+    nets.add(net)
+    near = shapely.union_all([shape for shape, _ in changed])
+    filled = estimates.refill(board, _of(board, fill_of, nets), nets, new_wires, near, max(_reach_of(board, o) for o in nets))
+    out_reach = dict(reach)
+    for o in sorted(nets):
+        old_pours = now if o == net else classified(work, fill_of, wires, o)
+        new_pours = estimates.classify(board, _of(board, filled, {o}), new_wires)
+        if o != net and sum(pour.islands for pour in new_pours) > sum(pour.islands for pour in old_pours):
+            return None
+        if _starved(board, new_pours, new_wires, traces, o, near) > _starved(work, old_pours, wires, traces, o, near):
+            return None
+        if o in reach:
+            out_reach[o] = _reach(board, new_pours, new_wires, o)
+            if o != net and not _coarser(_groups(work, reach[o][0], o), _groups(board, out_reach[o][0], o)):
+                return None
+    return board, {**fill_of, **filled}, new_wires, out_reach
 
 
 def _starved(board: Board, pours: list, wires: list, traces: list, net: int, near) -> int:

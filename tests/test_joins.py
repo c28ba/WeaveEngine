@@ -143,3 +143,31 @@ def test_a_via_beside_a_pad_is_joined_without_an_acute_meeting_when_the_least_an
 
     assert meetings(0.0) == 1
     assert meetings(90.0) == 0
+
+
+def pocket() -> tuple[Board, dict, dict, dict]:
+    """Ground poured on the back only; a ground pad on the back in a pocket against the pour's edge, walled by a
+    signal's trace in a U between two signal pads at that edge, and no via allowed in the pocket: neither a via in
+    it nor a trace out of it on the back can join the pad."""
+    board = poured(1)
+    board.pads += [Pad.circle(10, 1.5, 11, 0.6, SIG, "J9-1"), Pad.circle(11, 1.5, 19, 0.6, SIG, "J9-2"),
+                   Pad.circle(12, 3.5, 15, 0.3, GND, "C9-2", BACK)]
+    board.no_via.append(box(1, 11.1, 5.6, 18.9))
+    return board, {0: [(1.5, 11), (6, 11), (6, 19), (1.5, 19)]}, {0: SIG}, {0: 1}
+
+
+def test_a_trace_walling_off_a_pocket_hops_to_the_other_layer_to_let_the_fill_in():
+    """Nothing of ground can reach the pad in the pocket: a stretch of the signal's trace beside it goes to the front
+    between two signal vias, and the fill comes in under it. Not with ``hops`` off."""
+    board, lines, nets, layers = pocket()
+    assert [p.name for p in unjoined(board, lines, nets, layers)] == ["C9-2"]
+    assert join(board, lines, nets, layers, hops=False).kinds == {}
+    done = join(board, lines, nets, layers)
+    assert done.kinds == {"hop": 1} and not done.left
+    assert [v.net_id for v in done.vias] == [SIG, SIG]
+    [parts] = done.moved.values()
+    assert [at for at, _ in parts] == [1, 0, 1]  # (the back, the front over the door, the back again)
+    assert parts[0][1][0] == (1.5, 11) and parts[-1][1][-1] == (1.5, 19)
+    hopped = dict(enumerate(parts))
+    assert joined_after(board, {w: pts for w, (_, pts) in hopped.items()}, {w: SIG for w in hopped},
+                        {w: at for w, (at, _) in hopped.items()}, done.vias, done.traces) == []
